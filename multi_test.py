@@ -4,13 +4,13 @@ import os
 
 
 def run_backtest(part):
-    import engine
+    import legacy_engine
     SPLIT = 3
     test_date = "20241009"  # 문자열 형태로 넘김
     test_code = None
 
     print(f"[PART {part}] 시작 (기준일: {test_date} 이후)")
-    backtest = engine.BackTest(part, SPLIT, test_date, test_code)
+    backtest = legacy_engine.BackTest(part, SPLIT, test_date, test_code)
     backtest.Data_load()
     print(f"[PART {part}] 완료")
 

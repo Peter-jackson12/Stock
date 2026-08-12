@@ -3,13 +3,13 @@ import pandas as pd
 import os
 
 def run_backtest(part):
-    import engine  # 반드시 함수 안에서 import (multiprocessing 이슈 회피)
+    import legacy_engine  # 반드시 함수 안에서 import (multiprocessing 이슈 회피)
     SPLIT = 12
     test_date = None
     test_code = None
 
     print(f"[PART {part}] 시작")
-    backtest = engine.BackTest(part, SPLIT, test_date, test_code)
+    backtest = legacy_engine.BackTest(part, SPLIT, test_date, test_code)
     backtest.Data_load()
     print(f"[PART {part}] 완료")
 
