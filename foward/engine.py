@@ -43,7 +43,8 @@ class SaveResult:
         data = pd.DataFrame(trading_data)
 
         csv_name = "{}_{}.csv".format(strategy, part)
-        data.to_csv(csv_name, encoding='euc-kr')
+        # data.to_csv(csv_name, encoding='euc-kr')
+        data.to_csv(csv_name, encoding='utf-8-sig', index=False)
         pass
 
 
