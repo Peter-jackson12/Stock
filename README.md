@@ -16,46 +16,43 @@
 ## 🚀 Quick Start (실행 방법)
 
 ```bash
-# 1. 의존성 동기화
+# 1. 의존성 동기화 (최초 1회 실행)
 uv sync
 
-# 2. 병렬 백테스팅 가동 및 결과 자동 병합
-uv run python run_parallel.py
-
-
-1) 일반 실행 (단일 프로세스 - 빠른 테스트)
-소량의 데이터이거나 빠른 검증이 필요할 때는 main.py를 실행하세요.
-code
-Bash
+# 2. 일반 실행 (단일 프로세스 - 빠른 테스트)
 uv run python main.py
 
-2) 병렬 실행 (대용량 데이터 - 멀티프로세싱)
-대용량 데이터를 다루거나 전체 기간 백테스팅 시 연산 시간을 단축하고 싶을 때는 run_parallel.py를 실행하세요.
-CPU 코어 수에 맞춰 분할 연산을 수행하고 결과를 자동 병합합니다.
-code
-Bash
+# 3. 병렬 실행 (대용량 데이터 - 멀티프로세싱)
 uv run python run_parallel.py
+```
 
+---
 
-📊 결과 확인 (Output Results)
-백테스팅이 완료되면 모든 결과 파일은 results/ 폴더 내에 자동으로 생성 및 저장됩니다.
-results/final_total_result.csv: 최종 백테스팅 통합 리포트 (PnL, MDD, MDU, TPI 지표 포함)
-results/cross_Today_*.csv: 병렬 가동 시 프로세스별 분할 결과 파일
-한글 깨짐 방지: 모든 CSV 결과 파일은 utf-8-sig 인코딩으로 저장되어 VS Code, Linux, Excel 환경에서 한글이 깨지지 않습니다.
+## 📊 결과 확인 (Output Results)
 
+백테스팅이 완료되면 모든 결과 파일은 **`results/`** 폴더 내에 자동으로 생성 및 저장됩니다.
 
-🛠️ 전략 매개변수 및 조건 수정 가이드 (Customization)
+* **`results/final_total_result.csv`**: 최종 백테스팅 통합 리포트 (PnL, MDD, MDU, TPI 지표 포함)
+* **`results/cross_Today_*.csv`**: 병렬 가동 시 프로세스별 분할 결과 파일
+
+---
+
+## 🛠️ 전략 매개변수 및 조건 수정 가이드 (Customization)
+
 전략 수치나 진입/청산 조건을 변경하고 싶다면 아래 해당 파일만 수정하시면 됩니다.
-수정 목적	수정할 파일	주요 변경 내용
-시스템 설정 및 경로	config.py	데이터 폴더 경로, 인코딩, 백테스트 제한 시간(SET_TIME)
-진입 조건 및 매수세 필터	strategy.py	check_entry_conditions() 내 5초 매수비율(cbv_5), 거래속도(tick_rate), 임계값 수치 변경
-청산 조건 및 손절 기준	risk_manager.py	check_exit_signals() 내 손절 비율(-6%), 트레일링 스탑, 장 마감/상한가 청산 로직 변경
-데이터 로딩 구조	data_loader.py	SQLite DB 쿼리 및 일봉 CSV 조회 항목 변경
 
+| 수정 목적 | 수정할 파일 | 주요 변경 내용 |
+| :--- | :--- | :--- |
+| **시스템 설정 및 경로** | `config.py` | 데이터 폴더 경로, 인코딩, 백테스트 제한 시간(`SET_TIME`) |
+| **진입 조건 및 매수세 필터** | `strategy.py` | `check_entry_conditions()` 내 5초 매수비율(`cbv_5`), 거래속도(`tick_rate`), 임계값 수치 변경 |
+| **청산 조건 및 손절 기준** | `risk_manager.py` | `check_exit_signals()` 내 손절 비율(-6%), 트레일링 스탑, 장 마감/상한가 청산 로직 변경 |
+| **데이터 로딩 구조** | `data_loader.py` | SQLite DB 쿼리 및 일봉 CSV 조회 항목 변경 |
 
-📂 프로젝트 구조 (Architecture)
-code
-Text
+---
+
+## 📂 프로젝트 구조 (Architecture)
+
+```text
 Stock/
 ├── pyproject.toml         # uv 기반 선언적 의존성 명세
 ├── uv.lock                # 버전 및 해시 동결 잠금 파일
@@ -67,3 +64,4 @@ Stock/
 ├── engine.py              # 백테스팅 핵심 실행 조율기
 ├── main.py                # 단일 프로세스 실행 진입점
 └── run_parallel.py        # 멀티프로세스 병렬 가동 및 자동 결과 병합
+```
