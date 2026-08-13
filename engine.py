@@ -79,8 +79,10 @@ class BackTestEngine:
         print(f"✅ [Part {self.part}] 백테스팅 완료! 저장 건수: {len(result_df)}건 ➔ 파일: {output_file}")
 
     def _process_stock(self, conn, code_col, code, today_str):
-        """개별 종목 백테스팅 연산 수행"""
         try:
+            # 📌 추가: open.csv에서 한글 종목명(예: '동화약품') 추출
+            stock_name = str(self.daily_data['open'][code_col][0])
+
             raw_data = pd.DataFrame(conn.cursor().execute(f"SELECT * FROM '{code}'").fetchall())
             if raw_data.empty:
                 return
@@ -137,7 +139,7 @@ class BackTestEngine:
                         
                         # 거래 기록 저장
                         self.trading['today'].append(today_str)
-                        self.trading['name'].append(code)
+                        self.trading['name'].append(stock_name)
                         self.trading['starttime'].append(stock['time'][0])
                         self.trading['trigger'].append(stock.get('trigger', 0))
                         self.trading['t_open'].append(stock['open'][0])
