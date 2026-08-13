@@ -1,3 +1,9 @@
+"""
+[Legacy Monolithic Engine - Reference Only]
+- 리팩토링 이전의 원본 단일 구조 백테스팅 엔진 코드입니다.
+- 현재 시스템은 모듈화된 engine.py, main.py, run_parallel.py를 통해 작동합니다.
+"""
+
 import os
 import sqlite3
 import sys
