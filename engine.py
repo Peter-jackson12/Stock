@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import traceback
 import numpy as np
 import pandas as pd
 from config import STRATEGY_NAME, SET_TIME, RESULT_DIR, ENCODING
@@ -18,7 +19,6 @@ class BackTestEngine:
         # 일봉 데이터 미리 로드
         self.daily_data = self.loader.load_daily_csvs()
         self.trading = {}
-        self.stock = {}
 
     def _init_trading_dict(self):
         """결과 저장용 디셔너리 구조 초기화"""
@@ -39,9 +39,10 @@ class BackTestEngine:
             return
 
         csv_open = self.daily_data['open']
-        date_list = list(csv_open['Code'][1:])  # 첫 번째 컬럼은 'Name'이므로 제외
         
-        # 분할(split) 범위 계산
+        # 8자리 숫자 날짜만 추출
+        date_list = [str(d) for d in csv_open['Code'][1:] if str(d).isdigit() and len(str(d)) == 8]
+        
         length = int(len(date_list) / self.split)
         if self.part < self.split:
             load_dates = date_list[length * (self.part - 1): length * self.part]
@@ -50,6 +51,7 @@ class BackTestEngine:
 
         print(f"📅 담당 백테스팅 날짜 범위: {load_dates[0] if load_dates else '없음'} ~ {load_dates[-1] if load_dates else '없음'}")
 
+        processed_stocks = 0
         for today_date in load_dates:
             today_str = str(today_date)
             conn = self.loader.get_lob_db_connection(today_str)
@@ -63,9 +65,12 @@ class BackTestEngine:
             for code_col in csv_open.keys()[1:]:
                 code = code_col[1:] if code_col.startswith('A') else code_col
                 if code in sec_tables:
+                    processed_stocks += 1
                     self._process_stock(conn, code_col, code, today_str)
 
             conn.close()
+
+        print(f"📊 탐색한 총 종목 수: {processed_stocks}개")
 
         # 결과 CSV 저장
         result_df = pd.DataFrame(self.trading)
@@ -80,29 +85,38 @@ class BackTestEngine:
             if raw_data.empty:
                 return
 
+            # 수치 데이터 타입 강제 변환 (SQLite 문자열 타입 방지)
+            times = np.array(raw_data[0]).astype(str)
+            opens = np.array(raw_data[1]).astype(float)
+            highs = np.array(raw_data[2]).astype(float)
+            lows = np.array(raw_data[3]).astype(float)
+            closes = np.array(raw_data[4]).astype(float)
+            vols = np.array(raw_data[5]).astype(float)
+            buy_vols = np.array(raw_data[6]).astype(float)
+            sell_vols = np.array(raw_data[7]).astype(float)
+            ticks = np.array(raw_data[8]).astype(float)
+
             stock = {
-                'time': np.array(raw_data[0]),
-                'open': np.array(raw_data[1]),
-                'high': np.array(raw_data[2]),
-                'low': np.array(raw_data[3]),
-                'close': np.array(raw_data[4]),
-                'vol': np.array(raw_data[5]),
-                'buy_vol': np.array(raw_data[6]),
-                'sell_vol': np.array(raw_data[7]),
-                'tick': np.array(raw_data[8]),
-                'buy_tick': np.array(raw_data[9]),
-                'sell_tick': np.array(raw_data[10]),
+                'time': times,
+                'open': opens,
+                'high': highs,
+                'low': lows,
+                'close': closes,
+                'vol': vols,
+                'buy_vol': buy_vols,
+                'sell_vol': sell_vols,
+                'tick': ticks,
                 'candle_high': [], 'candle_low': [], 'candle_open': [], 'candle_close': [],
-                'position': 0, 'state': 0, 'entry_t': 0, 'entry_price': 0,
-                'max_t': 0, 'min_t': 999999999, 'upper': raw_data[1][0] * 1.3,
-                'tick_rate': 0.1, 'max_cbv5': 0, 'max_cbv10': 0, 'max_cbv30': 0, 'max_cbv60': 0,
-                'tmax_cbv5': 0, 'tmax_cbv10': 0, 'tmax_cbv30': 0, 'tmax_cbv60': 0, 'tmax_cbv1': 0
+                'position': 0, 'state': 0, 'entry_t': 0, 'entry_price': 0.0,
+                'max_t': 0.0, 'min_t': 999999999.0, 'upper': opens[0] * 1.3,
+                'tick_rate': 0.1, 'max_cbv5': 0.0, 'max_cbv10': 0.0, 'max_cbv30': 0.0, 'max_cbv60': 0.0,
+                'tmax_cbv5': 0.0, 'tmax_cbv10': 0.0, 'tmax_cbv30': 0.0, 'tmax_cbv60': 0.0, 'tmax_cbv1': 0.0
             }
 
             for t in range(len(stock['time'])):
                 time_str = str(stock['time'][t])
                 
-                # 분봉/초봉 캔들 업데이트
+                # 캔들 데이터 업데이트
                 stock['candle_high'].append(stock['high'][t])
                 stock['candle_low'].append(stock['low'][t])
                 stock['candle_open'].append(stock['open'][t])
@@ -148,8 +162,9 @@ class BackTestEngine:
                     stock['position'] = 1
                     stock['entry_t'] = t + 1 if t + 1 < len(stock['time']) else t
                     stock['entry_price'] = stock['high'][stock['entry_t']]
-                    print(f"★ [매수 진입] 종목: {code}, 진입가: {stock['entry_price']}")
+                    print(f"★ [매수 진입] 종목: {code}, 시간: {time_str}, 진입가: {stock['entry_price']}")
 
         except Exception as e:
-            # 예외 발생 시 개별 종목만 스킵
-            pass
+            # 에러 원인 출력 (숨기지 않음!)
+            print(f"❌ 종목 [{code}] 처리 중 에러 발생: {e}")
+            traceback.print_exc()
