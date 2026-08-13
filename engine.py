@@ -39,7 +39,7 @@ class BackTestEngine:
             return
 
         csv_open = self.daily_data['open']
-        date_list = list(csv_open['Code'])
+        date_list = list(csv_open['Code'][1:])  # 첫 번째 컬럼은 'Name'이므로 제외
         
         # 분할(split) 범위 계산
         length = int(len(date_list) / self.split)
