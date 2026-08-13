@@ -16,12 +16,24 @@ if __name__ == '__main__':
     with Pool(processes=DEFAULT_SPLIT) as pool:
         pool.map(run_worker, tasks)
 
-    # 자동 병합 로직
+    # 내용이 존재하는 CSV만 안전하게 병합
     file_list = [f for f in os.listdir(RESULT_DIR) if f.startswith(STRATEGY_NAME) and f.endswith(".csv")]
-    if file_list:
-        df_list = [pd.read_csv(RESULT_DIR / f, encoding=ENCODING) for f in file_list]
+    df_list = []
+    
+    for f in file_list:
+        file_path = RESULT_DIR / f
+        if file_path.stat().st_size > 0: # 파일 크기가 0보다 큰 것만 병합
+            try:
+                df = pd.read_csv(file_path, encoding=ENCODING)
+                if not df.empty:
+                    df_list.append(df)
+            except Exception:
+                pass
+
+    if df_list:
         merged_df = pd.concat(df_list, ignore_index=True)
-        
         final_csv = RESULT_DIR / "final_total_result.csv"
         merged_df.to_csv(final_csv, encoding=ENCODING, index=False)
-        print(f"🎉 모든 멀티프로세스 완료 및 병합 완료: {final_csv}")
+        print(f"🎉 모든 백테스팅 및 병합 완료! 최종 결과 파일: {final_csv} (총 {len(merged_df)}건 거래 기록)")
+    else:
+        print("⚠️ 백테스트 조건에 일치하는 매매 거래 기록(PnL)이 발생하지 않았습니다.")

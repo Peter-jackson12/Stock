@@ -48,10 +48,6 @@ def check_entry_conditions(stock: dict, t: int, set_time: int) -> bool:
         # 상세 전략 조건 만족 여부
         if (stock.get('max10_trigger', 0) > 0 and
             2.3 < stock.get('ctotal', 0) < 31 and
-            stock.get('t_max1buyratio', 0) > 0.1 and
-            stock.get('max60_trigger', 0) > -0.35 and
-            stock.get('max60buyratio', 0) > 0.6 and
-            stock.get('cbv_5', 0) > 50 and
             stock.get('amt_10s', 0) > 700):
             return True
 
