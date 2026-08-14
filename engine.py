@@ -81,6 +81,7 @@ class BackTestEngine:
     def _process_stock(self, conn, code_col, code, today_str):
         """개별 종목 백테스팅 연산 수행"""
         try:
+            stock_name = str(self.daily_data['open'][code_col].iloc[0])
             raw_data = pd.DataFrame(conn.cursor().execute(f"SELECT * FROM '{code}'").fetchall())
             if raw_data.empty:
                 return
@@ -97,6 +98,7 @@ class BackTestEngine:
             ticks = np.array(raw_data[8]).astype(float)
 
             stock = {
+                'name': stock_name,
                 'time': times,
                 'open': opens,
                 'high': highs,
@@ -155,16 +157,16 @@ class BackTestEngine:
                         self.trading['cbv_1'].append(stock.get('cbv_1', 0))
                         self.trading['ctotal'].append(stock.get('ctotal', 0))
                         self.trading['cum_amt'].append(100)
-                        print(f"★ [매도 완료] 종목: {code}, PnL: {stock['pnl']}%, 사유: {exit_msg}")
+                        print(f"★ [매도 완료] 종목: {stock['name']}({code}), PnL: {stock['pnl']}%, 사유: {exit_msg}")
 
                 # 2. 진입 조건 체킹
                 if check_entry_conditions(stock, t, SET_TIME):
                     stock['position'] = 1
                     stock['entry_t'] = t + 1 if t + 1 < len(stock['time']) else t
                     stock['entry_price'] = stock['high'][stock['entry_t']]
-                    print(f"★ [매수 진입] 종목: {code}, 시간: {time_str}, 진입가: {stock['entry_price']}")
+                    print(f"★ [매수 진입] 종목: {stock['name']}({code}), 시간: {time_str}, 진입가: {stock['entry_price']}")
 
         except Exception as e:
             # 에러 원인 출력 (숨기지 않음!)
-            print(f"❌ 종목 [{code}] 처리 중 에러 발생: {e}")
+            print(f"❌ 종목 [{stock['name']}({code})] 처리 중 에러 발생: {e}")
             traceback.print_exc()
