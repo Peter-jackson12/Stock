@@ -64,6 +64,11 @@ class BackTestEngine:
             # 종목 탐색
             for code_col in csv_open.keys()[1:]:
                 code = code_col[1:] if code_col.startswith('A') else code_col
+
+                  # 📌 [테스트용 추가] 기아(000270) 종목이 아니면 즉시 스킵
+                if code != '000270':
+                    continue
+                
                 if code in sec_tables:
                     processed_stocks += 1
                     self._process_stock(conn, code_col, code, today_str)
@@ -139,7 +144,7 @@ class BackTestEngine:
                         
                         # 거래 기록 저장
                         self.trading['today'].append(today_str)
-                        self.trading['name'].append(code)
+                        self.trading['name'].append(stock_name)
                         self.trading['starttime'].append(stock['time'][0])
                         self.trading['trigger'].append(stock.get('trigger', 0))
                         self.trading['t_open'].append(stock['open'][0])
