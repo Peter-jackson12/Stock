@@ -1,5 +1,5 @@
 # main.py
-from engine import BackTestEngine
+from engine.engine import BackTestEngine
 
 if __name__ == "__main__":
     print("🚀 단일 프로세스 백테스팅 가동 시작...")
