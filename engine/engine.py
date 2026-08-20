@@ -3,11 +3,15 @@ import sqlite3
 import traceback
 import numpy as np
 import pandas as pd
-from config import STRATEGY_NAME, SET_TIME, RESULT_DIR, ENCODING
-from utils import calculate_ticksize, calculate_upperlimit, calculate_time_spread
-from data_loader import DataLoader
-from risk_manager import check_exit_signals
-from strategy import calculate_window_metrics, check_entry_conditions
+from engine.config import STRATEGY_NAME, SET_TIME, RESULT_DIR, ENCODING  # ⭐️ engine. 추가
+from engine.utils import (
+    calculate_ticksize,
+    calculate_upperlimit,
+    calculate_time_spread,
+)
+from engine.data_loader import DataLoader
+from engine.risk_manager import check_exit_signals
+from engine.strategy import calculate_window_metrics, check_entry_conditions
 
 class BackTestEngine:
     def __init__(self, part: int = 1, split: int = 12):

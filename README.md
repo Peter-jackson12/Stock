@@ -64,4 +64,39 @@ Stock/
 ├── engine.py              # 백테스팅 핵심 실행 조율기
 ├── main.py                # 단일 프로세스 실행 진입점
 └── run_parallel.py        # 멀티프로세스 병렬 가동 및 자동 결과 병합
+
+
+
+## 🗺️ System Architecture & Milestones (프로젝트 로드맵)
+
+본 프로젝트는 단순 백테스팅 스크립트를 넘어, 데이터 수집부터 전략 분석, 실거래까지 포괄하는 **All-in-One 퀀트 트레이딩 플랫폼**으로 지속 확장 중입니다.
+
+```mermaid
+graph LR
+    A[Phase 1: Engine Refactoring<br/>초봉 멀티프로세싱 엔진] --> B[Phase 2: Dashboard Integration<br/>Streamlit + Local Ollama 웹앱]
+    B --> C[Phase 3: Interactive Tuner<br/>웹 기반 노코드 전략 빌더]
+    C --> D[Phase 4: Vertical Expansion<br/>자동 크롤러 & 실거래 봇]
+    style A fill:#4CAF50,stroke:#388E3C,color:#fff
+    style B fill:#2196F3,stroke:#1976D2,color:#fff
+    style C fill:#FF9800,stroke:#F57C00,color:#fff
+    style D fill:#9C27B0,stroke:#7B1FA2,color:#fff
+```
+
+- [x] **Phase 1: 코어 엔진 리팩토링 & 병렬화 (Completed ✅)**
+  - 모놀리식 단일 코드를 7대 독립 모듈(SRP)로 분리
+  - `multiprocessing.Pool` 기반 코어별 병렬 백테스팅 가속화 및 결과 자동 병합
+  - `uv` 선언적 패키지 매니저 및 `utf-8-sig` 글로벌 인코딩 적용
+
+- [ ] **Phase 2: 올인원 대시보드 저장소 통합 (In Progress 🔄)**
+  - `Stock-dashboard`를 `Stock/dashboard`로 흡수·통합
+  - 4개 서브페이지(Overview, Performance, Strategy Analysis, Insight) 연동
+  - 로컬 LLM(Ollama `llama3.2:3b`) 기반 실시간 전략 분석 어시스턴트 탑재
+
+- [ ] **Phase 3: 인터랙티브 전략 튜너 & 원클릭 웹 백테스팅 (Planned 🎯)**
+  - Streamlit 사이드바 UI를 통한 매수세(`cbv_5`), 손절률(`stop_loss`) 파라미터 동적 입력
+  - 웹에서 `[🚀 백테스트 실행]` 클릭 시 백엔드 엔진 즉시 가동 및 차트 자동 갱신
+
+- [ ] **Phase 4: 수직 계열화 확장 (Future 🔮)**
+  - **Upstream (`collector/`):** 일봉/초봉 시세 데이터 및 재무제표 자동 크롤링 & PostgreSQL DB 파이프라인
+  - **Downstream (`trader/`):** 증권사(한국투자증권 등) OpenAPI 연동 실시간 모의/실거래 자동매매 봇
 ```

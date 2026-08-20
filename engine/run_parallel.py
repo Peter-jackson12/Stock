@@ -1,8 +1,14 @@
-import os
 from multiprocessing import Pool
+import os
 import pandas as pd
-from config import DEFAULT_SPLIT, RESULT_DIR, ENCODING, STRATEGY_NAME
-from engine import BackTestEngine
+from engine.config import (
+    DEFAULT_SPLIT,
+    RESULT_DIR,
+    ENCODING,
+    STRATEGY_NAME,
+)  # ⭐️ engine. 추가
+from engine.engine import BackTestEngine
+
 
 def run_worker(task):
     part, split = task
