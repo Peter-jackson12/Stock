@@ -5,14 +5,12 @@ from pathlib import Path
 # 1. 프로젝트 기본 경로 설정 (상대 경로 자동 계산)
 # ==========================================
 # config.py가 위치한 폴더를 기준(Stock/)으로 절대 경로 계산
-BASE_DIR = Path(__file__).resolve().parent
+# BASE_DIR을 프로젝트 루트(Stock/)로 지정
+BASE_DIR = Path(__file__).resolve().parent.parent
 
-# 데이터 경로 (sampledata/Daily, sampledata/temp)
 DATA_DIR = BASE_DIR / "sampledata"
 CSV_PATH = DATA_DIR / "Daily"
 SEC_PATH = DATA_DIR / "temp"
-
-# 결과 저장 경로 (results/)
 RESULT_DIR = BASE_DIR / "results"
 
 # 결과 폴더가 없으면 자동으로 생성
