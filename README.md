@@ -2,6 +2,16 @@
 
 초봉/호가잔량(LOB) 데이터를 활용한 고성능 파이썬 백테스팅 엔진 패키지입니다.
 
+## 📈 Real-World Performance & Track Record
+
+> 단순 과거 백테스팅에 그치지 않고, **2022년 글로벌 대세 하락장(Bear Market) 구간에서 실제 계좌로 검증된 전략 알파(Alpha)**입니다.
+
+<p align="center">
+  <img src="./assets/track_record_2022.png" width="450" alt="2022 실계좌 수익률 트랙 레코드">
+</p>
+
+* **검증 기간:** 2022.04 ~ 2022.11 (코스닥 폭락장 구간)
+* **성과 요약:** 지수 역행 월평균 +11.8% 수익률 달성 및 누적 MDD 철저 방어
 ---
 
 ## ✨ 주요 특징 (Key Features)
