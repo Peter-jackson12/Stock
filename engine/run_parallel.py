@@ -1,3 +1,19 @@
+import sys
+from pathlib import Path
+
+# UTF-8 콘솔 인코딩 설정 (Windows 이모지 및 한글 출력 호환)
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path = [p for p in sys.path if Path(p).resolve() != Path(__file__).resolve().parent]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from multiprocessing import Pool
 import os
 import pandas as pd
@@ -8,6 +24,8 @@ from engine.config import (
     STRATEGY_NAME,
 )  # ⭐️ engine. 추가
 from engine.engine import BackTestEngine
+
+
 
 
 def run_worker(task):
