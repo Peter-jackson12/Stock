@@ -1,4 +1,5 @@
 import numpy as np
+from engine.utils import calculate_time_spread
 
 def calculate_window_metrics(stock: dict, t: int):
     """5초, 10초, 30초, 60초 윈도우 지표 계산"""
@@ -25,6 +26,37 @@ def calculate_window_metrics(stock: dict, t: int):
             stock['tmax_cbv1'] = stock['cbv_1']
         if stock['tmax_cbv1'] != 0:
             stock['t_max1buyratio'] = round(stock['cbv_1'] / stock['tmax_cbv1'], 3)
+
+    # ⭐️ 진입 조건(check_entry_conditions)에서 사용하는 파생 지표
+    # legacy_engine.py Control_Strategy() 로직 복원 (모듈화 과정에서 누락되었던 부분)
+    if t > 0:
+        trigger = stock['open'][0]
+        time_spread = calculate_time_spread('second', stock['time'][0], stock['time'][t])
+
+        if time_spread > 0:
+            # 초당 체결 강도(ctotal) - 진입 조건 필터에 사용
+            stock['ctotal'] = sum(stock['tick'][:t]) / time_spread
+
+            # 구간별 거래대금(amt_{w}s / bamt_{w}s)
+            for w in windows:
+                t_ws = max(0, t - w)
+                if t_ws < t:
+                    vol_ws = sum(stock['vol'][t_ws:t])
+                    bvol_ws = sum(stock['buy_vol'][t_ws:t])
+                    price_ws = np.mean(stock['close'][t_ws:t])
+                    norm_factor = min(w, time_spread)
+                    stock[f'amt_{w}s'] = vol_ws * price_ws / 10000 / norm_factor
+                    stock[f'bamt_{w}s'] = bvol_ws * price_ws / 10000 / norm_factor
+
+        # 구간별 trigger 대비 최고/최저가 괴리율(min/max_{w}_trigger)
+        for w in [1, 5, 10, 30, 60]:
+            if t > w:
+                min_price_w = min(stock['low'][t - w: t])
+                max_price_w = max(stock['high'][t - w: t])
+                if min_price_w > 0:
+                    stock[f'min{w}_trigger'] = round((trigger / min_price_w - 1) * 100, 3)
+                if max_price_w > 0:
+                    stock[f'max{w}_trigger'] = round((trigger / max_price_w - 1) * 100, 3)
 
 
 def check_entry_conditions(stock: dict, t: int, set_time: int) -> bool:
