@@ -1,4 +1,4 @@
-from utils import calculate_time_spread
+from engine.utils import calculate_time_spread  # ⭐️ engine. 추가
 
 def check_exit_signals(stock_data: dict, t: int, current_time_str: str) -> str | None:
     """
