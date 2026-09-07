@@ -65,11 +65,17 @@ class BackTestEngine:
             cursor = conn.cursor()
             sec_tables = set(name[0] for name in cursor.execute("SELECT name FROM sqlite_master WHERE type='table';"))
 
-            # 종목 탐색
+            # ====================================================================
+            # 🛠️ [DEBUG / TEST MODE] 디버그 및 테스트 모드 설정
+            # 전체 종목을 백테스팅하면 시간이 너무 오래 걸리므로,
+            # 샘플 데이터(20220425~20220504) 구간에서 '기아(000270)' 종목만
+            # 빠르게 테스트하기 위해 필터링을 적용 중입니다.
+            # (추후 전체 종목 테스트 시 이 조건을 해제하거나 수정하세요)
+            # ====================================================================
             for code_col in csv_open.keys()[1:]:
                 code = code_col[1:] if code_col.startswith('A') else code_col
 
-                  # 📌 [테스트용 추가] 기아(000270) 종목이 아니면 즉시 스킵
+                # 📌 [테스트용 추가] 기아(000270) 종목이 아니면 즉시 스킵
                 if code != '000270':
                     continue
                 
