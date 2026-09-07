@@ -1,7 +1,7 @@
+from pathlib import Path
 import sqlite3
 import pandas as pd
-from pathlib import Path
-from config import CSV_PATH, SEC_PATH, ENCODING
+from engine.config import CSV_PATH, SEC_PATH, ENCODING  # ⭐️ engine. 추가
 
 class DataLoader:
     """일봉 CSV 데이터 및 초봉 SQLite DB 파일 로드를 전담하는 클래스"""
