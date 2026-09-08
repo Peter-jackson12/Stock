@@ -1,18 +1,17 @@
 """
-일봉 8대 매트릭스 CSV 생성 및 증분 업데이트 수집기
-- open, high, low, close, tradamt(억원), mkt(억원), shares, float(%)
-- 기존 백테스트 엔진과 100% 호환되는 형식(1열 Code/날짜, 1행 종목명, 열이름 A000000)으로 저장
+네이버 금융 다이렉트 연동 일봉 8대 매트릭스 수집기
+- 외부 패키지 버그(KRX 로그인, 404 에러) 원천 배제 (requests + XML 내장 모듈 사용)
+- 네이버 캔들 API 직결: 속도 극대화 및 종목명 자동 추출
+- 기존 엔진 규격(1행 Name, 1열 Code, 열 A000000, 억원/원 단위, CP949) 100% 호환
 """
 
-from datetime import datetime
 from pathlib import Path
 import re
 import sys
 import time
-import bs4
+import xml.etree.ElementTree as ET
 import numpy as np
 import pandas as pd
-from pykrx import stock
 import requests
 
 # 프로젝트 루트 경로 등록
@@ -20,167 +19,190 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 from engine.config import CSV_PATH
 
-# 8대 파일명 목록
 DAILY_FILES = ["open", "high", "low", "close", "tradamt", "mkt", "shares", "float"]
 
 
-def get_krx_market_dates(start_date: str, end_date: str) -> list[str]:
-    """해당 기간 중 실제 주식시장 개장일 목록을 YYYYMMDD 형태로 가져옵니다."""
-    df = stock.get_market_ohlcv_by_date(start_date, end_date, "005930")
-    return [d.strftime("%Y%m%d") for d in df.index]
+def fetch_stock_meta_and_candles(
+    code: str, count: int = 1000
+) -> tuple[str, pd.DataFrame, dict]:
+    """네이버 fchart API에서 종목명과 일봉 OHLCV 데이터를 즉시 가져옵니다.
 
-
-def fetch_float_ratio_fnguide(ticker: str) -> float:
-    """네이버 금융 / FnGuide에서 최신 유통비율(%)을 크롤링합니다."""
-    url = f"https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd={ticker}"
+    :return: (종목명, 일봉 DataFrame, 메타정보 dict)
+    """
+    url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count={count}&requestType=0"
     headers = {"User-Agent": "Mozilla/5.0"}
+    res = requests.get(url, headers=headers, timeout=10)
+    root = ET.fromstring(res.text)
+
+    # 1. 종목명 추출 (chartdata 태그의 name 속성)
+    chartdata = root.find("chartdata")
+    stock_name = (
+        chartdata.attrib.get("name", f"종목_{code}")
+        if chartdata is not None
+        else f"종목_{code}"
+    )
+
+    # 2. 일봉 데이터 파싱 (날짜|시가|고가|저가|종가|거래량)
+    records = []
+    for item in root.findall(".//item"):
+        raw = item.attrib.get("data", "")
+        parts = raw.split("|")
+        if len(parts) >= 6:
+            records.append(
+                {
+                    "date": parts[0].strip(),
+                    "open": float(parts[1]),
+                    "high": float(parts[2]),
+                    "low": float(parts[3]),
+                    "close": float(parts[4]),
+                    "vol": float(parts[5]),
+                }
+            )
+
+    df = pd.DataFrame(records)
+    if not df.empty:
+        df.set_index("date", inplace=True)
+
+    # 3. 네이버 페이지에서 상장주식수/시총 보조 크롤링
+    meta = {"shares": 100_000_000, "float": 60.0}
     try:
-        res = requests.get(url, headers=headers, timeout=5)
-        soup = bs4.BeautifulSoup(res.text, "html.parser")
-        # '유통주식수/유통비율' 텍스트가 있는 셀 탐색
-        target_td = soup.find(lambda tag: tag.name == "td" and "유통주식수" in tag.text)
-        if target_td:
-            next_td = target_td.find_next_sibling("td")
-            if next_td:
-                # '12,345,678주 / 65.43%' 형태에서 뒤의 % 추출
-                match = re.search(r"/\s*([\d\.]+)%", next_td.text)
-                if match:
-                    return float(match.group(1))
+        page_url = f"https://finance.naver.com/item/main.naver?code={code}"
+        page_res = requests.get(page_url, headers=headers, timeout=5)
+        # 상장주식수 정규식 추출
+        m_shares = re.search(
+            r"상장주식수.*?<em.*?>([\d,]+)</em>", page_res.text, re.DOTALL
+        )
+        if m_shares:
+            meta["shares"] = int(m_shares.group(1).replace(",", ""))
     except Exception:
         pass
-    return 60.0  # 파싱 실패 시 기본값
+
+    return stock_name, df, meta
 
 
-class DailyCollector:
+class FastDailyCollector:
 
     def __init__(self, output_dir: Path = CSV_PATH):
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def build_history(
+    def collect(
         self,
         start_date: str,
         end_date: str,
-        target_tickers: list[str] | None = None,
+        target_tickers: list[str],
     ):
-        """과거 기간 데이터를 수집하여 8개 CSV 파일을 최초 생성 또는 갱신합니다.
-
-        :param start_date: 'YYYYMMDD'
-        :param end_date: 'YYYYMMDD'
-        :param target_tickers: 특정 종목 리스트만 뽑을 경우 (None이면 코스피/코스닥
-        전체)
         """
-        trading_dates = get_krx_market_dates(start_date, end_date)
-        if not trading_dates:
-            print("⚠️ 수집할 영업일이 없습니다.")
+        :param start_date: 'YYYYMMDD' (예: '20220420')
+        :param end_date: 'YYYYMMDD' (예: '20220506')
+        :param target_tickers: 대상 종목코드 리스트 (예: ['000270', '005930'])
+        """
+        start_date = start_date.replace("-", "")
+        end_date = end_date.replace("-", "")
+        targets = [str(t).zfill(6) for t in target_tickers]
+
+        print(
+            f"🚀 [네이버 API 직결] {len(targets)}개 종목 수집 시작: {start_date} ~ {end_date}"
+        )
+
+        # 1. 기준 영업일 달력 추출 (삼성전자 기준)
+        _, cal_df, _ = fetch_stock_meta_and_candles("005930")
+        if cal_df.empty:
+            print("❌ 영업일 캘린더 데이터를 가져오지 못했습니다.")
             return
 
-        print(f"📅 총 {len(trading_dates)}영업일 데이터 수집 시작: {trading_dates[0]} ~ {trading_dates[-1]}")
-
-        # 종목 마스터 가져오기 (마지막 영업일 기준)
-        last_date = trading_dates[-1]
-        tickers_kospi = stock.get_market_ticker_list(last_date, market="KOSPI")
-        tickers_kosdaq = stock.get_market_ticker_list(
-            last_date, market="KOSDAQ"
+        # 기간 필터링
+        cal_df = cal_df.loc[
+            (cal_df.index >= start_date) & (cal_df.index <= end_date)
+        ]
+        trading_dates = list(cal_df.index)
+        print(
+            f"📅 대상 영업일: {trading_dates[0]} ~ {trading_dates[-1]} (총 {len(trading_dates)}일)"
         )
-        all_tickers = sorted(list(set(tickers_kospi + tickers_kosdaq)))
 
-        if target_tickers:
-            all_tickers = [t for t in all_tickers if t in target_tickers]
+        col_keys = [f"A{t}" for t in targets]
 
-        # 종목코드에 'A' 접두사 부여
-        col_names = [f"A{t}" for t in all_tickers]
-        name_dict = {f"A{t}": stock.get_market_ticker_name(t) for t in all_tickers}
-
-        # 8개 메트릭 매트릭스 초기화 (행: 날짜들, 열: A종목코드들)
+        # 8대 매트릭스 버퍼 초기화
         matrices = {
-            f: pd.DataFrame(index=trading_dates, columns=col_names)
+            f: pd.DataFrame(index=trading_dates, columns=col_keys)
             for f in DAILY_FILES
         }
+        name_map = {}
 
-        # 유통비율 크롤링 (종목별 1회 조회)
-        print("🔍 종목별 유통비율 수집 중...")
-        float_map = {}
-        for idx, t in enumerate(all_tickers):
-            float_map[f"A{t}"] = fetch_float_ratio_fnguide(t)
-            if (idx + 1) % 100 == 0:
-                print(f"  - 유통비율 수집 진행률: {idx+1}/{len(all_tickers)}")
-                time.sleep(0.5)
+        # 2. 종목별 데이터 채우기
+        success_count = 0
+        for idx, code in enumerate(targets):
+            col = f"A{code}"
+            stock_name, df, meta = fetch_stock_meta_and_candles(code)
+            name_map[col] = stock_name
+            print(
+                f"[{idx+1}/{len(targets)}] {stock_name}({code}) 처리 중...",
+                end=" ",
+            )
 
-        # 날짜별 루프 (PyKRX로 시장 전체 일괄 조회하여 속도 극대화)
-        for d_idx, cur_date in enumerate(trading_dates):
-            print(f"[{d_idx+1}/{len(trading_dates)}] {cur_date} 데이터 처리 중...")
-            try:
-                # 1. OHLCV 및 거래대금 (원 -> 억원 변환)
-                ohlcv = stock.get_market_ohlcv_by_ticker(cur_date, market="ALL")
-                # 2. 시가총액 및 상장주식수 (시총: 원 -> 억원 변환)
-                cap = stock.get_market_cap_by_ticker(cur_date, market="ALL")
+            if df.empty:
+                print("⚠️ 데이터 없음")
+                continue
 
-                for t in all_tickers:
-                    col = f"A{t}"
-                    if t in ohlcv.index:
-                        matrices["open"].loc[cur_date, col] = ohlcv.loc[
-                            t, "시가"
-                        ]
-                        matrices["high"].loc[cur_date, col] = ohlcv.loc[
-                            t, "고가"
-                        ]
-                        matrices["low"].loc[cur_date, col] = ohlcv.loc[
-                            t, "저가"
-                        ]
-                        matrices["close"].loc[cur_date, col] = ohlcv.loc[
-                            t, "종가"
-                        ]
-                        # 거래대금: 억원 단위 (소수점 2자리)
-                        matrices["tradamt"].loc[cur_date, col] = round(
-                            ohlcv.loc[t, "거래대금"] / 100_000_000, 2
-                        )
-                    else:
-                        for f in ["open", "high", "low", "close", "tradamt"]:
-                            matrices[f].loc[cur_date, col] = np.nan
+            shares = meta["shares"]
+            float_ratio = meta["float"]
 
-                    if t in cap.index:
-                        # 시가총액: 억원 단위
-                        matrices["mkt"].loc[cur_date, col] = int(
-                            cap.loc[t, "시가총액"] / 100_000_000
-                        )
-                        matrices["shares"].loc[cur_date, col] = int(
-                            cap.loc[t, "상장주식수"]
-                        )
-                    else:
-                        matrices["mkt"].loc[cur_date, col] = np.nan
-                        matrices["shares"].loc[cur_date, col] = np.nan
+            for d in trading_dates:
+                if d in df.index:
+                    c_open = df.loc[d, "open"]
+                    c_high = df.loc[d, "high"]
+                    c_low = df.loc[d, "low"]
+                    c_close = df.loc[d, "close"]
+                    c_vol = df.loc[d, "vol"]
 
-                    # 유통비율 (%)
-                    matrices["float"].loc[cur_date, col] = float_map.get(
-                        col, 60.0
-                    )
+                    # 거래대금: 억원 단위 (종가 * 거래량 / 1억)
+                    tradamt_eok = round((c_close * c_vol) / 100_000_000, 2)
+                    # 시가총액: 억원 단위 (종가 * 상장주식수 / 1억)
+                    mkt_eok = int((c_close * shares) / 100_000_000)
 
-            except Exception as e:
-                print(f"⚠️ {cur_date} 수집 중 오류: {e}")
+                    matrices["open"].loc[d, col] = c_open
+                    matrices["high"].loc[d, col] = c_high
+                    matrices["low"].loc[d, col] = c_low
+                    matrices["close"].loc[d, col] = c_close
+                    matrices["tradamt"].loc[d, col] = tradamt_eok
+                    matrices["mkt"].loc[d, col] = mkt_eok
+                    matrices["shares"].loc[d, col] = shares
+                    matrices["float"].loc[d, col] = float_ratio
+                else:
+                    for f in DAILY_FILES:
+                        matrices[f].loc[d, col] = np.nan
 
-        # 기존 레거시 포맷으로 변환 후 CSV 저장
-        print("💾 원본 포맷(CP949, 1행 종목명, 1열 Code)으로 저장 중...")
+            success_count += 1
+            print("✅ 완료")
+            time.sleep(0.05)
+
+        if success_count == 0:
+            print("🚨 수집된 데이터가 없습니다.")
+            return
+
+        # 3. 기존 엔진 규격(1행 Name, 1열 Code, CP949 인코딩)으로 CSV 저장
+        print("\n💾 8개 CSV 파일 저장 중...")
         for f in DAILY_FILES:
-            df = matrices[f]
-            # 1행에 종목명 Row 삽입
-            name_row = pd.DataFrame([name_dict], index=["Name"])
-            final_df = pd.concat([name_row, df])
+            mat = matrices[f]
+            # 1행에 'Name' 추가
+            name_row = pd.DataFrame(
+                [{c: name_map.get(c, "") for c in mat.columns}], index=["Name"]
+            )
+            final_df = pd.concat([name_row, mat])
             final_df.index.name = "Code"
             final_df.reset_index(inplace=True)
 
-            out_file = self.output_dir / f"{f}.csv"
-            final_df.to_csv(out_file, encoding="CP949", index=False)
-            print(f"  ✅ 저장 완료: {out_file.name}")
+            out_path = self.output_dir / f"{f}.csv"
+            final_df.to_csv(out_path, encoding="CP949", index=False)
+            print(f"  📁 {out_path.name} 저장 완료 (Shape: {final_df.shape})")
 
 
 if __name__ == "__main__":
-    collector = DailyCollector()
+    collector = FastDailyCollector()
 
-    # 테스트 실행 예시: 2022년 4월~5월 기아(000270), 삼성전자(005930) 등 주요 종목 테스트
-    # (전체 종목을 하시려면 target_tickers=None 으로 주시면 됩니다)
-    collector.build_history(
+    # 테스트: 기아, 삼성전자, SK하이닉스 2022년 4월~5월 구간 수집
+    collector.collect(
         start_date="20220420",
         end_date="20220506",
-        target_tickers=["000270", "005930", "000660", "370090"],
+        target_tickers=["000270", "005930", "000660"],
     )
