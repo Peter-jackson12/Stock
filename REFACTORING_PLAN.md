@@ -55,3 +55,14 @@
 - [x] KIS WebSocket 실시간 틱 수집 데몬 구현 (`tick_raw_logger.py`)
 - [x] Streamlit 대시보드 및 로컬 Ollama AI 연동 (`dashboard/`)
 - [ ] 실시간 잔고 조회 및 주문 실행기 어댑터 구현 (`trader/broker_adapter.py`)
+---
+
+## 5. 현재 작업 위치 및 다음 실행 태스크 (Current Handover)
+* **직전 완료 사항**:
+  - `daily_collector.py` (네이버 직결 일봉 8대 매트릭스 생성) 검증 완료
+  - `tick_raw_logger.py` 및 `build_lob_db.py` 2단계 파이프라인 가상 테스트(`--test`) 검증 완료
+  - 한국투자증권 모의투자 API Key 발급 및 루트 `KIS_APP.env` 파일 로드 연동 완료
+* **지금 즉시 실행할 태스크 (Next Action)**:
+  1. 실제 장중 웹소켓 수집 가동: `uv run python collector/tick_raw_logger.py` (10~20초 수집 후 Ctrl+C)
+  2. 수집된 실제 틱데이터 1초봉 LOB 변환: `uv run python collector/build_lob_db.py`
+  3. 변환된 실제 데이터 기반 백테스트 및 대시보드 연동 테스트
