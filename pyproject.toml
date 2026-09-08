@@ -11,7 +11,9 @@ dependencies = [
     "pandas>=2.2.0",
     "plotly>=6.0.0",
     "pykrx>=1.0.0",
+    "python-dotenv>=1.2.3",
     "requests>=2.0.0",
     "streamlit>=1.62.0",
+    "websockets>=16.1.1",
 ]
 
