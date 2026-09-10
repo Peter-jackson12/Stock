@@ -8,6 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
+.venv32
+.venv*
 
 # ==========================================
 # Environment & Secrets (비밀 키 및 환경 변수 무시 - 추가됨!)
