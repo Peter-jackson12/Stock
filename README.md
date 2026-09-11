@@ -33,8 +33,9 @@ Stock/
 │   ├── kiwoom/                    # [Core Collector] 키움증권 32비트 전 종목 수집기
 │   │   ├── kiwoom_universe_logger.py # 2,550개 보통주 체결/10호가 비동기 큐 초고속 덤프
 │   │   ├── test_login.py          # 키움 OpenAPI 연결 및 로그인 검증 스크립트
-│   │   └── requirements_32.txt    # 32비트 보조 가상환경 의존성 명세 (PyQt5)
+│   │   └── requirements.txt       # 32비트 보조 가상환경 의존성 명세 (PyQt5)
 │   ├── daily_collector.py         # 네이버 금융 XML 직결 일봉 8대 매트릭스 수집기
+│   ├── run_daily_daemon.py        # 일봉 데이터 자동 수집 데몬
 │   ├── build_lob_db.py            # [Stage 2] 당일 Raw 틱 ➔ 51컬럼 1초봉 LOB DB 배치 변환기
 │   ├── tick_raw_logger.py         # [옵션] 한투 KIS 웹소켓 실시간 로거
 │   └── universe.py                # 집중 모니터링 주도주 유니버스 관리
@@ -42,6 +43,7 @@ Stock/
 │   ├── nxt_tick_engine.py         # [신규] NXT 과열방어 + 1초 지연체결 + 3대 트레일컷 틱 엔진
 │   ├── tick_engine.py             # 틱 단위 이벤트 드리븐 백테스트 프로토타입
 │   ├── engine.py                  # 51개 컬럼 1초봉 LOB 기반 타임라인 백테스트 엔진
+│   ├── main.py                    # 백테스트 실행 메인 엔트리포인트
 │   ├── strategy.py                # 5/10/30/60초 윈도우 CBV 및 모멘텀 진입 시그널
 │   ├── risk_manager.py            # 손절, 트레일링스탑, 장마감 동시 청산 제어
 │   ├── data_loader.py             # 일봉 매트릭스 CSV & 초봉 LOB DB 로더
