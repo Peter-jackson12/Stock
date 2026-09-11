@@ -1,12 +1,12 @@
 # 📌 주식 백테스팅 & 트레이딩 시스템 리팩토링 및 아키텍처 기록 (ADR)
 
 ## 1. 개요 및 목적
-- **과거 문제**: 단일 스크립트(`legacy_engine.py`)에 데이터 수집, DB 로딩, 전략, 리스크 제어가 결합되어 하드코딩된 로컬 경로와 단일 프로세스 병목 발생.
+- **과거 문제**: 단일 스크립트(`legacy_engine.py`)에 데이터 수집, DB 로딩, 전략, 리스크 제어가 결합되어 하드코딩된 로컬 경로와 단일 프로세스 병목 발생. 1초봉 백테스트 결과와 실전 체결 간의 슬리피지 괴리 심화.
 - **개선 목표**:
-  1. 단일 책임 원칙(SRP) 기반의 독립 모듈화 및 CPU 멀티프로세싱 병렬 가속.
-  2. 재현 가능한 패키지 관리 (`uv` 기반 격리).
-  3. 실시간 고빈도(HF) 데이터 수집 및 1초봉 LOB 자동 변환 파이프라인 구축.
-  4. 웹 기반 대시보드(Streamlit) 및 로컬 LLM(Ollama) 연동을 통한 결과 해석 자동화.
+  1. 단일 책임 원칙(SRP) 기반의 독립 모듈화 및 CPU 멀티프로세싱 가속.
+  2. 선택 편향(Selection Bias) 없는 코스피/코스닥 전 종목 실시간 틱/호가 원천 데이터 레이크 구축.
+  3. 1초봉의 한계를 극복하는 틱 단위 미시구조(Order Book Microstructure) 이벤트 백테스트 엔진 구축.
+  4. 대체거래소(Nextrade, 08:00) 출범에 따른 갭 왜곡 및 설거지 음봉 방어 로직 정립.
 
 ---
 
@@ -14,28 +14,45 @@
 
 ### ✅ Issue 1. 레거시 스파게티 코드 모듈 분리
 - **해결**: 단일 1,000줄 코드를 `engine/`, `config.py`, `data_loader.py`, `strategy.py`, `risk_manager.py`, `utils.py`로 분리.
-- **효과**: 기능별 유닛 테스트 가능, 유지보수 용이성 및 전략 파라미터 튜닝 유연성 확보.
+- **효과**: 기능별 유닛 테스트 가능 및 유지보수 용이성 확보.
 
 ### ✅ Issue 2. 대용량 데이터 처리 속도 개선 (CPU 병렬화)
-- **해결**: `multiprocessing.Pool` 기반의 `run_parallel.py`를 도입하여 날짜 구간을 분할(`DEFAULT_SPLIT`) 처리 후 자동 CSV 병합.
-- **효과**: 백테스트 수행 속도 약 80% 이상 단축.
+- **해결**: `multiprocessing.Pool` 기반의 `run_parallel.py`를 도입하여 날짜 구간을 분할(`DEFAULT_SPLIT`) 처리 후 자동 CSV 병합. 백테스트 수행 속도 약 80% 이상 단축.
 
-### ✅ Issue 3. 데이터 수집 라이브러리 차단 및 404 이슈 해결
-- **문제**: `pykrx`의 KRX 강제 로그인 정책 도입 및 `FinanceDataReader`의 상장사 캐시 URL 404 에러로 인해 일봉 수집 실패.
-- **해결**: 외부 라이브러리 의존성을 제거하고 **네이버 금융 fchart API(XML) 직결 수집기(`daily_collector.py`)** 구현.
-- **결과**: 인증 없이 0.05초 만에 종목명과 8대 일봉 매트릭스(`open`, `high`, `low`, `close`, `tradamt`, `mkt`, `shares`, `float`) 생성 완료.
+### ✅ Issue 3. 데이터 수집 라이브러리 404 및 로그인 차단 우회
+- **문제**: `pykrx`의 로그인 강제화 및 `FinanceDataReader`의 상장사 캐시 URL 404 에러.
+- **해결**: 외부 라이브러리 의존성을 제거하고 **네이버 금융 fchart API(XML) 직결 수집기(`daily_collector.py`)** 구현. 0.05초 만에 1,074영업일의 8대 일봉 매트릭스 CSV 생성 완료.
 
-### ✅ Issue 4. 고빈도(HF) 1초봉 LOB 데이터 파이프라인 정착
+### ✅ Issue 4. 고빈도(HF) 2단계 데이터 파이프라인 정착
 - **문제**: 장중 실시간으로 1초봉(51개 컬럼)을 조립하면 장초반 틱 폭주 시 웹소켓 지연(Lag) 및 패킷 유실 발생 위험.
 - **해결 (2-Step Architecture)**:
-  - **Stage 1 (`tick_raw_logger.py`)**: 장중에는 KIS WebSocket 틱/호가 데이터를 SQLite WAL 모드로 무가공 초고속 기록.
-  - **Stage 2 (`build_lob_db.py`)**: 장 마감 후 일괄 리샘플링하여 엔진 표준인 **51개 컬럼의 `{YYYYMMDD}_LOB.db`** 빌드.
+  - **Stage 1**: 장중에는 체결/호가 데이터를 SQLite WAL 모드로 무가공 초고속 Append.
+  - **Stage 2**: 장 마감 후 일괄 리샘플링하여 51개 컬럼 `{YYYYMMDD}_LOB.db` 생성.
+
+### ✅ Issue 5. 선택 편향 극복: 키움 Open API+ 32비트 전 종목 수집기 채택
+- **문제**: 한투 KIS 무료 웹소켓의 세션당 40종목 제한으로 인해 사전 선별 수집 시 선택 편향(Selection Bias) 및 장중 급등주 누락 발생.
+- **해결**:
+  - `uv venv .venv32 --python cpython-3.10.11-windows-i686-none` 기반 32비트 격리 환경 구축.
+  - 키움 Open API+ 화면번호 26개 분할 매핑을 통해 코스피/코스닥 보통주(~2,550개) 전 종목 동시 실시간 구독.
+  - 불필요한 기계 호가 트래픽을 유발하는 ETF, ETN, 스팩, 우선주를 자동 배제하여 DB 용량 50% 절감.
+  - 생산자-소비자 큐(`queue.Queue`)와 백그라운드 DB 스레드로 **18만 건 수집 중 대기 큐 85개 유지 (유실률 0%)** 달성.
+
+### ✅ Issue 6. 실전 틱 체결 방향(is_buy) 데이터 정합성 버그 해결
+- **문제**: DBeaver 검증 결과 모든 체결 틱이 `is_buy = 0(매도)`으로 적재되는 현상 발견 (키움 FID 14 빈 문자열 반환 문제).
+- **해결**: **호가 비교 알고리즘(Lee-Ready)**을 도입하여 체결가 $\ge$ 최우선 매도호가(`ask_p1`) 조건을 결합한 2중 방어 판정 구현. 매도 58% vs 매수 42%의 정상 시장 분포 복구.
+
+### ✅ Issue 7. 실전 통신 렉(Latency) 및 Nextrade(NXT) 미시구조 엔진 구축
+- **문제**: 다음 틱($t+1$) 즉시 체결 가정은 실전 50~100ms 통신 렉과 호가 붕괴를 반영하지 못함. 또한 08:00 NXT 프리마켓 과열 후 09:00 개장 시 설거지 음봉 발생.
+- **해결 (`nxt_tick_engine.py`)**:
+  - **NXT 과열 필터**: 08:00~08:50 거래량/상승률 과열 종목은 09:00 정규장 돌파 매수 금지.
+  - **1초 지연 체결**: 시그널 발생 1초 뒤의 실제 호가창 `ask_p1`으로 체결하여 가혹한 스트레스 테스트 수행.
+  - **3대 트레일링 컷 동시 시뮬레이션**: 고정 익절, 2틱 반락 트레일링 컷, 본전 보존형 계단식 컷의 성과를 병렬 비교.
 
 ---
 
-## 3. 데이터 스키마 명세 (51 Columns LOB)
+## 3. 데이터 스키마 명세
 
-엔진과 수집기가 공유하는 1초봉 LOB 스키마 구조:
+### 3.1 51개 컬럼 LOB 스키마 (`*_LOB.db`)
 * **0**: `time` (HHMMSS)
 * **1 ~ 4**: `open`, `high`, `low`, `close`
 * **5 ~ 7**: `vol`, `buy_vol`, `sell_vol`
@@ -45,24 +62,34 @@
 * **31 ~ 40**: `bid_p1` ~ `bid_p10` (매수호가 1~10단계)
 * **41 ~ 50**: `bid_v1` ~ `bid_v10` (매수호가 잔량 1~10단계)
 
+### 3.2 Raw 틱 스키마 (`*_raw.db`)
+* **`raw_trades`**: `(t_time TEXT, code TEXT, price REAL, vol INTEGER, is_buy INTEGER)`
+* **`raw_quotes`**: `(q_time TEXT, code TEXT, offer_p TEXT, offer_v TEXT, bid_p TEXT, bid_v TEXT)`
+
 ---
 
 ## 4. 진행 현황 체크리스트 (Progress)
-- [x] 로컬 절대 경로(`C:\Users\...`) ➔ 상대 경로 자동 계산 구조 개편
+- [x] 로컬 절대 경로 ➔ 상대 경로 자동 계산 구조 개편
 - [x] CP949 / UTF-8 크로스 플랫폼 인코딩 정합성 확보
 - [x] 일봉 8대 매트릭스 CSV 생성기 구현 (`daily_collector.py`)
-- [x] 1초봉 51개 컬럼 LOB 생성기 구현 (`ws_lob_collector.py`, `build_lob_db.py`)
-- [x] KIS WebSocket 실시간 틱 수집 데몬 구현 (`tick_raw_logger.py`)
+- [x] 1초봉 51개 컬럼 LOB 생성기 구현 (`build_lob_db.py`)
+- [x] 키움 Open API+ 32비트 격리 가상환경 및 원클릭 복구 스크립트 완비 (`setup_kiwoom.ps1`)
+- [x] 코스피/코스닥 보통주 2,550개 전 종목 실시간 틱/호가 비동기 큐 수집기 검증 완료 (`kiwoom_universe_logger.py`)
+- [x] 틱 단위 매수/매도 실시간 판정 2중 방어 알고리즘 검증 완료
+- [x] Nextrade 프리마켓 방어 및 1초 지연 체결 틱 백테스트 엔진 구현 (`nxt_tick_engine.py`)
+- [x] 3대 트레일링 컷(고정, 2틱 반락, 계단식 본전보존) 동시 비교 시뮬레이터 구축
 - [x] Streamlit 대시보드 및 로컬 Ollama AI 연동 (`dashboard/`)
-- [ ] 실시간 잔고 조회 및 주문 실행기 어댑터 구현 (`trader/broker_adapter.py`)
+- [ ] 홈 PC 원격 무인 수집 환경(크롬 원격 데스크톱) 정착
+- [ ] 실시간 잔고 조회 및 SOR 최선집행 주문 어댑터 구현 (`trader/broker_adapter.py`)
+
 ---
 
 ## 5. 현재 작업 위치 및 다음 실행 태스크 (Current Handover)
 * **직전 완료 사항**:
-  - `daily_collector.py` (네이버 직결 일봉 8대 매트릭스 생성) 검증 완료
-  - `tick_raw_logger.py` 및 `build_lob_db.py` 2단계 파이프라인 가상 테스트(`--test`) 검증 완료
-  - 한국투자증권 모의투자 API Key 발급 및 루트 `KIS_APP.env` 파일 로드 연동 완료
+  - 키움증권 32비트 전 종목 보통주(~2,550개) 수집 엔진(`kiwoom_universe_logger.py`) 실전 테스트 검증 완료 (108초간 18만 건 무유실 적재).
+  - DBeaver 쿼리를 통해 매도 58% vs 매수 42%의 정상 틱 데이터 정합성 확인.
+  - 호가 스프레드, 1초 통신 렉, NXT 프리마켓 과열 방어, 3대 트레일링 컷을 통합한 `engine/nxt_tick_engine.py` 구축 완료.
 * **지금 즉시 실행할 태스크 (Next Action)**:
-  1. 실제 장중 웹소켓 수집 가동: `uv run python collector/tick_raw_logger.py` (10~20초 수집 후 Ctrl+C)
-  2. 수집된 실제 틱데이터 1초봉 LOB 변환: `uv run python collector/build_lob_db.py`
-  3. 변환된 실제 데이터 기반 백테스트 및 대시보드 연동 테스트
+  1. 집 컴퓨터에 크롬 원격 데스크톱 설치 및 `.\setup_kiwoom.ps1`을 통한 3분 원클릭 환경 복구.
+  2. 다음 영업일(08:00~15:35) 동안 집 컴퓨터에서 `kiwoom_universe_logger.py` 풀타임 가동하여 대규모 전 종목 틱 데이터 레이크 적재.
+  3. 적재된 하루치 전체 틱 데이터를 바탕으로 `nxt_tick_engine.py`를 가동하여 3대 트레일링 컷 중 최종 승자 룰 확정 및 전략 최적화.
