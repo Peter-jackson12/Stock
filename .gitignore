@@ -6,10 +6,11 @@ dist/
 wheels/
 *.egg-info
 
-# Virtual environments
-.venv
-.venv32
-.venv*
+
+# Logs
+*.log
+test_dash.py
+
 
 # ==========================================
 # Environment & Secrets (비밀 키 및 환경 변수 무시 - 추가됨!)
