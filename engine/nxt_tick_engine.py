@@ -6,6 +6,7 @@
 - 3대 청산 규칙(고정 / 2틱 반락 트레일링 / 본전보존 계단식 트레일링) 동시 비교
 """
 
+import argparse
 from datetime import datetime
 from pathlib import Path
 import sqlite3
@@ -520,7 +521,19 @@ class NextradeTickEngine:
         return trades
 
 
+def _parse_cli_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="NXT 프리마켓 과열방어 + 3대 트레일링 컷 틱 엔진")
+    parser.add_argument("code", nargs="?", default="005930", help="대상 종목코드 (기본: 005930)")
+    parser.add_argument(
+        "--date", default="20260911",
+        help="대상 날짜 YYYYMMDD (기본: 20260911). sampledata/raw_ticks/{date}_raw.db 를 찾는다 (§1.6)",
+    )
+    parser.add_argument("--latency-sec", type=int, default=1, help="지연 체결 초 (기본: 1)")
+    parser.add_argument("--cooldown-sec", type=int, default=10, help="청산 후 재진입 대기 초 (기본: 10)")
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    target_stock = sys.argv[1] if len(sys.argv) > 1 else "005930"
-    engine = NextradeTickEngine(date_str="20260911", target_code=target_stock)
-    engine.run_strategy(latency_sec=1, cooldown_sec=10)
+    args = _parse_cli_args()
+    engine = NextradeTickEngine(date_str=args.date, target_code=args.code)
+    engine.run_strategy(latency_sec=args.latency_sec, cooldown_sec=args.cooldown_sec)
