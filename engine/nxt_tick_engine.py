@@ -30,6 +30,10 @@ from core.runstore import (
     make_run_id,
 )
 
+# 🆕 §3.6.1 — 거시 피처 null 정책. 값 자체는 아래 PARAMS 에 있고, 의미와 판정 로직은
+# strategies/macro_filter.py 에 있다 (임계값 비교는 L3 의 일이다 — §2).
+from strategies.macro_filter import ON_MISSING_REJECT
+
 RAW_DIR = DATA_DIR / "raw_ticks"
 
 STRATEGY_ID = "nxt_breakout"
@@ -67,6 +71,19 @@ PARAMS: Dict[str, Any] = {
         "window": [28800, 31800],       # 08:00:00 ~ 08:50:00 프리마켓 관측 구간
         "gain_threshold": 0.05,         # +5% 이상 상승 &
         "volume_threshold": 50000,      # 5만 주 이상 -> 정규장 돌파 매수 금지
+    },
+    # 거시 필터 — 아직 켜지 않았지만 **null 정책은 지금 확정해 둔다** (§3.6.1).
+    # 정책 없이 enabled 를 켜면 커버리지 1.5% 인 유니버스가 조용히 사라지거나
+    # 필터가 무력화된 채 켜져 있다고 착각하게 된다. 값은 여기 있어야
+    # hash_params() 를 거쳐 런 매니페스트에 기록된다.
+    # 의미와 선택지는 strategies/macro_filter.py 를 볼 것.
+    "macro": {
+        "enabled": False,
+        "on_missing": ON_MISSING_REJECT,
+        "mkt_cap_min_eok": 500,
+        "mkt_cap_max_eok": 30000,
+        "float_ratio_max_pct": 40.0,
+        "ytd_tradamt_min_eok": 100,
     },
     "exits": {
         "fixed": {"take_profit_pct": 0.008, "stop_loss_pct": -0.005},
