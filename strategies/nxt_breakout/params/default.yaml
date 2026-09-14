@@ -1,0 +1,81 @@
+# strategies/nxt_breakout/params/default.yaml
+#
+# engine/nxt_tick_engine.py 에 흩어져 있던 매직넘버를 전부 여기로 꺼냈다.
+# 규칙: 숫자는 코드에 들어가지 않는다.
+#
+# 파라미터가 파일에 있으면
+#   (a) git diff 로 변경 추적이 되고
+#   (b) 스윕이 파일 생성으로 자동화되고
+#   (c) RunManifest.param_hash 에 기록되어 재현성이 생긴다
+#
+# 참고: ARCHITECTURE_V2.md §4.2
+
+id: nxt_breakout
+version: "1.2.0"
+engine: tick
+description: >
+  NXT 프리마켓 과열 방어 + 당일 시가/마이크로 고점 돌파 + 호가잔량 불균형(OBI) 진입.
+  1초 지연 체결로 실전 슬리피지를 강제 주입한다.
+
+# --- 진입 조건 (nxt_tick_engine.py L258~283 에서 이관) ---------------------
+entry:
+  spread_max_pct: 0.0025          # 호가 스프레드 상한 (초과 시 진입 금지)
+  buy_ratio_min: 0.75             # 최근 15틱 중 시장가 매수 비중 하한
+  obi_min_ratio: 1.2              # 매수1~3호가 잔량 / 매도1~3호가 잔량 하한
+  min_vol_15t: 30                 # 최근 15틱 최소 누적 거래량
+  breakout_window_sec: 60         # 마이크로 고점 추적 윈도우
+  session_start_sec: 32400        # 09:00:00 — 정규장 진입 시작
+
+# --- 필터 -----------------------------------------------------------------
+filters:
+  # NXT 프리마켓 과열 방어 (nxt_tick_engine.py L136~148)
+  nxt_overheat:
+    window: [28800, 31800]        # 08:00:00 ~ 08:50:00 (당일 누적 초)
+    gain_threshold: 0.05          # +5% 이상 상승 &
+    volume_threshold: 50000       # 5만 주 이상 -> 09:00 정규장 돌파 매수 금지
+
+  # 거시 필터 — ARCHITECTURE_V2.md §1.5 의 '끊어진 연결선'을 잇는 자리.
+  # 현재 data_loader 는 mkt/float/tradamt 를 로드만 하고 전략에 전달하지 않는다.
+  # ⚠️ 전일 확정 일봉 기준 (당일 종가 기준으로 당일 진입을 거르면 그 자체가 룩어헤드)
+  macro:
+    enabled: false                # Phase B 에서 거시 피처 연결 후 true
+    mkt_cap_min_eok: 500          # 최소 시총 (억원)
+    mkt_cap_max_eok: 30000        # 최대 시총 (대형주 제외)
+    float_ratio_max_pct: 40.0     # 유통비율 상한
+    ytd_tradamt_min_eok: 100      # 전일 거래대금 하한 (억원)
+
+# --- 청산 규칙 (nxt_tick_engine.py L162~243 의 rules 딕셔너리에서 이관) -----
+# 백테스트: 아래 전부를 동시에 돌려 성적 비교
+# 실전:     active_exit 하나만 활성화
+exits:
+  - id: fixed
+    type: fixed
+    take_profit_pct: 0.008
+    stop_loss_pct: -0.005
+
+  - id: tick_trail
+    type: tick_trail
+    trail_ticks: 2                # 고점 대비 2틱 반락 시 청산
+    stop_loss_pct: -0.005
+
+  - id: step_trail
+    type: step_trail
+    arm_threshold_pct: 0.004      # +0.4% 도달 시 손절선을 본전+1틱으로 상향
+    breakeven_offset_ticks: 1
+    trail_ticks: 2
+    stop_loss_pct: -0.005
+
+active_exit: step_trail           # 실전 투입 시 사용할 규칙
+
+# --- 실행 ------------------------------------------------------------------
+execution:
+  latency_sec: 1                  # 시그널 발생 n초 뒤 실제 ask_p1 으로 체결
+  cooldown_sec: 10                # 청산 후 재진입 대기
+  fee_rate: 0.0020                # 세금 + 수수료 (0.20%)
+
+# --- 계좌/리스크 (ARCHITECTURE_V2.md §5.2 — 전략별 자본 분리) ---------------
+account:
+  capital: 10000000               # 이 전략에 할당된 자본 (원)
+  max_positions: 3                # 동시 보유 종목 수
+  max_position_pct: 0.34          # 종목당 최대 비중
+  daily_loss_limit_pct: -2.0      # 일일 손실 한도 초과 시 당일 신규 진입 정지
