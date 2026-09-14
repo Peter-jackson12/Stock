@@ -128,7 +128,11 @@ uv run streamlit run dashboard/app.py
   - 51개 컬럼 LOB 2단계 리샘플러 완비
 - [x] **Phase 3.5: 미시구조 틱 이벤트 엔진 및 Nextrade 방어 로직 (완료 ✅)**
   - NXT 08:00 프리마켓 과열 방어 + 1초 지연 체결 + 3대 트레일링 컷 비교 엔진 탑재
+- [ ] **Phase 3.7: 엔진/전략/피처 아키텍처 확장 (Architecture V2, 진행 중 🔄)**
+  - 전략 1개 → N개로 확장 가능한 구조로 재설계: 런 스토어, 피처 스토어, 전략 추상화, Broker 포트
+  - 세부 단계와 진행 상황은 `ARCHITECTURE_V2.md` §8 로드맵 참조
 - [ ] **Phase 4: 홈 PC 원격 무인 데이터 센터 가동 (진행 중 🔄)**
   - 크롬 원격 데스크톱 기반 24시간 상시 가동 환경 구축
 - [ ] **Phase 5: 실전/모의 자동 주문 집행기 (`trader/`) 연동 (예정 🎯)**
   - KIS / 키움 REST API 기반 SOR(최선집행) 자동 주문 봇 구현
+  - 기술적 하부 구조는 Architecture V2 Phase E(Broker 포트)에서 준비됨 — `ARCHITECTURE_V2.md` §5 참조
