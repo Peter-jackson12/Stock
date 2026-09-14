@@ -70,6 +70,34 @@ LOB_COLUMNS = [
 ]
 
 
+NUMERIC_COLUMNS = LOB_COLUMNS[1:]  # "time"(TEXT) 제외, 전부 REAL 선언 컬럼
+
+
+def validate_numeric_column_types(lob_conn: sqlite3.Connection, table: str) -> None:
+    """table 의 숫자 컬럼이 BLOB/TEXT 로 저장되지 않았는지 검사한다.
+
+    numpy 스칼라(int64 등)를 sqlite3 파라미터로 그대로 바인딩하면 컬럼을
+    REAL/INTEGER 로 선언해 두어도 값이 BLOB 으로 저장되는 사례가 있었다
+    (버퍼 프로토콜을 통해 바인딩되어 타입 변환 없이 원본 바이트가 들어감).
+    같은 문제가 재발하면 피처 빌드가 조용히 실패하지 않고 여기서 즉시
+    예외를 낸다.
+    """
+    bad = []
+    for col in NUMERIC_COLUMNS:
+        row = lob_conn.execute(
+            f"SELECT typeof({col}) FROM '{table}' "
+            f"WHERE typeof({col}) NOT IN ('integer', 'real') LIMIT 1"
+        ).fetchone()
+        if row is not None:
+            bad.append((col, row[0]))
+    if bad:
+        detail = ", ".join(f"{col}={t}" for col, t in bad)
+        raise TypeError(
+            f"[{table}] 숫자 컬럼이 BLOB/TEXT 로 저장되었습니다: {detail}. "
+            "INSERT 시 파이썬 int/float 로 명시 변환했는지 확인하세요."
+        )
+
+
 def resample_raw_to_lob(date_str: str):
     raw_db_path = RAW_DIR / f"{date_str}_raw.db"
     if not raw_db_path.exists():
@@ -120,16 +148,20 @@ def resample_raw_to_lob(date_str: str):
         grouped = trades_df.groupby("t_time")
 
         for sec, g in grouped:
-            c_open = g["price"].iloc[0]
-            c_high = g["price"].max()
-            c_low = g["price"].min()
-            c_close = g["price"].iloc[-1]
-            tot_vol = g["vol"].sum()
-            buy_vol = g[g["is_buy"] == 1]["vol"].sum()
-            sell_vol = g[g["is_buy"] == 0]["vol"].sum()
-            tick_cnt = len(g)
-            buy_tick = (g["is_buy"] == 1).sum()
-            sell_tick = (g["is_buy"] == 0).sum()
+            # numpy 스칼라(int64/float64 등)를 그대로 sqlite3 파라미터로 넘기면
+            # 파이썬 int/float 로 인식되지 못하고 버퍼 프로토콜을 통해 BLOB 으로
+            # 저장된다(REAL/INTEGER 컬럼이어도 typeof() 가 'blob' 이 된다).
+            # 반드시 파이썬 내장 float/int 로 변환해서 바인딩해야 한다.
+            c_open = float(g["price"].iloc[0])
+            c_high = float(g["price"].max())
+            c_low = float(g["price"].min())
+            c_close = float(g["price"].iloc[-1])
+            tot_vol = int(g["vol"].sum())
+            buy_vol = int(g[g["is_buy"] == 1]["vol"].sum())
+            sell_vol = int(g[g["is_buy"] == 0]["vol"].sum())
+            tick_cnt = int(len(g))
+            buy_tick = int((g["is_buy"] == 1).sum())
+            sell_tick = int((g["is_buy"] == 0).sum())
 
             # 해당 초(sec) 이전 가장 최신의 10호가 매핑
             recent_q = quotes_df[quotes_df["q_time"] <= sec]
@@ -174,6 +206,7 @@ def resample_raw_to_lob(date_str: str):
             f"INSERT INTO '{code}' VALUES ({placeholders})", lob_rows
         )
         lob_conn.commit()
+        validate_numeric_column_types(lob_conn, code)
         print(f"✅ 완료 ({len(lob_rows)}초봉 생성)")
 
     raw_conn.close()
