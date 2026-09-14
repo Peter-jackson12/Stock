@@ -157,6 +157,26 @@ class FeatureStore:
             return {}
         return json.loads(self.manifest_path.read_text(encoding="utf-8"))
 
+    def record_coverage(self, date: str, coverage: dict) -> dict:
+        """
+        하루치 커버리지를 매니페스트에 누적 기록한다 (§3.6.1).
+
+        커버리지는 날짜마다 다르므로 피처 목록과 달리 date 별로 쌓는다. 기록해 두는
+        이유는 결손 자체가 아니라 **결손을 모른 채 지나가는 것**이 문제이기 때문이다.
+        거시 필터를 켜는 순간 커버리지 1.5% 는 유니버스의 98.5% 를 조용히 날린다.
+        런을 나중에 들여다볼 때 "그때 그 파일의 커버리지가 얼마였나"를 답할 수 있어야 한다.
+        """
+        manifest = self.read_manifest()
+        if not manifest:
+            raise FileNotFoundError(
+                f"매니페스트가 없습니다: {self.manifest_path}. 먼저 write() 로 피처를 기록하세요"
+            )
+        manifest.setdefault("coverage", {})[str(date)] = coverage
+        self.manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        return manifest
+
     # -- 읽기 ---------------------------------------------------------------
 
     def read(
