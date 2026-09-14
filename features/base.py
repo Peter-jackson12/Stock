@@ -115,8 +115,21 @@ class Feature(ABC):
     #: 유효한 값이 나오기까지 필요한 이벤트/초 수
     warmup: int = 0
 
-    #: 시간 해상도
+    #: **저장 해상도** — 배치 빌더가 parquet 에 실제로 기록하는 행의 해상도.
+    #: fs_v1 은 하루치 1초봉 프레임 하나에 모든 피처를 나란히 붙이므로 전부 bar_1s 다.
+    #: 매니페스트가 파일의 실제 형태를 말하게 하려면 이 값이 저장 형태를 따라야 한다
+    #: (ARCHITECTURE_V2.md §3.6.2 — 이전에는 개념 해상도를 적어 매니페스트가 거짓말을 했다).
     resolution: str = "bar_1s"
+
+    #: **개념/스트리밍 해상도** — 이 피처가 원래 무엇을 단위로 계산되는가.
+    #: 저장 해상도와 다를 수 있다. obi_top3 는 native_resolution="tick" 이지만
+    #: 저장은 bar_1s 이고, 그래서 틱 엔진은 스토어를 읽지 않고 stream() 을 쓴다(§3.6.2 A안).
+    #: 비워두면 resolution 과 같다는 뜻이다.
+    native_resolution: str = ""
+
+    @property
+    def effective_native_resolution(self) -> str:
+        return self.native_resolution or self.resolution
 
     @abstractmethod
     def batch(self, ctx: BatchContext) -> np.ndarray:
@@ -160,8 +173,13 @@ class MacroFeature(Feature):
 
     이 클래스가 ARCHITECTURE_V2.md §1.5 에서 진단한 '끊어진 연결선'을 잇는 지점이다.
     현재 data_loader 는 mkt/float/tradamt 를 로드만 하고 전략에 전달하지 않는다.
+
+    해상도 표기: 값이 하루 1개라는 뜻에서 개념 해상도는 daily 지만, 저장은 초당 행마다
+    같은 값이 반복된 bar_1s 다(§3.5.2 가 '600배 중복'으로 지목한 그것). 매니페스트가
+    파일의 실제 형태를 말해야 하므로 resolution 은 bar_1s, native_resolution 이 daily 다.
     """
-    resolution = "daily"
+    resolution = "bar_1s"
+    native_resolution = "daily"
     warmup = 0
 
     #: bind() 로 채워지는 조회 맥락
@@ -238,7 +256,8 @@ class FeatureSet:
             "feature_set_version": self.version,
             "features": [
                 {"name": f.name, "version": f.version, "warmup": f.warmup,
-                 "deps": list(f.deps), "resolution": f.resolution}
+                 "deps": list(f.deps), "resolution": f.resolution,
+                 "native_resolution": f.effective_native_resolution}
                 for f in self.features
             ],
         }

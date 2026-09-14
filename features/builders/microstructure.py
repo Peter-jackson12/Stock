@@ -264,7 +264,10 @@ class OrderBookImbalance(MicroFeature):
     version = "1.0.0"
     deps = ("bid_v_top3", "ask_v_top3")
     warmup = 0
-    resolution = "tick"
+    # 틱 단위 지표지만 fs_v1 에는 1초봉 행으로 저장된다 (§3.6.2).
+    # 틱 엔진은 이 저장값을 읽지 않고 stream() 으로 매 체결마다 직접 계산한다(A안).
+    resolution = "bar_1s"
+    native_resolution = "tick"
 
     def batch(self, ctx: BatchContext) -> np.ndarray:
         bid = np.asarray(ctx.col("bid_v_top3"), dtype=float)
@@ -778,7 +781,9 @@ class RecentBuyRatio(MicroFeature):
 
     version = "1.0.0"
     warmup = 0
-    resolution = "tick"
+    # obi_top3 와 같은 사정 — 틱 지표지만 저장은 1초봉 행이다 (§3.6.2).
+    resolution = "bar_1s"
+    native_resolution = "tick"
 
     def __init__(self, window: int = 15, buy_field: str = "buy_vol", total_field: str = "vol") -> None:
         self.window = int(window)

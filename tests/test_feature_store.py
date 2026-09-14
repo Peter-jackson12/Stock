@@ -344,5 +344,8 @@ def test_feature_set_manifest_is_self_describing():
     entry = {f["name"]: f for f in manifest["features"]}
     assert entry["cbv_10"]["warmup"] == 11
     assert entry["cbv_10"]["version"] == "1.0.0"
-    assert entry["obi_top3"]["resolution"] == "tick"
+    # 저장 해상도는 1초봉, 개념 해상도만 틱이다 (§3.6.2 — 이전에는 여기가 "tick" 이라
+    # 적혀 있어 매니페스트가 파일의 실제 형태와 달랐다)
+    assert entry["obi_top3"]["resolution"] == "bar_1s"
+    assert entry["obi_top3"]["native_resolution"] == "tick"
     assert fs.max_warmup == 11
