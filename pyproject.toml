@@ -17,3 +17,8 @@ dependencies = [
     "websockets>=16.1.1",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
