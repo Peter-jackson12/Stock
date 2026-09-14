@@ -36,12 +36,40 @@ FEE_PCT = 0.23
 # nxt_tick_engine 의 fixed / tick_trail / step_trail 과 나란히 비교되는 축이다.
 EXIT_RULE_ID = "risk_manager"
 
-# 아직 피처 스토어(L2)가 없다. Phase B 에서 "fs_v1" 로 바뀐다.
+# 이 엔진은 아직 피처 스토어(L2)를 읽지 않는다 — calculate_window_metrics() 가
+# 여전히 루프 안에서 직접 계산한다. 실제로 fs_v1 을 소비하게 되는 시점(Phase C)에
+# 값을 바꾼다.
 FEATURE_SET_VERSION = "none"
 
 
 # ==========================================
-# 3. 인코딩 및 멀티프로세스 설정
+# 3. 대상 종목 유니버스
+# ==========================================
+# 특정 종목만 골라 백테스트하고 싶을 때 지정한다. 기본값(None)은 전체 종목이다.
+#
+# 과거에는 engine.py 소스 안에 다음과 같이 박혀 있었다 (ARCHITECTURE_V2.md §1.6).
+#     if code != '000270': continue
+# 릴리스 코드에 테스트용 필터가 살아 있으면, 그 사실을 잊는 순간 "왜 백테스트가
+# 종목 1개만 도는가"를 코드를 뒤져서 찾아야 한다. 지정 경로를 셋으로 열어둔다.
+#
+#   1) 환경변수  : TARGET_CODES=000270,005930 (콤마 구분)
+#   2) CLI 인자  : uv run python -m engine.main --codes 000270 005930
+#   3) 코드      : BackTestEngine(codes=["000270"])
+#
+# 우선순위는 CLI/코드로 명시한 값이 항상 이 기본값을 덮어쓴다.
+def _parse_target_codes() -> tuple[str, ...] | None:
+    raw = os.environ.get("TARGET_CODES", "").strip()
+    if not raw:
+        return None
+    codes = tuple(c.strip() for c in raw.split(",") if c.strip())
+    return codes or None
+
+
+TARGET_CODES: tuple[str, ...] | None = _parse_target_codes()
+
+
+# ==========================================
+# 4. 인코딩 및 멀티프로세스 설정
 # ==========================================
 # 한글 깨짐 방지를 위한 글로벌 표준 인코딩
 ENCODING = "utf-8-sig"

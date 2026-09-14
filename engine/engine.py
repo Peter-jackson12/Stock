@@ -2,6 +2,7 @@ import os
 import sqlite3
 import traceback
 from datetime import datetime
+from typing import Optional, Sequence
 import numpy as np
 import pandas as pd
 from engine.config import (  # ⭐️ engine. 추가
@@ -13,6 +14,7 @@ from engine.config import (  # ⭐️ engine. 추가
     FEE_PCT,
     EXIT_RULE_ID,
     FEATURE_SET_VERSION,
+    TARGET_CODES,
 )
 from engine.utils import (
     calculate_ticksize,
@@ -33,21 +35,28 @@ from core.runstore import (
     make_run_id,
 )
 
-# ====================================================================
-# 🛠️ [DEBUG / TEST MODE] 단일 종목 필터
-# 전체 종목 백테스팅은 시간이 오래 걸려 샘플 구간에서 기아(000270)만 돌린다.
-# 전체 종목을 돌리려면 None 으로 바꾼다. 이 값은 RunManifest.params 에도
-# 기록되므로, 나중에 런을 다시 열었을 때 "무엇을 돌린 결과인지" 알 수 있다.
-# ====================================================================
-DEBUG_ONLY_CODE: str | None = '000270'
-
-
 class BackTestEngine:
-    def __init__(self, part: int = 1, split: int = 12, runs_root=None):
+    def __init__(
+        self,
+        part: int = 1,
+        split: int = 12,
+        runs_root=None,
+        codes: Optional[Sequence[str]] = None,
+    ):
+        """
+        codes — 대상 종목 필터. None 이면 engine.config.TARGET_CODES 를 따른다
+        (그것도 None 이면 전체 종목). 과거에는 `if code != '000270': continue` 로
+        소스에 박혀 있었다 (ARCHITECTURE_V2.md §1.6). 이제는 세 경로로 지정한다.
+
+            BackTestEngine(codes=["000270"])                       # 코드
+            uv run python -m engine.main --codes 000270            # CLI
+            TARGET_CODES=000270,005930 uv run python -m engine.main # 환경변수
+        """
         self.part = part
         self.split = split
         self.strategy = STRATEGY_NAME
         self.loader = DataLoader()
+        self.codes: Optional[tuple[str, ...]] = tuple(codes) if codes is not None else TARGET_CODES
 
         # 일봉 데이터 미리 로드
         self.daily_data = self.loader.load_daily_csvs()
@@ -107,12 +116,11 @@ class BackTestEngine:
             cursor = conn.cursor()
             sec_tables = set(name[0] for name in cursor.execute("SELECT name FROM sqlite_master WHERE type='table';"))
 
-            # 🛠️ [DEBUG / TEST MODE] 단일 종목 필터 — 상단 DEBUG_ONLY_CODE 참고
+            # 종목 유니버스 필터 — self.codes 가 None 이면 전체 종목을 돈다
             for code_col in csv_open.keys()[1:]:
                 code = code_col[1:] if code_col.startswith('A') else code_col
 
-                # 📌 [테스트용] 지정 종목이 아니면 즉시 스킵
-                if DEBUG_ONLY_CODE and code != DEBUG_ONLY_CODE:
+                if self.codes and code not in self.codes:
                     continue
                 
                 if code in sec_tables:
@@ -151,7 +159,7 @@ class BackTestEngine:
             "set_time": SET_TIME,
             "fee_pct": FEE_PCT,
             "exit_rule": EXIT_RULE_ID,
-            "universe_filter": DEBUG_ONLY_CODE or "all",
+            "universe_filter": ",".join(self.codes) if self.codes else "all",
             "partition": {"part": self.part, "split": self.split},
         }
         self.run_id = make_run_id(

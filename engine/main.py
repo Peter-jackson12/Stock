@@ -1,4 +1,5 @@
 # main.py
+import argparse
 import sys
 from pathlib import Path
 
@@ -18,12 +19,23 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from engine.engine import BackTestEngine
 
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="단일 프로세스 백테스트 실행")
+    parser.add_argument(
+        "--codes", nargs="*", default=None,
+        help="대상 종목코드 목록 (기본: 전체 종목, 또는 TARGET_CODES 환경변수)",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
+    args = _parse_args()
     print("🚀 단일 프로세스 백테스팅 가동 시작...")
-    
+
     # split=1, part=1로 단 1번만 전체 백테스팅 수행
-    engine = BackTestEngine(part=1, split=1)
+    engine = BackTestEngine(part=1, split=1, codes=args.codes)
     engine.run()
-    
+
     print("🎉 백테스팅 완료! results/ 폴더를 확인하세요.")
 

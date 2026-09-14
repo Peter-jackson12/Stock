@@ -65,6 +65,12 @@ def _trades_only(df: pd.DataFrame) -> pd.DataFrame:
 # 1. 1초봉 엔진 (engine/engine.py) — 레거시 CSV vs 런 스토어
 # ---------------------------------------------------------------------------
 
+#: 검증용 대상 종목. engine.py 의 하드코딩 필터(§1.6)가 제거되면서 기본값이
+#: "전체 종목"이 되었으므로, 이 스크립트의 빠른 회귀 검증 범위를 유지하려면
+#: 명시적으로 지정해야 한다.
+VERIFY_CODES = ("000270",)
+
+
 def verify_bar_engine(runs_root: Path, tmp_results: Path) -> None:
     print("\n[1] 1초봉 엔진 (engine/engine.py)")
 
@@ -72,14 +78,14 @@ def verify_bar_engine(runs_root: Path, tmp_results: Path) -> None:
     original_result_dir = bar_engine_module.RESULT_DIR
     bar_engine_module.RESULT_DIR = tmp_results
     try:
-        first = BackTestEngine(part=1, split=12, runs_root=runs_root)
+        first = BackTestEngine(part=1, split=12, runs_root=runs_root, codes=VERIFY_CODES)
         first.run()
         csv_path = tmp_results / f"{STRATEGY_NAME}_1.csv"
         csv_df = pd.read_csv(csv_path, encoding=ENCODING)
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")     # 두 번째 저장은 __2 로 분기된다(정상)
-            second = BackTestEngine(part=1, split=12, runs_root=runs_root)
+            second = BackTestEngine(part=1, split=12, runs_root=runs_root, codes=VERIFY_CODES)
             second.run()
     finally:
         bar_engine_module.RESULT_DIR = original_result_dir

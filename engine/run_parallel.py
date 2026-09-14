@@ -1,3 +1,4 @@
+import argparse
 import sys
 from pathlib import Path
 
@@ -26,17 +27,25 @@ from engine.config import (
 from engine.engine import BackTestEngine
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="멀티프로세스 병렬 백테스트 실행")
+    parser.add_argument(
+        "--codes", nargs="*", default=None,
+        help="대상 종목코드 목록 (기본: 전체 종목, 또는 TARGET_CODES 환경변수)",
+    )
+    return parser.parse_args()
 
 
 def run_worker(task):
-    part, split = task
-    engine = BackTestEngine(part=part, split=split)
+    part, split, codes = task
+    engine = BackTestEngine(part=part, split=split, codes=codes)
     engine.run()
 
 if __name__ == '__main__':
+    args = _parse_args()
     print(f"⚙️ {DEFAULT_SPLIT}개 멀티프로세스로 백테스트 분할 가동 시작...")
-    tasks = [(part, DEFAULT_SPLIT) for part in range(1, DEFAULT_SPLIT + 1)]
-    
+    tasks = [(part, DEFAULT_SPLIT, args.codes) for part in range(1, DEFAULT_SPLIT + 1)]
+
     with Pool(processes=DEFAULT_SPLIT) as pool:
         pool.map(run_worker, tasks)
 
