@@ -3,8 +3,9 @@ core/runstore.py — L5 런 스토어 (Phase A)
 
 "결과는 파일이 아니라 런(run)이다."
 
-지금 dashboard/data_service.py 는 results/cross_Today_1.csv 한 파일에 고정되어 있다.
-전략이 N개가 되는 순간 이 구조는 성립하지 않는다. 런 스토어는 그 고정을 끊는다.
+대시보드는 오랫동안 results/cross_Today_1.csv 한 파일에 고정되어 있었다.
+전략이 N개가 되는 순간 그 구조는 성립하지 않는다. 런 스토어가 그 고정을 끊었고,
+dashboard/data_service.py 는 이제 파일 경로가 아니라 이 스토어에 질의한다 (§7.5).
 
     runs/
     └── <run_id>/
@@ -423,8 +424,8 @@ def _summary_block(frame: pd.DataFrame) -> dict[str, Any]:
         "avg_pnl": _clean(base["avg_pnl"]),
         "net_pnl_sum": _clean(base["total_pnl"]),
         "profit_factor": _clean(base["profit_factor"]),
-        "avg_mae_pct": _clean(base["avg_mdd"]),
-        "avg_mfe_pct": _clean(base["avg_mdu"]),
+        "avg_mae_pct": _clean(base["avg_mae_pct"]),
+        "avg_mfe_pct": _clean(base["avg_mfe_pct"]),
         "avg_holding_sec": _clean(base["avg_holding_seconds"]),
         "tpi": _clean(base["tpi"]),
         "mdd_pct": _clean(max_drawdown_pct(frame["net_pnl_pct"]) if not frame.empty else 0.0),

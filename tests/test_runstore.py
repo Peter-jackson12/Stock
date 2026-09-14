@@ -300,29 +300,32 @@ def test_load_trades_warns_on_unknown_run(store):
 
 def test_summarize_matches_dashboard_metrics(sample_trades):
     """
-    같은 거래 목록을 (a) 표준 Trade 로 summarize 한 결과와
-    (b) 레거시 CSV 컬럼 이름으로 대시보드가 계산한 결과가 일치해야 한다.
+    같은 거래 목록을 (a) 런 스토어가 summarize 한 결과와
+    (b) 대시보드가 계산한 결과가 일치해야 한다.
 
     이게 어긋나면 "매니페스트에 적힌 승률"과 "대시보드가 보여주는 승률"이 달라진다.
     지표 계산을 core/metrics.py 한 곳에만 두는 이유다.
+
+    §7.5 이후 대시보드도 표준 Trade 컬럼을 그대로 받는다. 예전 CSV 컬럼
+    (pnl/mdd/mdu)로 옮겨 담는 과정이 사라져, 어긋날 여지가 한 겹 더 줄었다.
     """
     got = summarize(sample_trades)
 
-    legacy = pd.DataFrame({
-        "pnl": [t.net_pnl_pct for t in sample_trades],
-        "mdd": [t.mae_pct for t in sample_trades],
-        "mdu": [t.mfe_pct for t in sample_trades],
-        "holding_seconds": [t.holding_sec for t in sample_trades],
+    as_screen_sees_it = pd.DataFrame({
+        "net_pnl_pct": [t.net_pnl_pct for t in sample_trades],
+        "mae_pct": [t.mae_pct for t in sample_trades],
+        "mfe_pct": [t.mfe_pct for t in sample_trades],
+        "holding_sec": [t.holding_sec for t in sample_trades],
     })
-    expected = dashboard_summary(legacy)
+    expected = dashboard_summary(as_screen_sees_it)
 
     assert got["trades"] == expected["trades"]
     assert got["win_rate"] == pytest.approx(expected["win_rate"])
     assert got["avg_pnl"] == pytest.approx(expected["avg_pnl"])
     assert got["net_pnl_sum"] == pytest.approx(expected["total_pnl"])
     assert got["profit_factor"] == pytest.approx(expected["profit_factor"])
-    assert got["avg_mae_pct"] == pytest.approx(expected["avg_mdd"])
-    assert got["avg_mfe_pct"] == pytest.approx(expected["avg_mdu"])
+    assert got["avg_mae_pct"] == pytest.approx(expected["avg_mae_pct"])
+    assert got["avg_mfe_pct"] == pytest.approx(expected["avg_mfe_pct"])
     assert got["avg_holding_sec"] == pytest.approx(expected["avg_holding_seconds"])
     assert got["tpi"] == pytest.approx(expected["tpi"])
 

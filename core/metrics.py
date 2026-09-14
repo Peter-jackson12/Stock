@@ -37,11 +37,11 @@ __all__ = [
 #: summary_metrics() 가 항상 돌려주는 키 (거래가 0건이어도 동일)
 SUMMARY_KEYS: tuple[str, ...] = (
     "trades", "avg_pnl", "win_rate", "total_pnl",
-    "avg_mdd", "avg_mdu", "profit_factor", "avg_holding_seconds", "tpi",
+    "avg_mae_pct", "avg_mfe_pct", "profit_factor", "avg_holding_seconds", "tpi",
 )
 
 
-def _poc_tpi(avg_pnl: float, avg_mdd: float) -> float:
+def _poc_tpi(avg_pnl: float, avg_mae: float) -> float:
     """POC용 TPI 대체 지표.
 
     원 기획안에 TPI 산식이 명시되어 있지 않아, 대시보드 비교용으로
@@ -50,7 +50,7 @@ def _poc_tpi(avg_pnl: float, avg_mdd: float) -> float:
 
     (dashboard/metrics.py 에서 그대로 옮겨옴 — 산식 변경 없음)
     """
-    risk = abs(avg_mdd)
+    risk = abs(avg_mae)
     if risk <= 1e-12:
         return 0.0
     return float(avg_pnl / risk)
@@ -75,35 +75,34 @@ def summary_metrics(
     거래 목록 -> 요약 지표.
 
     dashboard/metrics.py::summary_metrics 의 계산식을 그대로 옮긴 것이다.
-    반환 키도 대시보드 페이지가 쓰던 이름을 유지한다(avg_mdd / avg_mdu /
-    avg_holding_seconds). 이름을 바꾸면 대시보드 4개 페이지를 동시에 고쳐야 하고,
-    그건 Phase F(대시보드 재편)의 일이지 Phase A의 일이 아니다.
+    반환 키는 표준 Trade 이름을 따른다(avg_mae_pct / avg_mfe_pct). 화면에 찍는
+    한글 라벨("평균 MDD")은 그대로 두고, 코드가 쓰는 이름만 정리한 것이다.
     """
     if df.empty:
         return {
             "trades": 0, "avg_pnl": 0.0, "win_rate": 0.0, "total_pnl": 0.0,
-            "avg_mdd": 0.0, "avg_mdu": 0.0, "profit_factor": 0.0,
+            "avg_mae_pct": 0.0, "avg_mfe_pct": 0.0, "profit_factor": 0.0,
             "avg_holding_seconds": 0.0, "tpi": 0.0,
         }
 
     pnl = _numeric(df, pnl_col).fillna(0)
-    mdd = _numeric(df, mae_col).fillna(0)
+    mae = _numeric(df, mae_col).fillna(0)
     wins = pnl[pnl > 0].sum()
     losses = abs(pnl[pnl < 0].sum())
     pf = wins / losses if losses > 0 else np.inf if wins > 0 else 0.0
     avg_pnl = float(pnl.mean())
-    avg_mdd = float(mdd.mean())
+    avg_mae = float(mae.mean())
 
     return {
         "trades": int(len(df)),
         "avg_pnl": avg_pnl,
         "win_rate": float((pnl > 0).mean() * 100),
         "total_pnl": float(pnl.sum()),
-        "avg_mdd": avg_mdd,
-        "avg_mdu": float(_numeric(df, mfe_col).mean()),
+        "avg_mae_pct": avg_mae,
+        "avg_mfe_pct": float(_numeric(df, mfe_col).mean()),
         "profit_factor": float(pf),
         "avg_holding_seconds": float(_numeric(df, holding_col).mean()),
-        "tpi": _poc_tpi(avg_pnl, avg_mdd),
+        "tpi": _poc_tpi(avg_pnl, avg_mae),
     }
 
 
