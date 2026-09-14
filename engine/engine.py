@@ -288,7 +288,7 @@ class BackTestEngine:
                 'buy_vol': buy_vols,
                 'sell_vol': sell_vols,
                 'tick': ticks,
-                'candle_high': [], 'candle_low': [], 'candle_open': [], 'candle_close': [],
+                'candle_high': [], 'candle_low': [], 'candle_open': [],
                 'position': 0, 'state': 0, 'entry_t': 0, 'entry_price': 0.0,
                 'max_t': 0.0, 'min_t': 999999999.0, 'upper': opens[0] * 1.3,
                 'tick_rate': 0.1, 'max_cbv5': 0.0, 'max_cbv10': 0.0, 'max_cbv30': 0.0, 'max_cbv60': 0.0,
@@ -298,7 +298,7 @@ class BackTestEngine:
             for t in range(len(stock['time'])):
                 time_str = str(stock['time'][t])
                 
-                # 캔들 데이터 업데이트
+                # 캔들 데이터 업데이트 (candle_close 는 어디서도 읽지 않아 제거함 — §1.6)
                 stock['candle_high'].append(stock['high'][t])
                 stock['candle_low'].append(stock['low'][t])
                 stock['candle_open'].append(stock['open'][t])
