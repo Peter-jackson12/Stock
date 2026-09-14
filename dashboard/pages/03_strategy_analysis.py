@@ -1,6 +1,6 @@
 import streamlit as st
 
-from dashboard.data_service import load_results
+from dashboard.run_selector import get_selected_trades
 from dashboard.analyzer import (
     available_analysis_columns,
     analyze_numeric_bins,
@@ -16,19 +16,27 @@ st.set_page_config(page_title="Strategy Analysis", page_icon="🧪", layout="wid
 st.title("🧪 Strategy Analysis")
 st.caption("기획안의 핵심 질문인 변수 비교, 5/10/30/60초 비교, 단일·복합 조건 전략 비교를 한 페이지에서 확인합니다.")
 
-df = load_results()
+df, selection = get_selected_trades()
+if df.empty:
+    st.stop()
+
+st.caption(selection.summary_line())
 
 st.markdown("## 1. 전략 변수 구간별 분석")
 available = available_analysis_columns(df)
 labels = {
     "entry_hour": "진입 시간대",
-    "holding_seconds": "보유시간(초)",
+    "holding_sec": "보유시간(초)",
     "cbv_1": "CBV 1초",
     "ctotal": "CTOTAL",
-    "cum_amt": "누적 거래대금",
-    "mdd": "MDD",
-    "mdu": "MDU",
+    "mae_pct": "MDD",
+    "mfe_pct": "MDU",
+    "gross_pnl_pct": "수수료 전 손익",
     "entry_price": "진입가",
+    "obi_top3": "호가잔량 불균형(OBI)",
+    "buy_ratio_15t": "최근 15틱 매수비중",
+    "spread_pct": "호가 스프레드",
+    "vol_15t": "최근 15틱 거래량",
 }
 
 if available:
@@ -49,11 +57,11 @@ if available:
             st.warning(error)
         else:
             st.plotly_chart(strategy_group_chart(grouped), use_container_width=True)
-            st.dataframe(grouped[["group", "trade_count", "avg_pnl", "win_rate", "avg_mdd", "min_value", "max_value"]], use_container_width=True, hide_index=True)
+            st.dataframe(grouped[["group", "trade_count", "avg_pnl", "win_rate", "avg_mae_pct", "min_value", "max_value"]], use_container_width=True, hide_index=True)
             best = grouped.sort_values("avg_pnl", ascending=False).iloc[0]
             st.success(f"현재 데이터에서는 {labels.get(selected, selected)}의 '{best['group']}' 구간이 평균 PnL 기준 상대적으로 가장 높습니다.")
 else:
-    st.warning("현재 CSV에서 구간 비교가 가능한 전략 변수를 찾지 못했습니다.")
+    st.warning("선택한 런에서 구간 비교가 가능한 전략 변수를 찾지 못했습니다.")
     selected, grouped = "없음", None
 
 st.divider()
@@ -90,7 +98,7 @@ if comparison.empty:
     best_strategy = None
 else:
     st.plotly_chart(strategy_comparison_chart(comparison), use_container_width=True)
-    comparison_table = comparison[["strategy", "condition", "trade_count", "avg_pnl", "win_rate", "avg_mdd", "profit_factor", "tpi"]].copy()
+    comparison_table = comparison[["strategy", "condition", "trade_count", "avg_pnl", "win_rate", "avg_mae_pct", "profit_factor", "tpi"]].copy()
     st.dataframe(
         comparison_table,
         use_container_width=True,
@@ -109,7 +117,7 @@ else:
         st.success(
             f"🏆 현재 POC 추천 전략: **{best_strategy['strategy']}**  |  "
             f"POC TPI {best_strategy['tpi']:.3f}  |  승률 {best_strategy['win_rate']:.2f}%  |  "
-            f"평균 MDD {best_strategy['avg_mdd']:.3f}%"
+            f"평균 MDD {best_strategy['avg_mae_pct']:.3f}%"
         )
 
 st.warning(
@@ -118,7 +126,7 @@ st.warning(
 )
 
 st.divider()
-st.markdown("### 실제 고도화 시 결과 CSV에 추가할 핵심 컬럼")
+st.markdown("### 실제 고도화 시 피처 스토어(L2)에서 채울 핵심 컬럼")
 st.code("cbv_5, cbv_10, cbv_30, cbv_60, tick_rate, buy_vol, sell_vol, bid_vol, offer_vol, max60buyratio, t_max1buyratio, amt_10s", language="text")
 
 if grouped is not None and not getattr(grouped, "empty", True):
@@ -127,6 +135,9 @@ else:
     variable_context = "비교 가능한 변수 집계 없음"
 
 strategy_context = f"""
+[선택된 런]
+{table_to_context(selection.frame())}
+
 [선택 변수]
 - {selected}
 

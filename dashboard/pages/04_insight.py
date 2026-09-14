@@ -1,6 +1,7 @@
 import streamlit as st
 
-from dashboard.data_service import load_results, filter_results
+from dashboard.data_service import filter_results
+from dashboard.run_selector import get_selected_trades
 from dashboard.analyzer import generate_insights, compare_poc_strategies, recommend_strategy
 from dashboard.metrics import summary_metrics, exit_reason_performance, hour_performance
 from dashboard.ollama_client import render_ai_chat, table_to_context
@@ -9,14 +10,18 @@ st.set_page_config(page_title="Insight", page_icon="💡", layout="wide")
 st.title("💡 Automated Insight")
 st.caption("기획안의 최종 의사결정에 맞춰 성과를 해석하고, POC 수준의 추천 전략까지 자동으로 제시합니다.")
 
-df = load_results()
+df, selection = get_selected_trades()
+if df.empty:
+    st.stop()
+
+st.caption(selection.summary_line())
 
 min_date, max_date = df["date"].min().date(), df["date"].max().date()
 left, right = st.columns([2, 1])
 with left:
     date_range = st.date_input("분석 기간", value=(min_date, max_date), min_value=min_date, max_value=max_date)
 with right:
-    reason = st.multiselect("청산 사유", sorted(df["msg"].dropna().astype(str).unique().tolist()))
+    reason = st.multiselect("청산 사유", sorted(df["exit_reason"].dropna().astype(str).unique().tolist()))
 
 if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
     start_date, end_date = date_range
@@ -31,7 +36,7 @@ cols[0].metric("거래 수", f"{m['trades']:,}")
 cols[1].metric("평균 PnL", f"{m['avg_pnl']:.3f}%")
 cols[2].metric("승률", f"{m['win_rate']:.2f}%")
 cols[3].metric("POC TPI", f"{m['tpi']:.3f}")
-cols[4].metric("평균 MDD", f"{m['avg_mdd']:.3f}%")
+cols[4].metric("평균 MDD", f"{m['avg_mae_pct']:.3f}%")
 
 st.markdown("### 자동 분석 결과")
 for item in generate_insights(filtered):
@@ -51,7 +56,7 @@ best = recommend_strategy(comparison)
 if best:
     st.success(
         f"현재 데이터의 기본 비교 기준에서는 **{best['strategy']}**이 POC TPI 기준 가장 높습니다. "
-        f"TPI {best['tpi']:.3f}, 승률 {best['win_rate']:.2f}%, 평균 MDD {best['avg_mdd']:.3f}%입니다."
+        f"TPI {best['tpi']:.3f}, 승률 {best['win_rate']:.2f}%, 평균 MDD {best['avg_mae_pct']:.3f}%입니다."
     )
     st.dataframe(comparison, use_container_width=True, hide_index=True)
 else:
@@ -62,6 +67,9 @@ st.warning("POC TPI는 `평균 PnL ÷ |평균 MDD|` 대체식입니다. 실제 �
 rule_insights = generate_insights(filtered)
 insight_text = "\n".join([f"- {x['title']}: {x['text']}" for x in rule_insights])
 insight_context = f"""
+[선택된 런]
+{table_to_context(selection.frame())}
+
 [분석 기간]
 - {start_date} ~ {end_date}
 - 청산 사유 필터: {reason if reason else '전체'}
@@ -71,7 +79,7 @@ insight_context = f"""
 - 평균 PnL: {m['avg_pnl']:.4f}%
 - 승률: {m['win_rate']:.2f}%
 - POC TPI: {m['tpi']:.4f}
-- 평균 MDD: {m['avg_mdd']:.4f}%
+- 평균 MDD: {m['avg_mae_pct']:.4f}%
 - Profit Factor: {m['profit_factor']:.4f}
 
 [규칙 기반 자동 분석]

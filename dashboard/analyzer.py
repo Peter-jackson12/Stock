@@ -6,8 +6,19 @@ import pandas as pd
 from dashboard.metrics import summary_metrics, exit_reason_performance, hour_performance
 
 
+#: 구간 비교가 의미 있는 분석 변수 후보.
+#: 표준 Trade 컬럼 + signal_meta 에서 펼쳐진 진입 시점 피처 스냅샷을 함께 본다.
+#: (§6.2 — signal_meta 를 남긴 이유가 바로 이 사후 분석이다)
+ANALYSIS_CANDIDATES = [
+    "entry_hour", "holding_sec", "entry_price",
+    "mae_pct", "mfe_pct", "gross_pnl_pct",
+    "cbv_1", "ctotal",                                  # 1초봉 엔진 스냅샷
+    "obi_top3", "buy_ratio_15t", "spread_pct", "vol_15t",   # 틱 엔진 스냅샷
+]
+
+
 def available_analysis_columns(df: pd.DataFrame) -> list[str]:
-    candidates = ["entry_hour", "holding_seconds", "cbv_1", "ctotal", "cum_amt", "mdd", "mdu", "entry_price"]
+    candidates = ANALYSIS_CANDIDATES
     output = []
     for col in candidates:
         if col in df.columns and df[col].nunique(dropna=True) > 1:
@@ -20,9 +31,9 @@ def analyze_numeric_bins(df: pd.DataFrame, column: str, bins: int = 6) -> tuple[
     if column not in df.columns:
         return pd.DataFrame(), f"{column} 컬럼이 없습니다."
 
-    clean = df[[column, "pnl", "mdd"]].copy()
+    clean = df[[column, "net_pnl_pct", "mae_pct"]].copy()
     clean[column] = pd.to_numeric(clean[column], errors="coerce")
-    clean = clean.dropna(subset=[column, "pnl"])
+    clean = clean.dropna(subset=[column, "net_pnl_pct"])
     if clean[column].nunique() <= 1:
         return pd.DataFrame(), f"{column} 값이 거의 고정되어 있어 구간별 비교가 어렵습니다."
 
@@ -32,13 +43,13 @@ def analyze_numeric_bins(df: pd.DataFrame, column: str, bins: int = 6) -> tuple[
         clean["group"] = pd.cut(clean[column], bins=bins, duplicates="drop")
 
     result = (
-        clean.assign(win=(clean["pnl"] > 0).astype(int))
+        clean.assign(win=(clean["net_pnl_pct"] > 0).astype(int))
         .groupby("group", observed=True)
         .agg(
-            trade_count=("pnl", "size"),
-            avg_pnl=("pnl", "mean"),
+            trade_count=("net_pnl_pct", "size"),
+            avg_pnl=("net_pnl_pct", "mean"),
             win_rate=("win", "mean"),
-            avg_mdd=("mdd", "mean"),
+            avg_mae_pct=("mae_pct", "mean"),
             min_value=(column, "min"),
             max_value=(column, "max"),
         )
@@ -55,9 +66,10 @@ def analyze_category(df: pd.DataFrame, column: str) -> tuple[pd.DataFrame, str |
     if df[column].nunique(dropna=True) <= 1:
         return pd.DataFrame(), f"{column} 값이 거의 고정되어 있어 비교가 어렵습니다."
     result = (
-        df.assign(win=(df["pnl"] > 0).astype(int))
+        df.assign(win=(df["net_pnl_pct"] > 0).astype(int))
         .groupby(column, dropna=False)
-        .agg(trade_count=("pnl", "size"), avg_pnl=("pnl", "mean"), win_rate=("win", "mean"), avg_mdd=("mdd", "mean"))
+        .agg(trade_count=("net_pnl_pct", "size"), avg_pnl=("net_pnl_pct", "mean"),
+             win_rate=("win", "mean"), avg_mae_pct=("mae_pct", "mean"))
         .reset_index()
     )
     result["win_rate"] *= 100
@@ -85,7 +97,7 @@ def generate_insights(df: pd.DataFrame) -> list[dict[str, str]]:
         top = exit_perf.iloc[0]
         share = top["trade_count"] / len(df) * 100
         if share >= 70:
-            insights.append({"level": "warning", "title": "특정 청산 사유가 과도하게 집중됩니다", "text": f"'{top['msg']}' 청산이 전체의 {share:.1f}%를 차지합니다. 해당 Risk Rule이 지나치게 민감한지 검토할 가치가 있습니다."})
+            insights.append({"level": "warning", "title": "특정 청산 사유가 과도하게 집중됩니다", "text": f"'{top['exit_reason']}' 청산이 전체의 {share:.1f}%를 차지합니다. 해당 Risk Rule이 지나치게 민감한지 검토할 가치가 있습니다."})
 
     hour = hour_performance(df).dropna(subset=["entry_hour"])
     if len(hour) >= 2:
@@ -94,8 +106,8 @@ def generate_insights(df: pd.DataFrame) -> list[dict[str, str]]:
         if best["entry_hour"] != worst["entry_hour"]:
             insights.append({"level": "info", "title": "진입 시간대별 성과 차이가 있습니다", "text": f"평균 PnL 기준 {best['entry_hour']}시가 상대적으로 가장 높고, {worst['entry_hour']}시가 가장 낮습니다. 시간 필터를 전략 조건 후보로 검토할 수 있습니다."})
 
-    if "holding_seconds" in df.columns:
-        holding = pd.to_numeric(df["holding_seconds"], errors="coerce")
+    if "holding_sec" in df.columns:
+        holding = pd.to_numeric(df["holding_sec"], errors="coerce")
         rapid = (holding <= 10).mean() * 100
         if rapid >= 40:
             insights.append({"level": "info", "title": "진입 직후 청산 비중이 높습니다", "text": f"보유시간 10초 이하 거래가 약 {rapid:.1f}%입니다. 진입 직후 Noise에 의해 청산되는지 확인해 볼 필요가 있습니다."})
@@ -127,7 +139,7 @@ def timeframe_comparison(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
             "trade_count": m["trades"],
             "avg_pnl": m["avg_pnl"],
             "win_rate": m["win_rate"],
-            "avg_mdd": m["avg_mdd"],
+            "avg_mae_pct": m["avg_mae_pct"],
             "tpi": m["tpi"],
         })
     return pd.DataFrame(rows), missing
@@ -174,7 +186,7 @@ def compare_poc_strategies(df: pd.DataFrame, cbv_percentile: int = 50, latest_en
             "avg_pnl": m["avg_pnl"],
             "total_pnl": m["total_pnl"],
             "win_rate": m["win_rate"],
-            "avg_mdd": m["avg_mdd"],
+            "avg_mae_pct": m["avg_mae_pct"],
             "profit_factor": m["profit_factor"],
             "tpi": m["tpi"],
         })
