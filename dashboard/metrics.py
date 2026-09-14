@@ -3,47 +3,29 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from core.metrics import summary_metrics as _core_summary_metrics
 
-def _poc_tpi(avg_pnl: float, avg_mdd: float) -> float:
-    """POC용 TPI 대체 지표.
-
-    원 기획안에 TPI 산식이 명시되어 있지 않아, 대시보드 비교용으로
-    평균 PnL / |평균 MDD|를 사용합니다. 실제 프로젝트에서는 사용자가
-    정의한 공식으로 교체해야 합니다.
-    """
-    risk = abs(avg_mdd)
-    if risk <= 1e-12:
-        return 0.0
-    return float(avg_pnl / risk)
+# ---------------------------------------------------------------------------
+# ⚠️ summary_metrics 의 계산식은 core/metrics.py 로 옮겼다 (Phase A).
+#
+# 이유: 런 스토어(core/runstore.py)가 RunManifest.metrics 에 같은 지표를 기록한다.
+#       계산이 두 곳에 있으면 "대시보드가 보여주는 승률"과 "매니페스트에 적힌
+#       승률"이 언젠가 반드시 어긋난다. 여기서는 레거시 CSV 컬럼 이름
+#       (pnl / mdd / mdu / holding_seconds)을 표준 이름에 매핑만 한다.
+#
+# 참고: ARCHITECTURE_V2.md §6.1
+# ---------------------------------------------------------------------------
 
 
 def summary_metrics(df: pd.DataFrame) -> dict[str, float]:
-    if df.empty:
-        return {
-            "trades": 0, "avg_pnl": 0.0, "win_rate": 0.0, "total_pnl": 0.0,
-            "avg_mdd": 0.0, "avg_mdu": 0.0, "profit_factor": 0.0,
-            "avg_holding_seconds": 0.0, "tpi": 0.0,
-        }
-
-    pnl = pd.to_numeric(df["pnl"], errors="coerce").fillna(0)
-    mdd = pd.to_numeric(df["mdd"], errors="coerce").fillna(0)
-    wins = pnl[pnl > 0].sum()
-    losses = abs(pnl[pnl < 0].sum())
-    pf = wins / losses if losses > 0 else np.inf if wins > 0 else 0.0
-    avg_pnl = float(pnl.mean())
-    avg_mdd = float(mdd.mean())
-
-    return {
-        "trades": int(len(df)),
-        "avg_pnl": avg_pnl,
-        "win_rate": float((pnl > 0).mean() * 100),
-        "total_pnl": float(pnl.sum()),
-        "avg_mdd": avg_mdd,
-        "avg_mdu": float(pd.to_numeric(df["mdu"], errors="coerce").mean()),
-        "profit_factor": float(pf),
-        "avg_holding_seconds": float(pd.to_numeric(df["holding_seconds"], errors="coerce").mean()),
-        "tpi": _poc_tpi(avg_pnl, avg_mdd),
-    }
+    """레거시 결과 CSV 컬럼 기준 요약 지표 (계산은 core.metrics 가 담당)."""
+    return _core_summary_metrics(
+        df,
+        pnl_col="pnl",
+        mae_col="mdd",
+        mfe_col="mdu",
+        holding_col="holding_seconds",
+    )
 
 
 def daily_performance(df: pd.DataFrame) -> pd.DataFrame:

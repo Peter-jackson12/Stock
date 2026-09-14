@@ -10,6 +10,7 @@ dependencies = [
     "numpy>=2.0.0",
     "pandas>=2.2.0",
     "plotly>=6.0.0",
+    "pyarrow>=25.0.1",
     "pykrx>=1.0.0",
     "python-dotenv>=1.2.3",
     "requests>=2.0.0",
