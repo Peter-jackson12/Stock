@@ -267,6 +267,34 @@ class BackTestEngine:
             },
         )
 
+    def _prev_close(self, code_col: str, today_str: str) -> Optional[float]:
+        """
+        전일 종가 조회 — calculate_upperlimit() 의 point-in-time 입력.
+
+        daily_data['close'] 는 0행이 종목명, 1행부터 날짜 오름차순이다. 오늘 날짜
+        바로 앞 행이 전일 종가다. 데이터셋의 첫 거래일이라 전일이 없으면 None.
+        (§1.6 — engine/data_loader.py 가 로드만 하고 쓰지 않던 'close' 매트릭스를
+        여기서 처음 사용한다)
+        """
+        csv_close = self.daily_data.get('close')
+        if csv_close is None or code_col not in csv_close.columns:
+            return None
+
+        dates = csv_close['Code'].astype(str)
+        matches = dates.index[dates == today_str]
+        if len(matches) == 0:
+            return None
+
+        idx = matches[0]
+        if idx < 2:                 # idx=0 은 종목명 행, idx=1 은 첫 거래일(전일 없음)
+            return None
+
+        try:
+            value = float(csv_close[code_col].iloc[idx - 1])
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
+
     def _process_stock(self, conn, code_col, code, today_str):
         try:
             stock_name = str(self.daily_data['open'][code_col].iloc[0])
@@ -285,6 +313,27 @@ class BackTestEngine:
             sell_vols = np.array(raw_data[7]).astype(float)
             ticks = np.array(raw_data[8]).astype(float)
 
+            # 상한가·호가단위 — engine/utils.py 에 구현되어 있었지만 호출되지 않던
+            # calculate_upperlimit()/calculate_ticksize() 를 연결한다 (§1.6).
+            #
+            #   upper      전일 종가 기준 +30% 호가단위 절사가.
+            #              과거에는 opens[0] * 1.3 (당일 시가 기준, 호가단위 미절사) 이었다.
+            #              전일 종가 데이터가 없으면(데이터셋 첫 거래일) 그 근사치로 대체한다.
+            #   tick_rate  당일 시가 기준 호가단위 비율(%). 과거에는 상수 0.1 이었다.
+            #              check_entry_conditions() 의 `tick_rate <= 0.18` 필터가 이제
+            #              종목·날짜별로 실제 호가단위를 반영해 판단한다.
+            #
+            # ⚠️ 두 값 모두 백테스트 결과를 바꾼다 — 상수가 아니라 실제 계산이기 때문이다.
+            prev_close = self._prev_close(code_col, today_str)
+            if prev_close is not None:
+                upper = calculate_upperlimit(prev_close, today_str)
+            else:
+                upper = opens[0] * 1.3
+            tick_rate = (
+                calculate_ticksize(opens[0], today_str) / opens[0] * 100
+                if opens[0] > 0 else 0.1
+            )
+
             stock = {
                 'name': stock_name,
                 'time': times,
@@ -298,8 +347,8 @@ class BackTestEngine:
                 'tick': ticks,
                 'candle_high': [], 'candle_low': [], 'candle_open': [],
                 'position': 0, 'state': 0, 'entry_t': 0, 'entry_price': 0.0,
-                'max_t': 0.0, 'min_t': 999999999.0, 'upper': opens[0] * 1.3,
-                'tick_rate': 0.1, 'max_cbv5': 0.0, 'max_cbv10': 0.0, 'max_cbv30': 0.0, 'max_cbv60': 0.0,
+                'max_t': 0.0, 'min_t': 999999999.0, 'upper': upper,
+                'tick_rate': tick_rate, 'max_cbv5': 0.0, 'max_cbv10': 0.0, 'max_cbv30': 0.0, 'max_cbv60': 0.0,
                 'tmax_cbv5': 0.0, 'tmax_cbv10': 0.0, 'tmax_cbv30': 0.0, 'tmax_cbv60': 0.0, 'tmax_cbv1': 0.0
             }
 
