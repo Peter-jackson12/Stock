@@ -47,6 +47,7 @@ Stock/
 │   ├── strategy.py                # 5/10/30/60초 윈도우 CBV 및 모멘텀 진입 시그널
 │   ├── risk_manager.py            # 손절, 트레일링스탑, 장마감 동시 청산 제어
 │   ├── data_loader.py             # 일봉 매트릭스 CSV & 초봉 LOB DB 로더
+│   ├── run_parallel.py            # 멀티프로세스 병렬 백테스트 가동 진입점
 │   ├── config.py                  # 경로, 전역 설정, 인코딩 관리
 │   └── utils.py                   # 호가단위(Tick Size), 상한가 산출 유틸
 ├── dashboard/                     # [UI / Analytics] Streamlit 인터랙티브 대시보드
@@ -62,7 +63,6 @@ Stock/
 │   └── temp/                      # [Stage 2] 리샘플링된 초봉 LOB DB ({YYYYMMDD}_LOB.db)
 ├── results/                       # 백테스트 성과 리포트 CSV
 ├── setup_kiwoom.ps1               # [자동화] 32비트 키움 수집 환경 1클릭 복구 스크립트
-├── run_parallel.py                # 멀티프로세스 병렬 백테스트 가동 진입점
 ├── pyproject.toml                 # uv 패키지 명세서 (64비트 메인 환경)
 └── .gitignore                     # 비밀키 및 대용량 DB 파일 제외 명세
 ```
