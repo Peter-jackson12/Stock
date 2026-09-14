@@ -36,10 +36,10 @@ FEE_PCT = 0.23
 # nxt_tick_engine 의 fixed / tick_trail / step_trail 과 나란히 비교되는 축이다.
 EXIT_RULE_ID = "risk_manager"
 
-# 이 엔진은 아직 피처 스토어(L2)를 읽지 않는다 — calculate_window_metrics() 가
-# 여전히 루프 안에서 직접 계산한다. 실제로 fs_v1 을 소비하게 되는 시점(Phase C)에
-# 값을 바꾼다.
-FEATURE_SET_VERSION = "none"
+# 이 엔진이 읽는 피처셋 디렉토리 (sampledata/features/<version>/).
+# run_id 의 입력이므로, 인라인 계산으로 돌린 런은 이 값 대신 "none" 을 기록한다
+# (BackTestEngine.feature_set_version). 같은 결과라도 출처가 다르면 런이 달라야 한다.
+FEATURE_SET_VERSION = "fs_v1"
 
 
 # ==========================================

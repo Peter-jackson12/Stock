@@ -1,5 +1,41 @@
+from typing import Mapping
+
 import numpy as np
 from engine.utils import calculate_time_spread
+
+# ---------------------------------------------------------------------------
+# 이 전략이 피처 스토어에서 읽는 피처 (Phase B-1)
+# ---------------------------------------------------------------------------
+# calculate_window_metrics() 는 42종을 계산하지만 진입/청산/결과기록이 실제로
+# 읽는 값은 아래 4개뿐이다. FeatureStore.read(names=...) 에 이 4개만 넘기면
+# parquet 이 나머지 38개 컬럼은 디스크에서 꺼내지도 않는다 — 컬럼 선택 읽기가
+# 피처 스토어를 택한 이유다 (ARCHITECTURE_V2.md §3.5).
+#
+#   피처 이름(fs_v1) -> 레거시 stock 딕셔너리 키 (§3.7 매핑표)
+#
+# 여기 없는 피처를 전략이 새로 쓰게 되면 이 표에 추가해야 한다. 표에 없는 키는
+# 스토어 경로에서 영원히 0 이므로, 빠뜨리면 조건이 조용히 거짓이 된다.
+STORE_FEATURE_KEYS: dict[str, str] = {
+    "cbv_1": "cbv_1",                       # 결과 기록 (진입 시점 스냅샷)
+    "tick_rate_cum": "ctotal",              # check_entry_conditions + 결과 기록
+    "amt_10s": "amt_10s",                   # check_entry_conditions
+    "trigger_dev_max_10": "max10_trigger",  # check_entry_conditions
+}
+
+REQUIRED_FEATURES: tuple[str, ...] = tuple(STORE_FEATURE_KEYS)
+
+
+def apply_stored_metrics(stock: dict, t: int, columns: Mapping[str, np.ndarray]) -> None:
+    """
+    calculate_window_metrics() 의 피처 스토어 버전 — **계산하지 않고 조회만 한다.**
+
+    윈도우 합계·재스캔이 사라지므로 `amt_10s > 700` 의 700 을 750 으로 바꿔도
+    피처 계산은 0회다 (§3.1). 값 자체는 배치 빌더가 미리 계산해 둔 것이고,
+    scripts/verify_engine_feature_parity.py 가 두 경로의 거래 목록을 대조한다.
+    """
+    for name, key in STORE_FEATURE_KEYS.items():
+        stock[key] = columns[name][t]
+
 
 def calculate_window_metrics(stock: dict, t: int):
     """5초, 10초, 30초, 60초 윈도우 지표 계산"""

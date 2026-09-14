@@ -17,7 +17,7 @@ sys.path = [p for p in sys.path if Path(p).resolve() != Path(__file__).resolve()
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from engine.engine import BackTestEngine
+from engine.engine import FEATURE_SOURCE_INLINE, FEATURE_SOURCE_STORE, BackTestEngine
 
 
 def _parse_args() -> argparse.Namespace:
@@ -25,6 +25,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--codes", nargs="*", default=None,
         help="대상 종목코드 목록 (기본: 전체 종목, 또는 TARGET_CODES 환경변수)",
+    )
+    parser.add_argument(
+        "--dates", nargs="*", default=None,
+        help="대상 날짜 목록 YYYYMMDD (기본: 일봉 매트릭스의 전체 날짜)",
+    )
+    parser.add_argument(
+        "--feature-source", choices=[FEATURE_SOURCE_STORE, FEATURE_SOURCE_INLINE],
+        default=FEATURE_SOURCE_STORE,
+        help="피처 출처. store=fs_v1 parquet 조회(기본), inline=루프 계산(대조용)",
     )
     return parser.parse_args()
 
@@ -34,7 +43,10 @@ if __name__ == "__main__":
     print("🚀 단일 프로세스 백테스팅 가동 시작...")
 
     # split=1, part=1로 단 1번만 전체 백테스팅 수행
-    engine = BackTestEngine(part=1, split=1, codes=args.codes)
+    engine = BackTestEngine(
+        part=1, split=1, codes=args.codes, dates=args.dates,
+        feature_source=args.feature_source,
+    )
     engine.run()
 
     print("🎉 백테스팅 완료! results/ 폴더를 확인하세요.")

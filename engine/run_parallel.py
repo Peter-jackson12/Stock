@@ -24,7 +24,7 @@ from engine.config import (
     ENCODING,
     STRATEGY_NAME,
 )  # ⭐️ engine. 추가
-from engine.engine import BackTestEngine
+from engine.engine import FEATURE_SOURCE_INLINE, FEATURE_SOURCE_STORE, BackTestEngine
 
 
 def _parse_args() -> argparse.Namespace:
@@ -33,18 +33,26 @@ def _parse_args() -> argparse.Namespace:
         "--codes", nargs="*", default=None,
         help="대상 종목코드 목록 (기본: 전체 종목, 또는 TARGET_CODES 환경변수)",
     )
+    parser.add_argument(
+        "--feature-source", choices=[FEATURE_SOURCE_STORE, FEATURE_SOURCE_INLINE],
+        default=FEATURE_SOURCE_STORE,
+        help="피처 출처. store=fs_v1 parquet 조회(기본), inline=루프 계산(대조용)",
+    )
     return parser.parse_args()
 
 
 def run_worker(task):
-    part, split, codes = task
-    engine = BackTestEngine(part=part, split=split, codes=codes)
+    part, split, codes, feature_source = task
+    engine = BackTestEngine(part=part, split=split, codes=codes, feature_source=feature_source)
     engine.run()
 
 if __name__ == '__main__':
     args = _parse_args()
     print(f"⚙️ {DEFAULT_SPLIT}개 멀티프로세스로 백테스트 분할 가동 시작...")
-    tasks = [(part, DEFAULT_SPLIT, args.codes) for part in range(1, DEFAULT_SPLIT + 1)]
+    tasks = [
+        (part, DEFAULT_SPLIT, args.codes, args.feature_source)
+        for part in range(1, DEFAULT_SPLIT + 1)
+    ]
 
     with Pool(processes=DEFAULT_SPLIT) as pool:
         pool.map(run_worker, tasks)

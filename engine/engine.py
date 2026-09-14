@@ -23,7 +23,12 @@ from engine.utils import (
 )
 from engine.data_loader import DataLoader
 from engine.risk_manager import check_exit_signals
-from engine.strategy import calculate_window_metrics, check_entry_conditions
+from engine.strategy import (
+    REQUIRED_FEATURES,
+    apply_stored_metrics,
+    calculate_window_metrics,
+    check_entry_conditions,
+)
 
 # 🆕 Phase A — 표준 결과 계약(L5). 기존 CSV 출력은 그대로 두고 병행 저장한다.
 from core.contracts import Trade
@@ -35,6 +40,25 @@ from core.runstore import (
     make_run_id,
 )
 
+# 🆕 Phase B-1 — L2 피처 레이어. 루프에서 계산하던 값을 미리 계산된 parquet 에서 읽는다.
+from features.store import FeatureStore
+
+#: feature_source 로 허용되는 값
+FEATURE_SOURCE_STORE = "store"      # fs_v1 parquet 조회 (기본)
+FEATURE_SOURCE_INLINE = "inline"    # calculate_window_metrics() 루프 계산 (대조용)
+
+
+class MissingFeaturesError(RuntimeError):
+    """
+    백테스트할 날짜·종목의 피처가 스토어에 없다.
+
+    **인라인 계산으로 조용히 폴백하지 않는다.** 폴백하면 "피처 스토어를 쓰고 있다"고
+    믿으면서 실제로는 안 쓰는 상태가 되고, 그 상태는 어떤 로그에도 남지 않는다.
+    Phase B 가 약속한 이득(파라미터 스윕 시 피처 재계산 0회)이 실현되고 있는지를
+    런 매니페스트만 보고는 알 수 없게 된다 — 정확히 §1.6 이 잡아낸 실패 양상이다.
+    """
+
+
 class BackTestEngine:
     def __init__(
         self,
@@ -42,6 +66,9 @@ class BackTestEngine:
         split: int = 12,
         runs_root=None,
         codes: Optional[Sequence[str]] = None,
+        dates: Optional[Sequence[str]] = None,
+        feature_source: str = FEATURE_SOURCE_STORE,
+        feature_root=None,
     ):
         """
         codes — 대상 종목 필터. None 이면 engine.config.TARGET_CODES 를 따른다
@@ -51,12 +78,39 @@ class BackTestEngine:
             BackTestEngine(codes=["000270"])                       # 코드
             uv run python -m engine.main --codes 000270            # CLI
             TARGET_CODES=000270,005930 uv run python -m engine.main # 환경변수
+
+        dates — 대상 날짜 필터(YYYYMMDD). None 이면 일봉 매트릭스의 전체 날짜.
+                특정 구간만 재현해야 하는 대조 실행에 쓴다.
+
+        feature_source — "store" 는 fs_v1 parquet 조회(기본), "inline" 은 기존
+                calculate_window_metrics() 루프 계산. 두 경로의 거래 목록이
+                일치하는지는 scripts/verify_engine_feature_parity.py 가 대조한다.
+                **대조가 통과하기 전에는 인라인 경로를 제거하지 않는다** (§8).
         """
+        if feature_source not in (FEATURE_SOURCE_STORE, FEATURE_SOURCE_INLINE):
+            raise ValueError(
+                f"feature_source 는 {FEATURE_SOURCE_STORE} 또는 {FEATURE_SOURCE_INLINE} "
+                f"여야 합니다: {feature_source}"
+            )
+
         self.part = part
         self.split = split
         self.strategy = STRATEGY_NAME
         self.loader = DataLoader()
         self.codes: Optional[tuple[str, ...]] = tuple(codes) if codes is not None else TARGET_CODES
+        self.dates: Optional[tuple[str, ...]] = tuple(str(d) for d in dates) if dates is not None else None
+
+        # 🆕 Phase B-1 — 피처 출처. 인라인 런은 fs_v1 을 읽지 않았으므로 "none" 을
+        # 기록한다. 이 값이 run_id 에 들어가므로 두 경로의 런은 절대 같은 id 가 아니다.
+        self.feature_source = feature_source
+        self.feature_set_version = (
+            FEATURE_SET_VERSION if feature_source == FEATURE_SOURCE_STORE else "none"
+        )
+        self.feature_store = (
+            FeatureStore(version=FEATURE_SET_VERSION, root=feature_root)
+            if feature_source == FEATURE_SOURCE_STORE
+            else None
+        )
 
         # 일봉 데이터 미리 로드
         self.daily_data = self.loader.load_daily_csvs()
@@ -81,7 +135,12 @@ class BackTestEngine:
 
     def run(self):
         """백테스트 가동 및 결과 저장 메인 루프"""
-        print(f"🚀 [Part {self.part}/{self.split}] 백테스트 엔진 가동 시작")
+        source_label = (
+            f"피처 스토어 {self.feature_set_version} ({len(REQUIRED_FEATURES)}개 컬럼)"
+            if self.feature_source == FEATURE_SOURCE_STORE
+            else "인라인 계산 (calculate_window_metrics)"
+        )
+        print(f"🚀 [Part {self.part}/{self.split}] 백테스트 엔진 가동 시작 — {source_label}")
         self.trading = self._init_trading_dict()
         self.trades = []
 
@@ -93,7 +152,11 @@ class BackTestEngine:
         
         # 8자리 숫자 날짜만 추출
         date_list = [str(d) for d in csv_open['Code'][1:] if str(d).isdigit() and len(str(d)) == 8]
-        
+
+        if self.dates is not None:
+            wanted = set(self.dates)
+            date_list = [d for d in date_list if d in wanted]
+
         length = int(len(date_list) / self.split)
         if self.part < self.split:
             load_dates = date_list[length * (self.part - 1): length * self.part]
@@ -117,15 +180,23 @@ class BackTestEngine:
             sec_tables = set(name[0] for name in cursor.execute("SELECT name FROM sqlite_master WHERE type='table';"))
 
             # 종목 유니버스 필터 — self.codes 가 None 이면 전체 종목을 돈다
+            targets = []
             for code_col in csv_open.keys()[1:]:
                 code = code_col[1:] if code_col.startswith('A') else code_col
 
                 if self.codes and code not in self.codes:
                     continue
-                
+
                 if code in sec_tables:
-                    processed_stocks += 1
-                    self._process_stock(conn, code_col, code, today_str)
+                    targets.append((code_col, code))
+
+            # 🆕 Phase B-1 — 하루치 피처를 파일 하나에서 한 번에 읽는다.
+            # 종목마다 열면 같은 parquet 푸터를 종목 수만큼 다시 파싱하게 된다.
+            day_features = self._load_day_features(today_str, [c for _, c in targets])
+
+            for code_col, code in targets:
+                processed_stocks += 1
+                self._process_stock(conn, code_col, code, today_str, day_features.get(code))
 
             conn.close()
 
@@ -166,7 +237,7 @@ class BackTestEngine:
             strategy_id=self.strategy,
             strategy_version=STRATEGY_VERSION,
             param_hash=hash_params(self.run_params),
-            feature_set_version=FEATURE_SET_VERSION,
+            feature_set_version=self.feature_set_version,
             date_range=self.date_range,
             git_sha=current_git_sha(),
         )
@@ -179,14 +250,17 @@ class BackTestEngine:
             strategy_version=STRATEGY_VERSION,
             param_variant="default",
             param_hash=hash_params(self.run_params),
-            feature_set_version=FEATURE_SET_VERSION,
+            feature_set_version=self.feature_set_version,
             engine="bar",                      # 1초봉 해상도 엔진
             mode="backtest",
             date_range=self.date_range,
             universe_size=processed_stocks,
             git_sha=current_git_sha(),
             params=self.run_params,
-            notes=f"legacy CSV 병행 출력: {RESULT_DIR / f'{self.strategy}_{self.part}.csv'}",
+            notes=(
+                f"feature_source={self.feature_source} · "
+                f"legacy CSV 병행 출력: {RESULT_DIR / f'{self.strategy}_{self.part}.csv'}"
+            ),
         )
         self.storage_key = self.run_store.save(manifest, self.trades)
         run_path = self.run_store.run_dir(self.storage_key)
@@ -295,7 +369,63 @@ class BackTestEngine:
             return None
         return value if value > 0 else None
 
-    def _process_stock(self, conn, code_col, code, today_str):
+    # ------------------------------------------------------------------
+    # 🆕 Phase B-1 — 피처 스토어 연동
+    # ------------------------------------------------------------------
+
+    def _load_day_features(self, date: str, codes: Sequence[str]) -> dict:
+        """
+        하루치 피처를 종목별 numpy 배열 묶음으로 읽는다. 파일당 1회 I/O.
+
+        읽는 컬럼은 REQUIRED_FEATURES 4개 + 키 2개뿐이다. 파일에 든 44개 중
+        나머지 38개는 디스크에서 꺼내지도 않는다 — 이게 §3.5 가 말한 컬럼 선택
+        읽기이고, Parquet 을 택한 실제 이유다(압축률은 1.26배에 불과하다).
+        """
+        if self.feature_source != FEATURE_SOURCE_STORE or not codes:
+            return {}
+
+        try:
+            frame = self.feature_store.read(date, codes=list(codes), names=REQUIRED_FEATURES)
+        except FileNotFoundError as exc:
+            raise MissingFeaturesError(
+                f"{date}: 피처 파일이 없습니다 ({self.feature_store.path_for(date)}). "
+                f"먼저 빌드하세요 — uv run python scripts/build_features.py --date {date}"
+            ) from exc
+
+        by_code: dict[str, dict] = {}
+        for code, group in frame.groupby("code", sort=False):
+            by_code[str(code)] = {
+                "time": group["time"].to_numpy(dtype=str),
+                **{name: group[name].to_numpy(dtype=float) for name in REQUIRED_FEATURES},
+            }
+
+        missing = [c for c in codes if c not in by_code]
+        if missing:
+            raise MissingFeaturesError(
+                f"{date}: 피처 파일에 없는 종목 {missing} "
+                f"(파일: {self.feature_store.path_for(date)}). "
+                f"--limit 없이 다시 빌드하거나 --codes 로 해당 종목을 포함시키세요"
+            )
+        return by_code
+
+    @staticmethod
+    def _check_feature_alignment(code, today_str, times, features) -> None:
+        """
+        피처 행과 LOB 행이 같은 시각을 가리키는지 확인한다.
+
+        parquet 은 (code, time) 정렬로 저장되고 LOB 은 삽입 순서로 읽힌다. 정상
+        거래일에는 둘이 같지만, 한 칸이라도 밀리면 전략이 t 시점에 다른 시각의
+        피처를 보게 된다 — 에러 없이 결과만 바뀌는 종류의 사고다. 종목당 1회 비교로 막는다.
+        """
+        feature_times = features["time"]
+        if len(feature_times) != len(times) or not np.array_equal(feature_times, times):
+            raise MissingFeaturesError(
+                f"{today_str}/{code}: 피처 행과 LOB 행이 어긋납니다 "
+                f"(피처 {len(feature_times)}행 vs LOB {len(times)}행). "
+                f"해당 날짜 피처를 다시 빌드하세요"
+            )
+
+    def _process_stock(self, conn, code_col, code, today_str, features=None):
         try:
             stock_name = str(self.daily_data['open'][code_col].iloc[0])
             raw_data = pd.DataFrame(conn.cursor().execute(f"SELECT * FROM '{code}'").fetchall())
@@ -352,16 +482,22 @@ class BackTestEngine:
                 'tmax_cbv5': 0.0, 'tmax_cbv10': 0.0, 'tmax_cbv30': 0.0, 'tmax_cbv60': 0.0, 'tmax_cbv1': 0.0
             }
 
+            if self.feature_source == FEATURE_SOURCE_STORE:
+                self._check_feature_alignment(code, today_str, times, features)
+
             for t in range(len(stock['time'])):
                 time_str = str(stock['time'][t])
-                
+
                 # 캔들 데이터 업데이트 (candle_close 는 어디서도 읽지 않아 제거함 — §1.6)
                 stock['candle_high'].append(stock['high'][t])
                 stock['candle_low'].append(stock['low'][t])
                 stock['candle_open'].append(stock['open'][t])
 
-                # 윈도우 수치 연산
-                calculate_window_metrics(stock, t)
+                # 윈도우 수치 — 스토어 경로는 조회만, 인라인 경로는 매 t 재계산
+                if self.feature_source == FEATURE_SOURCE_STORE:
+                    apply_stored_metrics(stock, t, features)
+                else:
+                    calculate_window_metrics(stock, t)
 
                 # 1. 청산 조건 체킹 (포지션 보유 시)
                 if stock['position'] == 1 and stock['state'] == 0:
