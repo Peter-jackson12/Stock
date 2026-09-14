@@ -29,6 +29,8 @@ practice.ipynb
 # Large Data Files (대용량 데이터 및 DB 무시)
 # ==========================================
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 
