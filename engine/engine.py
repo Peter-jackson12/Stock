@@ -670,5 +670,10 @@ class BackTestEngine:
 
         except Exception as e:
             # 에러 원인 출력 (숨기지 않음!)
-            print(f"❌ 종목 [{stock['name']}({code})] 처리 중 에러 발생: {e}")
+            # stock 딕셔너리는 try 블록 중간(위 stock = {...})에서만 만들어진다.
+            # 그 전에 예외가 나면(예: BLOB 오염 데이터로 astype(float) 실패) stock 이
+            # 아직 없어서 stock['name'] 참조 자체가 UnboundLocalError 를 내고
+            # 원래 예외를 덮어써 버린다. locals() 로 존재를 확인하고 안전하게 대체한다.
+            stock_label = locals().get("stock", {}).get("name") or locals().get("stock_name", code)
+            print(f"❌ 종목 [{stock_label}({code})] 처리 중 에러 발생: {e}")
             traceback.print_exc()
