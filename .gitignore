@@ -36,3 +36,10 @@ practice.ipynb
 # 매니페스트/parquet 은 재실행으로 복원 가능한 산출물이므로 추적하지 않는다.
 # ==========================================
 runs/
+
+# ==========================================
+# Feature Store (L2) — 배치 피처 산출물
+# 원천 데이터에서 재생성 가능하므로 추적하지 않는다.
+#   uv run python scripts/build_features.py --date YYYYMMDD
+# ==========================================
+sampledata/features/

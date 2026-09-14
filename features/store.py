@@ -28,9 +28,20 @@ import json
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
+import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
+
 from features.base import FeatureSet
 
-__all__ = ["FeatureStore"]
+__all__ = ["FeatureStore", "KEY_COLUMNS"]
+
+#: 모든 피처 파일이 공통으로 갖는 키 컬럼. 컬럼 선택 읽기에서도 항상 따라온다.
+KEY_COLUMNS = ("code", "time")
+
+#: zstd level 3 — gzip 보다 빠르면서 압축률도 좋다 (§3.5)
+COMPRESSION = "zstd"
+COMPRESSION_LEVEL = 3
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -66,20 +77,74 @@ class FeatureStore:
 
     # -- 쓰기 ---------------------------------------------------------------
 
-    def write(self, date: str, frame, feature_set: FeatureSet) -> Path:
+    def write(self, date: str, frame: "pd.DataFrame", feature_set: FeatureSet) -> Path:
         """
-        TODO(Phase B): 하루치 피처 DataFrame 을 parquet 로 기록.
+        하루치 피처 DataFrame 을 parquet 로 기록한다.
 
-        구현 메모:
-          - 압축은 zstd (level 3 정도). gzip 대비 빠르고 비율도 좋다.
-          - (code, time) 으로 정렬 후 기록하고, code 단위 row group 으로 나눈다.
-            -> 특정 종목만 읽을 때 predicate pushdown 이 걸린다.
-          - 첫 쓰기 때 _manifest.json 을 남기고, 이후 쓰기마다
-            feature_set.manifest() 와 대조해 **불일치면 에러**를 낸다.
-            같은 fs_v1 디렉토리에 다른 계산식의 피처가 섞이면
-            그 버전 전체의 재현성이 깨진다.
+          - (code, time) 정렬 후 기록하고 **종목 하나당 row group 하나**로 나눈다.
+            특정 종목만 읽을 때 그 row group 만 건드리면 되기 때문이다.
+          - 압축은 zstd level 3.
+          - 첫 쓰기 때 _manifest.json 을 남기고, 이후 쓰기마다 대조해
+            **계산식이 다르면 에러**를 낸다. 같은 fs_v1 디렉토리에 다른 버전의
+            피처가 섞이면 그 버전 전체의 재현성이 조용히 깨진다.
         """
-        raise NotImplementedError("Phase B")
+        if frame is None or len(frame) == 0:
+            raise ValueError(f"{date}: 기록할 피처가 없습니다")
+
+        missing = [c for c in KEY_COLUMNS if c not in frame.columns]
+        if missing:
+            raise ValueError(f"키 컬럼이 없습니다: {missing}")
+
+        self._check_manifest(feature_set)
+
+        ordered = frame.sort_values(list(KEY_COLUMNS), kind="stable").reset_index(drop=True)
+        ordered["code"] = ordered["code"].astype(str)
+        ordered["time"] = ordered["time"].astype(str)
+
+        table = pa.Table.from_pandas(ordered, preserve_index=False)
+        path = self.path_for(date)
+
+        # 종목 단위로 나눠 쓰면 write_table 호출 하나가 row group 하나가 된다
+        boundaries = self._code_boundaries(ordered["code"])
+        with pq.ParquetWriter(
+            path, table.schema, compression=COMPRESSION, compression_level=COMPRESSION_LEVEL
+        ) as writer:
+            for start, length in boundaries:
+                writer.write_table(table.slice(start, length))
+
+        self.write_manifest(feature_set)
+        return path
+
+    @staticmethod
+    def _code_boundaries(codes: "pd.Series") -> list[tuple[int, int]]:
+        """정렬된 code 시리즈 -> [(시작 행, 행 수)] — row group 경계."""
+        changed = codes.ne(codes.shift())
+        starts = changed.to_numpy().nonzero()[0].tolist()
+        ends = starts[1:] + [len(codes)]
+        return [(s, e - s) for s, e in zip(starts, ends)]
+
+    def _check_manifest(self, feature_set: FeatureSet) -> None:
+        existing = self.read_manifest()
+        if not existing:
+            return
+        incoming = feature_set.manifest()
+        if existing.get("feature_set_version") != incoming.get("feature_set_version"):
+            raise ValueError(
+                f"피처셋 버전이 다릅니다: 저장된 {existing.get('feature_set_version')} "
+                f"vs 새로 쓰려는 {incoming.get('feature_set_version')}"
+            )
+
+        old = {f["name"]: f["version"] for f in existing.get("features", [])}
+        new = {f["name"]: f["version"] for f in incoming.get("features", [])}
+        conflicts = [
+            f"{name}: 저장된 {old[name]} vs 새로운 {new[name]}"
+            for name in set(old) & set(new) if old[name] != new[name]
+        ]
+        if conflicts:
+            raise ValueError(
+                f"같은 이름의 피처가 다른 버전으로 기록되려 합니다 ({self.version}). "
+                f"계산식이 바뀌었다면 fs_v2 로 분기하세요: " + "; ".join(conflicts)
+            )
 
     def write_manifest(self, feature_set: FeatureSet) -> None:
         self.manifest_path.write_text(
@@ -100,17 +165,60 @@ class FeatureStore:
         *,
         codes: Optional[Sequence[str]] = None,
         names: Optional[Sequence[str]] = None,
-    ):
+    ) -> "pd.DataFrame":
         """
-        TODO(Phase B): 필요한 컬럼/종목만 선택해 읽는다.
+        필요한 컬럼/종목만 선택해 읽는다.
 
-        핵심: names 를 지정하면 **그 컬럼만 I/O 한다.** 60개 컬럼 중 3개만 읽을 때
-        SQLite 는 전체 행을 읽고 버리지만 parquet 은 해당 컬럼만 읽는다.
-        이 차이가 파라미터 스윕 속도를 가른다.
+        **핵심: names 를 지정하면 그 컬럼만 I/O 한다.** 60개 컬럼 중 3개만 쓸 때
+        SQLite 는 전체 행을 읽고 나머지를 버리지만, parquet 은 해당 컬럼 청크만
+        디스크에서 꺼낸다. 파라미터 스윕처럼 같은 데이터를 수백 번 읽는 작업에서
+        이 차이가 그대로 시간이 된다 (§3.5).
 
-        구현 메모: pyarrow.parquet.read_table(path, columns=..., filters=...)
+        codes 를 지정하면 code 단위 row group 에 predicate pushdown 이 걸린다.
         """
-        raise NotImplementedError("Phase B")
+        path = self.path_for(date)
+        if not path.exists():
+            raise FileNotFoundError(f"피처 파일이 없습니다: {path}")
+
+        columns = None
+        if names is not None:
+            available = set(self.columns_of(date))
+            unknown = [n for n in names if n not in available]
+            if unknown:
+                raise KeyError(
+                    f"{date} 에 없는 피처: {unknown}. "
+                    f"있는 피처: {sorted(available - set(KEY_COLUMNS))}"
+                )
+            # 키 컬럼은 항상 함께 — 없으면 어느 종목의 몇 시 값인지 알 수 없다
+            columns = list(KEY_COLUMNS) + [n for n in names if n not in KEY_COLUMNS]
+
+        filters = [("code", "in", list(codes))] if codes else None
+        table = pq.read_table(path, columns=columns, filters=filters)
+        return table.to_pandas()
+
+    def columns_of(self, date: str) -> list[str]:
+        """파일을 열지 않고 스키마만 본다 (푸터만 읽는다)."""
+        return list(pq.ParquetFile(self.path_for(date)).schema_arrow.names)
+
+    def file_stats(self, date: str) -> dict:
+        """
+        컬럼별 압축 크기 등 물리 통계. 컬럼 선택 읽기의 이점을 숫자로 확인할 때 쓴다.
+        """
+        meta = pq.ParquetFile(self.path_for(date)).metadata
+        sizes: dict[str, int] = {}
+        for rg in range(meta.num_row_groups):
+            group = meta.row_group(rg)
+            for c in range(group.num_columns):
+                col = group.column(c)
+                name = col.path_in_schema
+                sizes[name] = sizes.get(name, 0) + col.total_compressed_size
+        return {
+            "rows": meta.num_rows,
+            "row_groups": meta.num_row_groups,
+            "columns": meta.num_columns,
+            "file_bytes": self.path_for(date).stat().st_size,
+            "column_bytes": sizes,
+        }
 
     def read_range(
         self,
@@ -119,11 +227,20 @@ class FeatureStore:
         *,
         codes: Optional[Sequence[str]] = None,
         names: Optional[Sequence[str]] = None,
-    ):
+    ) -> "pd.DataFrame":
         """
-        TODO(Phase B): 날짜 범위 읽기.
+        날짜 범위 읽기. date 컬럼이 붙어 나온다.
 
-        파일당 하루 구조이므로 날짜 범위 = 파일 목록이고,
-        multiprocessing 분할이 자연스럽다 (run_parallel.py 의 DEFAULT_SPLIT 과 동일 발상).
+        파일당 하루 구조이므로 '날짜 범위 = 파일 목록' 이고, 그래서 병렬 처리가
+        자연스럽다 (run_parallel.py 의 DEFAULT_SPLIT 과 같은 발상).
         """
-        raise NotImplementedError("Phase B")
+        dates = [d for d in self.available_dates() if str(start) <= d <= str(end)]
+        frames = []
+        for date in dates:
+            frame = self.read(date, codes=codes, names=names)
+            frame.insert(0, "date", date)
+            frames.append(frame)
+
+        if not frames:
+            return pd.DataFrame(columns=["date", *KEY_COLUMNS])
+        return pd.concat(frames, ignore_index=True)
