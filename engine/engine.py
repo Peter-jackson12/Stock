@@ -15,6 +15,7 @@ from engine.config import (  # ⭐️ engine. 추가
     EXIT_RULE_ID,
     FEATURE_SET_VERSION,
     TARGET_CODES,
+    SEC_PATH,
 )
 from engine.utils import (
     calculate_ticksize,
@@ -43,6 +44,15 @@ from core.runstore import (
 # 🆕 Phase B-1 — L2 피처 레이어. 루프에서 계산하던 값을 미리 계산된 parquet 에서 읽는다.
 from features.store import FeatureStore
 
+# 🆕 Phase B-4 — 유니버스 단일 소스. 일봉 매트릭스가 암묵적으로 정하던 것을 선언으로.
+from core.universe import (
+    MISSING_THRESHOLD_PCT,
+    UniverseReconciliation,
+    load_universe,
+    reconcile,
+    resolve_codes,
+)
+
 #: feature_source 로 허용되는 값
 FEATURE_SOURCE_STORE = "store"      # fs_v1 parquet 조회 (기본)
 FEATURE_SOURCE_INLINE = "inline"    # calculate_window_metrics() 루프 계산 (대조용)
@@ -59,6 +69,16 @@ class MissingFeaturesError(RuntimeError):
     """
 
 
+class UniverseGapError(RuntimeError):
+    """
+    선언된 유니버스와 실제 처리된 종목의 차이가 임계를 넘었다 (--strict-universe).
+
+    조용한 축소를 막는 것이 B-4 의 전부다. 운영에서 daily_collector 가 종목을
+    놓치면 그 종목은 모든 백테스트에서 사라지는데, 지금까지는 매니페스트의
+    universe_size 가 그냥 작은 숫자를 보고할 뿐이었다.
+    """
+
+
 class BackTestEngine:
     def __init__(
         self,
@@ -69,6 +89,10 @@ class BackTestEngine:
         dates: Optional[Sequence[str]] = None,
         feature_source: str = FEATURE_SOURCE_STORE,
         feature_root=None,
+        universe: Optional[str] = None,
+        universe_path=None,
+        missing_threshold_pct: float = MISSING_THRESHOLD_PCT,
+        strict_universe: bool = False,
     ):
         """
         codes — 대상 종목 필터. None 이면 engine.config.TARGET_CODES 를 따른다
@@ -86,6 +110,15 @@ class BackTestEngine:
                 calculate_window_metrics() 루프 계산. 두 경로의 거래 목록이
                 일치하는지는 scripts/verify_engine_feature_parity.py 가 대조한다.
                 **대조가 통과하기 전에는 인라인 경로를 제거하지 않는다** (§8).
+
+        universe — universe.yaml 의 선언 이름. None 이면 파일의 default.
+                과거에는 일봉 매트릭스 컬럼이 유니버스를 암묵적으로 정했다
+                (ARCHITECTURE_V2.md §3.6.1 추가 발견). 이제는 선언이 기준이고,
+                선언과 실제 처리의 차이가 사유별로 매니페스트에 남는다.
+
+        codes 와 universe 의 관계: codes 는 선언 위에 다시 씌우는 **필터**다.
+                유니버스를 넓히는 용도가 아니라 좁히는 용도이므로, 선언에 없는
+                종목을 codes 로 지정해도 처리되지 않는다.
         """
         if feature_source not in (FEATURE_SOURCE_STORE, FEATURE_SOURCE_INLINE):
             raise ValueError(
@@ -111,6 +144,12 @@ class BackTestEngine:
             if feature_source == FEATURE_SOURCE_STORE
             else None
         )
+
+        # 🆕 Phase B-4 — 유니버스 선언. 해석은 날짜가 정해진 뒤(run) 한다.
+        self.universe_spec = load_universe(universe, universe_path)
+        self.missing_threshold_pct = missing_threshold_pct
+        self.strict_universe = strict_universe
+        self.reconciliation: Optional[UniverseReconciliation] = None
 
         # 일봉 데이터 미리 로드
         self.daily_data = self.loader.load_daily_csvs()
@@ -149,9 +188,13 @@ class BackTestEngine:
             return
 
         csv_open = self.daily_data['open']
-        
-        # 8자리 숫자 날짜만 추출
-        date_list = [str(d) for d in csv_open['Code'][1:] if str(d).isdigit() and len(str(d)) == 8]
+
+        # 🆕 Phase B-4 — 날짜의 출처를 일봉 매트릭스에서 LOB 파일 목록으로 옮긴다.
+        # 백테스트할 수 있는 날은 '일봉 CSV 에 행이 있는 날'이 아니라 '초봉이 수집된
+        # 날'이다. 과거에는 두 조건이 암묵적으로 AND 로 걸려 있었고(없는 날은 conn
+        # is None 으로 건너뜀), 그래서 date_range 가 실제 실행 구간보다 훨씬 넓게
+        # 기록됐다. 파일 목록이 더 정직한 소스다.
+        date_list = self._collectable_dates()
 
         if self.dates is not None:
             wanted = set(self.dates)
@@ -169,7 +212,16 @@ class BackTestEngine:
         # Trade 레코드가 run_id 를 들고 있어야 하므로 루프 '전에' 계산한다.
         self._prepare_run_identity(load_dates)
 
-        processed_stocks = 0
+        # 🆕 Phase B-4 — 선언된 유니버스. daily_col 은 종목명·전일종가 조회용 컬럼명이다.
+        declared = self._declared_codes(load_dates)
+        daily_col = {
+            (c[1:] if str(c).startswith('A') else str(c)): c for c in csv_open.keys()[1:]
+        }
+
+        processed: set[str] = set()
+        seen_in_lob: set[str] = set()
+        missing_features: set[str] = set()
+
         for today_date in load_dates:
             today_str = str(today_date)
             conn = self.loader.get_lob_db_connection(today_str)
@@ -178,29 +230,39 @@ class BackTestEngine:
 
             cursor = conn.cursor()
             sec_tables = set(name[0] for name in cursor.execute("SELECT name FROM sqlite_master WHERE type='table';"))
+            seen_in_lob |= sec_tables
 
-            # 종목 유니버스 필터 — self.codes 가 None 이면 전체 종목을 돈다
-            targets = []
-            for code_col in csv_open.keys()[1:]:
-                code = code_col[1:] if code_col.startswith('A') else code_col
-
-                if self.codes and code not in self.codes:
-                    continue
-
-                if code in sec_tables:
-                    targets.append((code_col, code))
+            # 선언된 유니버스 ∩ 그날 수집된 종목 ∩ 일봉 매트릭스에 있는 종목.
+            # 세 번째 조건이 아직 남아 있는 이유: 종목명과 전일 종가(상한가 계산의
+            # 입력)를 일봉 매트릭스에서만 얻을 수 있기 때문이다. 그래서 여기서
+            # 빠지는 종목은 no_daily 로 집계된다 — 사라지되 세어진다.
+            targets = [
+                (daily_col[code], code)
+                for code in declared
+                if code in sec_tables and code in daily_col
+            ]
 
             # 🆕 Phase B-1 — 하루치 피처를 파일 하나에서 한 번에 읽는다.
             # 종목마다 열면 같은 parquet 푸터를 종목 수만큼 다시 파싱하게 된다.
             day_features = self._load_day_features(today_str, [c for _, c in targets])
 
             for code_col, code in targets:
-                processed_stocks += 1
+                if self.feature_source == FEATURE_SOURCE_STORE and code not in day_features:
+                    missing_features.add(code)
+                    continue
+                processed.add(code)
                 self._process_stock(conn, code_col, code, today_str, day_features.get(code))
 
             conn.close()
 
-        print(f"📊 탐색한 총 종목 수: {processed_stocks}개")
+        self.reconciliation = reconcile(
+            declared,
+            processed=processed,
+            seen_in_lob=seen_in_lob,
+            seen_in_daily=daily_col,
+            missing_features=missing_features,
+        )
+        self._report_universe()
 
         # 결과 CSV 저장 (레거시 경로 — 런 스토어 검증이 끝날 때까지 유지한다)
         result_df = pd.DataFrame(self.trading)
@@ -209,7 +271,58 @@ class BackTestEngine:
         print(f"✅ [Part {self.part}] 백테스팅 완료! 저장 건수: {len(result_df)}건 ➔ 파일: {output_file}")
 
         # 🆕 Phase A — 표준 Trade 레코드를 런 스토어에도 저장 (CSV 와 병행)
-        self._save_run(result_df, processed_stocks)
+        self._save_run(result_df, len(processed))
+
+    # ------------------------------------------------------------------
+    # 🆕 Phase B-4 — 유니버스 선언과 대조
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _collectable_dates() -> list[str]:
+        """초봉이 수집된 날짜 (temp/*_LOB.db). 백테스트가 실제로 돌 수 있는 날이다."""
+        return sorted(p.stem.replace("_LOB", "") for p in SEC_PATH.glob("*_LOB.db"))
+
+    def _declared_codes(self, dates: Sequence[str]) -> tuple[str, ...]:
+        """
+        선언을 종목 목록으로 푼다. codes 인자가 있으면 그 위에 필터로 덧씌운다.
+
+        codes 는 선언을 넓히지 못한다 — 선언에 없는 종목을 지정해도 처리되지 않는다.
+        유니버스의 단일 소스는 어디까지나 universe.yaml 이다.
+        """
+        declared = resolve_codes(
+            self.universe_spec, dates=dates, daily_frame=self.daily_data.get('open')
+        )
+        if self.codes:
+            wanted = set(self.codes)
+            declared = tuple(c for c in declared if c in wanted)
+        return declared
+
+    def _report_universe(self) -> None:
+        """
+        선언 대비 처리 결과를 출력하고, 결손이 임계를 넘으면 경고하거나 실패시킨다.
+
+        지금까지는 "탐색한 총 종목 수: 3개"만 찍혔다. 3이 의도한 값인지 아닌지를
+        아무도 알 수 없었고, 그래서 아무도 의심하지 않았다 (§3.6.1 추가 발견).
+        """
+        rec = self.reconciliation
+        spec = self.universe_spec
+        print(f"🌐 유니버스 '{spec.name}' ({spec.source}) — {rec.describe()}")
+
+        if rec.within(self.missing_threshold_pct):
+            return
+
+        for reason, codes in sorted(rec.missing_codes.items()):
+            sample = ", ".join(codes[:5])
+            more = f" 외 {len(codes) - 5}종목" if len(codes) > 5 else ""
+            print(f"   {reason:<12} {len(codes):>5}종목  예: {sample}{more}")
+
+        message = (
+            f"선언된 유니버스의 {rec.missing_pct:.1f}% 가 처리되지 않았습니다 "
+            f"(임계 {self.missing_threshold_pct:.0f}%)"
+        )
+        if self.strict_universe:
+            raise UniverseGapError(message)
+        print(f"   ⚠️ {message}")
 
     # ------------------------------------------------------------------
     # 🆕 Phase A — 런 스토어 연동
@@ -226,10 +339,14 @@ class BackTestEngine:
 
         # 지금 이 엔진의 거동을 결정하는 값 전부. 하나라도 바뀌면 run_id 가 바뀌어야 한다.
         # (Phase C 에서 strategies/*/params/*.yaml 로 이관된다)
+        # universe 는 **선언**만 넣는다. 해석 결과(종목 수)는 데이터가 채워지는 대로
+        # 변하므로 run_id 에 들어가면 같은 선언의 런이 서로 다른 id 를 갖게 된다.
+        # 대조 결과는 매니페스트의 별도 필드로 나간다 (_save_run).
         self.run_params = {
             "set_time": SET_TIME,
             "fee_pct": FEE_PCT,
             "exit_rule": EXIT_RULE_ID,
+            "universe": self.universe_spec.as_params(),
             "universe_filter": ",".join(self.codes) if self.codes else "all",
             "partition": {"part": self.part, "split": self.split},
         }
@@ -257,8 +374,10 @@ class BackTestEngine:
             universe_size=processed_stocks,
             git_sha=current_git_sha(),
             params=self.run_params,
+            universe=self.reconciliation.as_manifest() if self.reconciliation else {},
             notes=(
                 f"feature_source={self.feature_source} · "
+                f"universe={self.universe_spec.name} · "
                 f"legacy CSV 병행 출력: {RESULT_DIR / f'{self.strategy}_{self.part}.csv'}"
             ),
         )
@@ -380,6 +499,11 @@ class BackTestEngine:
         읽는 컬럼은 REQUIRED_FEATURES 4개 + 키 2개뿐이다. 파일에 든 44개 중
         나머지 38개는 디스크에서 꺼내지도 않는다 — 이게 §3.5 가 말한 컬럼 선택
         읽기이고, Parquet 을 택한 실제 이유다(압축률은 1.26배에 불과하다).
+
+        파일 자체가 없으면 MissingFeaturesError — 인라인 계산으로 조용히 폴백하지
+        않는다. 반면 **파일 안에 특정 종목이 없는 것**은 에러가 아니라 유니버스
+        결손이다(B-4). 그 종목은 처리에서 빠지고 no_features 로 집계돼 매니페스트에
+        남는다. 전자는 운영 실패이고 후자는 계층 간 데이터 격차라, 다루는 방식이 다르다.
         """
         if self.feature_source != FEATURE_SOURCE_STORE or not codes:
             return {}
@@ -398,14 +522,6 @@ class BackTestEngine:
                 "time": group["time"].to_numpy(dtype=str),
                 **{name: group[name].to_numpy(dtype=float) for name in REQUIRED_FEATURES},
             }
-
-        missing = [c for c in codes if c not in by_code]
-        if missing:
-            raise MissingFeaturesError(
-                f"{date}: 피처 파일에 없는 종목 {missing} "
-                f"(파일: {self.feature_store.path_for(date)}). "
-                f"--limit 없이 다시 빌드하거나 --codes 로 해당 종목을 포함시키세요"
-            )
         return by_code
 
     @staticmethod

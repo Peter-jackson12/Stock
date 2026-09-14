@@ -73,10 +73,16 @@ class RunManifest:
     date_range: tuple[str, str]             # ("20260901", "20260911")
 
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    universe_size: int = 0
+    universe_size: int = 0                  # 실제로 처리된 **종목 수** (종목일 수가 아니다)
     git_sha: str = ""
     params: Mapping[str, Any] = field(default_factory=dict)
     metrics: Mapping[str, Any] = field(default_factory=dict)
+
+    # 🆕 Phase B-4 — 선언된 유니버스 대비 실제 처리 결과. universe_size 만으로는
+    # 그 숫자가 의도한 값인지 알 수 없다 (ARCHITECTURE_V2.md §3.6.1 추가 발견).
+    # params["universe"] 가 '무엇을 선언했나'라면 이 필드는 '무엇이 실제로 됐나'다.
+    universe: Mapping[str, Any] = field(default_factory=dict)
+
     notes: str = ""
 
     # 실제 저장 디렉토리 이름. 보통 run_id 와 같지만, 같은 run_id 를 다시 저장하면

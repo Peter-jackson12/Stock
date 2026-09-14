@@ -97,10 +97,18 @@ def test_missing_feature_file_raises_instead_of_falling_back(tmp_path: Path):
         engine._load_day_features("20991231", [CODE])
 
 
-def test_missing_code_in_feature_file_raises(feature_root: Path):
+def test_missing_code_in_feature_file_is_a_universe_gap_not_an_error(feature_root: Path):
+    """
+    파일이 없는 것과 파일 안에 종목이 없는 것은 다른 사건이다 (B-4).
+
+    전자는 운영 실패 -> 에러. 후자는 계층 간 데이터 격차 -> 처리에서 빠지고
+    no_features 로 집계돼 매니페스트에 남는다. 여기서 에러를 내면 유니버스를
+    넓게 선언하는 것 자체가 불가능해져 대조 기능이 무용지물이 된다.
+    """
     engine = make_engine(feature_root)
-    with pytest.raises(MissingFeaturesError, match="없는 종목"):
-        engine._load_day_features(DATE, [CODE, "999999"])
+    loaded = engine._load_day_features(DATE, [CODE, "999999"])
+
+    assert set(loaded) == {CODE}
 
 
 def test_row_misalignment_raises(feature_root: Path):

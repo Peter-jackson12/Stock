@@ -17,6 +17,7 @@ sys.path = [p for p in sys.path if Path(p).resolve() != Path(__file__).resolve()
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from core.universe import MISSING_THRESHOLD_PCT
 from engine.engine import FEATURE_SOURCE_INLINE, FEATURE_SOURCE_STORE, BackTestEngine
 
 
@@ -35,6 +36,18 @@ def _parse_args() -> argparse.Namespace:
         default=FEATURE_SOURCE_STORE,
         help="피처 출처. store=fs_v1 parquet 조회(기본), inline=루프 계산(대조용)",
     )
+    parser.add_argument(
+        "--universe", default=None,
+        help="universe.yaml 의 선언 이름 (기본: 파일의 default)",
+    )
+    parser.add_argument(
+        "--missing-threshold", type=float, default=MISSING_THRESHOLD_PCT,
+        help=f"선언 대비 미처리 비율 경고 임계치 %% (기본 {MISSING_THRESHOLD_PCT:.0f})",
+    )
+    parser.add_argument(
+        "--strict-universe", action="store_true",
+        help="미처리 비율이 임계를 넘으면 경고가 아니라 실패로 처리한다",
+    )
     return parser.parse_args()
 
 
@@ -46,6 +59,9 @@ if __name__ == "__main__":
     engine = BackTestEngine(
         part=1, split=1, codes=args.codes, dates=args.dates,
         feature_source=args.feature_source,
+        universe=args.universe,
+        missing_threshold_pct=args.missing_threshold,
+        strict_universe=args.strict_universe,
     )
     engine.run()
 
