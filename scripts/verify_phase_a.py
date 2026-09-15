@@ -41,11 +41,24 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
+import engine.data_loader as data_loader_module                  # noqa: E402
 import engine.engine as bar_engine_module                       # noqa: E402
 from core.runstore import RunStore                              # noqa: E402
 from engine.config import ENCODING, RESULT_DIR, STRATEGY_NAME   # noqa: E402
-from engine.engine import BackTestEngine                        # noqa: E402
+from engine.engine import BackTestEngine, FEATURE_SOURCE_INLINE  # noqa: E402
 from engine.nxt_tick_engine import NextradeTickEngine           # noqa: E402
+
+# 회귀 기준선(거래 5건 / 누적 -1.301%, 2026-09-14 B-1/B-4 대조)의 입력 고정 사본.
+# rev.2 §1: daily_collector 재수집이 sampledata/Daily/*.csv 를 덮어써도 이 검증은
+# 항상 같은 입력 위에서 돈다 — "덮어쓴 다음 날 기준선이 조용히 바뀌는" 사고를 막는다.
+BASELINE_CSV_PATH = PROJECT_ROOT / "sampledata" / "Daily_baseline"
+
+# 2022년 8일 표본(20220425~20220504)의 LOB DB. sampledata/temp/ 는 매일 그날치
+# 하나만 남기고 갈아치워지므로(디스크 절약), 회귀 검증은 이 LOB 이 없으면
+# 애초에 거래를 0건 만들어 낼 수 없다 — 2026-09-15 사전조사에서 실제로 그렇게
+# 비어 있었다. sampledata/old_data/temp/ 에 그 8일치 LOB 이 남아 있어 여기로
+# 고정한다(2026-09-15 사용자 보관 백업 zip 에서 복원됨).
+BASELINE_SEC_PATH = PROJECT_ROOT / "sampledata" / "old_data" / "temp"
 
 RESULTS: list[tuple[str, bool, str]] = []
 
@@ -68,27 +81,64 @@ def _trades_only(df: pd.DataFrame) -> pd.DataFrame:
 #: 검증용 대상 종목. engine.py 의 하드코딩 필터(§1.6)가 제거되면서 기본값이
 #: "전체 종목"이 되었으므로, 이 스크립트의 빠른 회귀 검증 범위를 유지하려면
 #: 명시적으로 지정해야 한다.
-VERIFY_CODES = ("000270",)
+#:
+#: 회귀 기준선(results/cross_Today_1.csv, 거래 5건 / 누적 -1.301%)은 기아
+#: (000270) 4건 + 삼성전자(005930) 1건으로 이뤄진다 — SK하이닉스(000660)는
+#: 이 8일 구간에서 거래가 없었다. 2026-09-15 재검증 때 ("000270",) 만으로
+#: 돌려 4건/-0.920%가 나오는 오류를 겪었다 — 대조 대상 CSV 와 코드 집합이
+#: 어긋나 있었다. 기준선을 만든 조합 그대로 셋을 맞춘다.
+VERIFY_CODES = ("000270", "005930", "000660")
 
 
 def verify_bar_engine(runs_root: Path, tmp_results: Path) -> None:
     print("\n[1] 1초봉 엔진 (engine/engine.py)")
 
+    if not BASELINE_CSV_PATH.exists():
+        check("회귀 기준선 입력 존재", False, f"{BASELINE_CSV_PATH} 없음 — 먼저 백업을 만들 것")
+        return
+    if not BASELINE_SEC_PATH.exists():
+        check("회귀 기준선 LOB 존재", False, f"{BASELINE_SEC_PATH} 없음 — 8일 표본 LOB DB 를 복원할 것")
+        return
+
     # 레거시 CSV 를 임시 디렉토리로 돌린다 — results/ 의 기존 파일을 보호하기 위함
     original_result_dir = bar_engine_module.RESULT_DIR
     bar_engine_module.RESULT_DIR = tmp_results
+    # 일봉 CSV·LOB DB 입력을 둘 다 냉동 백업본으로 고정한다 — sampledata/Daily 와
+    # sampledata/temp 가 재수집·일별 교체로 바뀌어도 이 검증은 항상 같은 8일
+    # 표본 위에서 돈다 (rev.2 §1). SEC_PATH 는 engine.engine(날짜 목록 조회)과
+    # engine.data_loader(실제 LOB 연결) 양쪽에 각각 임포트돼 있어 둘 다 패치한다.
+    original_csv_path = data_loader_module.CSV_PATH
+    original_sec_path_loader = data_loader_module.SEC_PATH
+    original_sec_path_engine = bar_engine_module.SEC_PATH
+    data_loader_module.CSV_PATH = BASELINE_CSV_PATH
+    data_loader_module.SEC_PATH = BASELINE_SEC_PATH
+    bar_engine_module.SEC_PATH = BASELINE_SEC_PATH
     try:
-        first = BackTestEngine(part=1, split=12, runs_root=runs_root, codes=VERIFY_CODES)
+        # split=1: 냉동 표본은 8일뿐이라 split=12 로 나누면 파트 1의 몫이
+        # int(8/12)=0 이 되어 날짜가 통째로 비어버린다(2026-09-15 재검증 때
+        # 실제로 겪은 실패). feature_source=inline: 이 8일치 fs_v1 parquet 은
+        # LOB 와 마찬가지로 사라졌다 — B-1 이 당시 인라인/스토어 동치를 이미
+        # 확인했으므로 인라인 경로로 같은 값을 재현한다.
+        first = BackTestEngine(
+            part=1, split=1, runs_root=runs_root, codes=VERIFY_CODES,
+            feature_source=FEATURE_SOURCE_INLINE,
+        )
         first.run()
         csv_path = tmp_results / f"{STRATEGY_NAME}_1.csv"
         csv_df = pd.read_csv(csv_path, encoding=ENCODING)
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")     # 두 번째 저장은 __2 로 분기된다(정상)
-            second = BackTestEngine(part=1, split=12, runs_root=runs_root, codes=VERIFY_CODES)
+            second = BackTestEngine(
+                part=1, split=1, runs_root=runs_root, codes=VERIFY_CODES,
+                feature_source=FEATURE_SOURCE_INLINE,
+            )
             second.run()
     finally:
         bar_engine_module.RESULT_DIR = original_result_dir
+        data_loader_module.CSV_PATH = original_csv_path
+        data_loader_module.SEC_PATH = original_sec_path_loader
+        bar_engine_module.SEC_PATH = original_sec_path_engine
 
     check(
         "재현성: 두 번 실행의 run_id 가 같다",
