@@ -22,6 +22,16 @@ collector/kiwoom/session_monitor.py — 수집 세션 감시기 (키움 API 의�
 판정은 [09:00, 15:30] 과 겹치는 구간의 길이로 하고, 사람이 읽는 문구에는
 실제 벽시계 간격도 같이 적는다.
 
+[대기큐 적체 판정을 절대값이 아니라 추세로 하는 이유] (발견 #13)
+장 시작 직후엔 큐가 수만~수십만 건까지 쌓였다 빠지는 게 정상 패턴이다
+(2026-09-15 실측: 09:16:55 에 203,692건까지 쌓였다가 09:51 에 0에 가깝게
+빠졌다). 절대값으로 임계를 걸면 개장 직후엔 매일 울려서 경보가 무의미해진다.
+그래서 "얼마나 쌓였는가"가 아니라 "따라잡고 있는가"를 본다 — 큐가 바닥
+(queue_backlog_floor) 이상인 상태가 stuck_window 이상 지속되면서, 그 구간의
+시작 시점보다 줄어들지 않았다면 적체로 본다. 개장 폭주처럼 쌓였다가도 계속
+빠지고 있으면 알리지 않고, 다 빠지지 않은 채 그대로거나 계속 느는 경우에만
+알린다.
+
 시계(clock)는 주입 가능하다. 키움 API 없이 테스트하기 위한 것이다.
 """
 
@@ -30,6 +40,7 @@ from __future__ import annotations
 import logging
 import sys
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, time as dtime
 from logging.handlers import RotatingFileHandler
@@ -45,6 +56,14 @@ DEFAULT_GAP_THRESHOLD_SEC = 120.0
 
 # 침묵이 계속되는 동안 경고를 되풀이하는 간격 (한 번 찍고 말면 묻힌다).
 DEFAULT_WARN_REPEAT_SEC = 60.0
+
+# 이 건수 미만이면 적체로 보지 않는다 (개장 직후 정상 변동 범위를 덮는다).
+# 2026-09-15 실측 최대 203,692건 대비 여유를 두되, 점심시간대 통상 변동
+# (수백~1천대)은 확실히 걸러지도록 잡은 값이다.
+DEFAULT_QUEUE_BACKLOG_FLOOR = 20_000
+
+# 이 시간 동안 바닥 이상을 유지하면서 줄지 않으면 "적체가 안 빠진다"고 본다.
+DEFAULT_QUEUE_STUCK_WINDOW_SEC = 300.0
 
 
 def format_clock(ts: float | None) -> str:
@@ -109,6 +128,8 @@ class SessionReport:
     trailing_wall_sec: float      # 마지막 수신 ~ 종료 (벽시계)
     trailing_market_sec: float    # 그중 정규장과 겹치는 길이 (판정 기준)
     healthy: bool
+    queue_max_depth: int = 0            # 장중 관측된 대기큐 최대값 (발견 #13)
+    queue_max_ts: float | None = None   # 그 최대값이 찍힌 시각
     extra: list[tuple[str, str]] = field(default_factory=list)
 
     @property
@@ -177,6 +198,7 @@ class SessionReport:
             f"  마지막~종료 갭 : {self._gap_detail()}",
             f"  체결 총건수   : {self.trade_count:,} 건",
             f"  호가 총건수   : {self.quote_count:,} 건",
+            f"  장중 대기큐 최대: {self.queue_max_depth:,} 건 ({format_clock(self.queue_max_ts)})",
         ]
         for label, value in self.extra:
             out.append(f"  {label} : {value}")
@@ -196,10 +218,11 @@ class SessionMonitor:
     수신 상태를 추적하고 침묵을 판정한다.
 
     호출 규약:
-      start()                  — 세션 시작 시 1회
-      on_trade() / on_quote()  — 큐에 넣은 직후, 이벤트 1건마다 (핫패스)
-      tick()                   — 기존 주기 루프에서 1초마다. 알릴 말이 있으면 문자열
-      finish(reason)           — 종료 시 1회. SessionReport 반환
+      start()                    — 세션 시작 시 1회
+      on_trade() / on_quote()    — 큐에 넣은 직후, 이벤트 1건마다 (핫패스)
+      tick()                     — 기존 주기 루프에서 1초마다. 알릴 말이 있으면 문자열
+      sample_queue_depth(depth)  — tick() 과 같은 주기 루프에서 1초마다. 마찬가지
+      finish(reason)             — 종료 시 1회. SessionReport 반환
     """
 
     def __init__(
@@ -210,12 +233,16 @@ class SessionMonitor:
         warn_repeat_sec: float = DEFAULT_WARN_REPEAT_SEC,
         market_open: dtime = MARKET_OPEN,
         market_close: dtime = MARKET_CLOSE,
+        queue_backlog_floor: int = DEFAULT_QUEUE_BACKLOG_FLOOR,
+        queue_stuck_window_sec: float = DEFAULT_QUEUE_STUCK_WINDOW_SEC,
     ) -> None:
         self._clock = clock
         self.gap_threshold_sec = float(gap_threshold_sec)
         self.warn_repeat_sec = float(warn_repeat_sec)
         self._market_open = market_open
         self._market_close = market_close
+        self.queue_backlog_floor = int(queue_backlog_floor)
+        self.queue_stuck_window_sec = float(queue_stuck_window_sec)
 
         self.started_at: float | None = None
         self.ended_at: float | None = None
@@ -232,6 +259,14 @@ class SessionMonitor:
         self._last_warn_ts: float | None = None
         self._market_open_ts: float = 0.0
         self._market_close_ts: float = 0.0
+
+        # 대기큐 적체 추적(발견 #13). sample_queue_depth() 는 tick() 과 같은
+        # 기존 1초 루프에서만 불린다 — 여기도 핫패스가 아니다.
+        self._queue_max_depth: int = 0
+        self._queue_max_ts: float | None = None
+        self._queue_history: deque[tuple[float, int]] = deque()
+        self._queue_alert_active: bool = False
+        self._queue_last_warn_ts: float | None = None
 
     # ── 수명주기 ──────────────────────────────────────────────────────────
 
@@ -313,6 +348,61 @@ class SessionMonitor:
             f"— 마지막 수신 {format_clock(self.last_event_ts)} (결손 의심)"
         )
 
+    # ── 대기큐 적체 판정 (기존 1초 루프에서 tick() 과 함께 호출, 발견 #13) ──
+
+    def sample_queue_depth(self, depth: int) -> str | None:
+        """
+        대기큐(수신~DB 반영 사이) 잔량 1건을 표본으로 받는다.
+
+        절대값이 아니라 "바닥(queue_backlog_floor) 이상을 stuck_window 동안
+        유지하면서 그 구간 시작 시점보다 줄지 않았는가"로 판정한다. 개장 직후
+        수십만 건까지 쌓였다가도 계속 빠지고 있으면 정상이고, 쌓인 채 그대로
+        거나 계속 늘면 그때 알린다. 새로 알릴 것이 있으면 문자열, 없으면 None.
+        """
+        now = self._clock()
+
+        if depth > self._queue_max_depth:
+            self._queue_max_depth = depth
+            self._queue_max_ts = now
+
+        self._queue_history.append((now, depth))
+        cutoff = now - self.queue_stuck_window_sec
+        while self._queue_history and self._queue_history[0][0] < cutoff:
+            self._queue_history.popleft()
+
+        if depth < self.queue_backlog_floor:
+            self._queue_alert_active = False
+            self._queue_last_warn_ts = None
+            return None
+
+        baseline_ts, baseline_depth = self._queue_history[0]
+        window_covered = (now - baseline_ts) >= self.queue_stuck_window_sec
+        not_draining = depth >= baseline_depth
+
+        if not (window_covered and not_draining):
+            self._queue_alert_active = False
+            self._queue_last_warn_ts = None
+            return None
+
+        if not self._queue_alert_active:
+            self._queue_alert_active = True
+            self._queue_last_warn_ts = now
+            return self._queue_warning(now, depth, baseline_depth, first=True)
+
+        if self._queue_last_warn_ts is None or (now - self._queue_last_warn_ts) >= self.warn_repeat_sec:
+            self._queue_last_warn_ts = now
+            return self._queue_warning(now, depth, baseline_depth, first=False)
+
+        return None
+
+    def _queue_warning(self, now: float, depth: int, baseline_depth: int, *, first: bool) -> str:
+        head = "🐢" if first else "🐢 (계속)"
+        window_min = self.queue_stuck_window_sec / 60.0
+        return (
+            f"{head} [{format_clock(now)}] 대기큐 적체 — 최근 {window_min:.0f}분간 안 줄어듦 "
+            f"({baseline_depth:,}건 → {depth:,}건, 바닥 {self.queue_backlog_floor:,}건 기준)"
+        )
+
     # ── 종료 ──────────────────────────────────────────────────────────────
 
     def finish(
@@ -359,6 +449,8 @@ class SessionMonitor:
             trailing_wall_sec=trailing_wall,
             trailing_market_sec=trailing_market,
             healthy=healthy,
+            queue_max_depth=self._queue_max_depth,
+            queue_max_ts=self._queue_max_ts,
             extra=list(extra or []),
         )
 

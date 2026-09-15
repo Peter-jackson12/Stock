@@ -6,7 +6,10 @@
 - 멀티스레드 대용량 큐 버퍼링으로 틱 누락 0% 방어
 - Ctrl+C 정상 종료 처리 완비
 - 수신 침묵 감시: 장중 무이벤트 구간을 주기 루프에서 경고하고, 종료 시
-  결손이 남아 있으면 '정상 종료' 라고 보고하지 않는다 (session_monitor)
+  결손이 남아 있으면 '정상 종료' 라고 보고하지 않는다 (session_monitor).
+  정상 종료에도 마지막 수신~종료 갭 수치와 임계값을 함께 남긴다.
+- 대기큐 적체 감시: 절대값이 아니라 "바닥 이상을 일정 시간 유지하며
+  줄지 않는가"로 판정한다. 장중 최대 적체값과 시각을 세션 요약에 남긴다.
 - 회전 파일 로그: logs/kiwoom_universe_{YYYYMMDD}.log (콘솔 출력 동시 기록)
 - 저장소: sampledata/raw_ticks/{YYYYMMDD}_raw.db
 """
@@ -39,13 +42,21 @@ LOG_DIR = PROJECT_ROOT / "logs"
 
 from collector.kiwoom.session_monitor import (                         # noqa: E402
     DEFAULT_GAP_THRESHOLD_SEC,
+    DEFAULT_QUEUE_BACKLOG_FLOOR,
+    DEFAULT_QUEUE_STUCK_WINDOW_SEC,
     SessionLog,
     SessionMonitor,
 )
 
 
 class KiwoomUniverseLogger:
-    def __init__(self, *, gap_threshold_sec: float = DEFAULT_GAP_THRESHOLD_SEC):
+    def __init__(
+        self,
+        *,
+        gap_threshold_sec: float = DEFAULT_GAP_THRESHOLD_SEC,
+        queue_backlog_floor: int = DEFAULT_QUEUE_BACKLOG_FLOOR,
+        queue_stuck_window_sec: float = DEFAULT_QUEUE_STUCK_WINDOW_SEC,
+    ):
         self.app = QApplication(sys.argv)
 
         # 파이썬 인터프리터가 Ctrl+C를 감지할 수 있도록 0.2초 주기 타이머 가동
@@ -61,8 +72,13 @@ class KiwoomUniverseLogger:
         # (주기 상태줄만 60초에 한 번 샘플로 남긴다 — SessionLog 참고)
         self.log = SessionLog(self.log_path)
 
-        # 수신 침묵 감시기. 판정은 _stats_worker 의 기존 1초 루프에서만 돈다.
-        self.monitor = SessionMonitor(gap_threshold_sec=gap_threshold_sec)
+        # 수신 침묵 감시기 + 대기큐 적체 감시기(발견 #13). 판정은 _stats_worker 의
+        # 기존 1초 루프에서만 돈다.
+        self.monitor = SessionMonitor(
+            gap_threshold_sec=gap_threshold_sec,
+            queue_backlog_floor=queue_backlog_floor,
+            queue_stuck_window_sec=queue_stuck_window_sec,
+        )
         self._shutdown_lock = threading.Lock()
         self._shutdown_done = False
         self._install_sigint_handler()
@@ -259,18 +275,19 @@ class KiwoomUniverseLogger:
         conn.close()
 
     def _stats_worker(self):
-        """수집 현황 주기 출력 + 장중 침묵 감시 + 장 마감 종료 (기존 1초 루프)"""
+        """수집 현황 주기 출력 + 장중 침묵/대기큐 적체 감시 + 장 마감 종료 (기존 1초 루프)"""
         while self.is_running:
             now = datetime.now()
             now_int = int(now.strftime("%H%M%S"))
             now_str = now.strftime("%H:%M:%S")
+            queue_depth = self.trade_queue.qsize() + self.quote_queue.qsize()
 
-            # 침묵 판정은 이 주기 루프 안에서만 한다. 이벤트 수신 경로에는
+            # 침묵/적체 판정은 이 주기 루프 안에서만 한다. 이벤트 수신 경로에는
             # 판정도 I/O 도 붙이지 않는다.
-            notice = self.monitor.tick()
-            if notice:
-                self.log.end_status_line()   # 상태줄(\r) 위에 겹쳐 찍히지 않도록
-                self.log.emit(notice)
+            for notice in (self.monitor.tick(), self.monitor.sample_queue_depth(queue_depth)):
+                if notice:
+                    self.log.end_status_line()   # 상태줄(\r) 위에 겹쳐 찍히지 않도록
+                    self.log.emit(notice)
 
             if now_int >= 153500:
                 self.log.end_status_line()
@@ -281,7 +298,7 @@ class KiwoomUniverseLogger:
             self.log.status(
                 f"⏱️ [{now_str}] 실시간 보통주 적재 현황 ➔ "
                 f"체결: {self.total_trades:,}건 | 호가: {self.total_quotes:,}건 "
-                f"(대기큐: {self.trade_queue.qsize() + self.quote_queue.qsize()})"
+                f"(대기큐: {queue_depth:,})"
             )
             time.sleep(1.0)
 

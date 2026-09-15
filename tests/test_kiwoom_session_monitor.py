@@ -445,3 +445,99 @@ def test_세션_보고서를_그대로_파일에_남길_수_있다(tmp_path):
     assert "비정상 종료" in file_text
     assert "14:41:18" in file_text
     assert "임계(120초) 초과 침묵 구간 : 1건" in file_text
+
+
+# ── 8. 대기큐 적체 감시 (발견 #13) ────────────────────────────────────────
+#
+# 2026-09-15 실측: 09:16:55 에 대기큐 203,692건까지 쌓였다가 09:51 에 빠졌다.
+# 절대값으로 임계를 걸면 이 정상적인 개장 폭주도 매일 걸린다. 그래서 "바닥
+# 이상을 일정 시간 유지하며 줄지 않는가"로 판정한다 — 아래 테스트는 빠르게
+# 돌리려고 floor/window 를 작게 잡아 주입한다 (기본값은 20,000건/300초).
+
+
+def test_대기큐가_바닥_아래면_적체_경보가_없다():
+    monitor, clock, feed = build(queue_backlog_floor=100, queue_stuck_window_sec=10)
+    notices = []
+    for depth in [0, 20, 50, 80, 99, 50, 10]:
+        clock.advance(1.0)
+        notice = monitor.sample_queue_depth(depth)
+        if notice:
+            notices.append(notice)
+    assert notices == []
+
+
+def test_바닥_이상이_줄지_않으면_적체_경보가_뜬다():
+    """개장 폭주가 빠지지 않고 그대로 얹혀 있는 상태 — 알려야 한다."""
+    monitor, clock, feed = build(queue_backlog_floor=100, queue_stuck_window_sec=10, warn_repeat_sec=5)
+    notices = []
+    for _ in range(30):
+        clock.advance(1.0)
+        notice = monitor.sample_queue_depth(500)
+        if notice:
+            notices.append(notice)
+
+    assert notices, "10초 넘게 안 줄어드는 적체인데 경보가 없다"
+    assert "🐢" in notices[0]
+    assert "500" in notices[0]
+    assert "100" in notices[0]                 # 바닥값도 근거로 남는다
+    assert len(notices) >= 3, "warn_repeat_sec(5초)마다 되풀이돼야 한다"
+
+
+def test_적체가_계속_줄고_있으면_경보가_없다():
+    """2026-09-15 09:00~09:51 패턴 재현 — 쌓였다가도 계속 빠지면 정상이다."""
+    monitor, clock, feed = build(queue_backlog_floor=100, queue_stuck_window_sec=10)
+    notices = []
+    depth = 1000
+    for _ in range(40):
+        clock.advance(1.0)
+        depth = max(0, depth - 30)      # 꾸준히 감소(드레인 중)
+        notice = monitor.sample_queue_depth(depth)
+        if notice:
+            notices.append(notice)
+    assert notices == [], f"계속 빠지는 중인데 경보가 떴다: {notices}"
+
+
+def test_적체가_풀렸다_다시_쌓이면_경보가_다시_뜬다():
+    monitor, clock, feed = build(queue_backlog_floor=100, queue_stuck_window_sec=10, warn_repeat_sec=100)
+
+    first_round = []
+    for _ in range(15):
+        clock.advance(1.0)
+        n = monitor.sample_queue_depth(500)
+        if n:
+            first_round.append(n)
+    assert len(first_round) == 1
+
+    clock.advance(1.0)
+    assert monitor.sample_queue_depth(10) is None   # 바닥 아래로 빠짐 → 상태 리셋
+
+    second_round = []
+    for _ in range(15):
+        clock.advance(1.0)
+        n = monitor.sample_queue_depth(700)
+        if n:
+            second_round.append(n)
+    assert len(second_round) == 1, "리셋 후 다시 적체되면 반복 간격과 무관하게 새로 떠야 한다"
+
+
+def test_장중_대기큐_최대값과_시각이_세션_요약에_남는다():
+    """종료 시점 0건만 보고 '적체 없었다' 고 결론 낸 것(ARCHITECTURE_V2.md 진행로그
+    6차)이 틀렸다는 정정 — 장중 최대값을 별도로 추적해 보고서에 남긴다."""
+    monitor, clock, feed = build()
+
+    clock.advance(1.0)
+    monitor.sample_queue_depth(500)
+    clock.advance(1.0)
+    monitor.sample_queue_depth(203_692)
+    clock.advance(1.0)
+    monitor.sample_queue_depth(0)               # 종료 시점엔 0으로 빠짐
+
+    clock.set(at(15, 35, 0))
+    report = monitor.finish("장 마감 (15:35)")
+
+    assert report.queue_max_depth == 203_692
+    assert report.queue_max_ts is not None
+
+    text = "\n".join(report.lines())
+    assert "장중 대기큐 최대" in text
+    assert "203,692" in text
