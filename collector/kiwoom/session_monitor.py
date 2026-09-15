@@ -115,6 +115,22 @@ class SessionReport:
     def total_events(self) -> int:
         return self.trade_count + self.quote_count
 
+    def _gap_detail(self) -> str:
+        """
+        마지막 수신 ~ 종료 간격을 사람이 읽을 문장으로.
+
+        healthy 여부와 무관하게 항상 호출된다 — '정상 종료' 라는 결과만 찍고
+        그 근거(갭이 실제로 얼마였는지)를 안 찍으면, 시각 파싱이 깨져 갭이
+        늘 0으로 나와도 로그는 영원히 정상이라고만 말한다. 판정 결과와 판정
+        근거를 같이 보여줘야 이 헬스체크 자체가 살아 있는지 매일 확인할 수 있다.
+        """
+        threshold = int(self.gap_threshold_sec)
+        wall = format_duration(self.trailing_wall_sec)
+        if abs(self.trailing_wall_sec - self.trailing_market_sec) >= 1.0:
+            market = format_duration(self.trailing_market_sec)
+            return f"마지막 수신 후 {wall} 경과, 장중 결손 판정 {market} (임계 {threshold}초)"
+        return f"마지막 수신 후 {wall} 경과 (임계 {threshold}초)"
+
     @property
     def headline(self) -> str:
         if self.total_events == 0:
@@ -123,6 +139,7 @@ class SessionReport:
                 f"(세션 {format_clock(self.started_at)}~{format_clock(self.ended_at)} 동안 단 1건도 없음)"
             )
 
+        threshold = int(self.gap_threshold_sec)
         if not self.healthy:
             # 종료가 장 마감 뒤라면 벽시계 간격에는 '장이 끝나서 조용한 시간'이
             # 섞여 있다. 결손으로 의심하는 실제 길이를 따로 밝힌다.
@@ -131,16 +148,19 @@ class SessionReport:
                 detail = f"장중 결손 {format_duration(self.trailing_market_sec)}, 결손 의심"
             return (
                 f"⚠️ 비정상 종료 — 마지막 수신 {format_clock(self.last_event_ts)}, "
-                f"이후 {format_duration(self.trailing_wall_sec)} 무이벤트 ({detail})"
+                f"이후 {format_duration(self.trailing_wall_sec)} 무이벤트 ({detail}, 임계 {threshold}초 초과)"
             )
 
         if self.gaps:
             return (
                 f"✅ 정상 종료 — 마지막 수신 {format_clock(self.last_event_ts)} "
-                f"(단, 장중 침묵 {len(self.gaps)}건 감지 — 아래 세션 요약 확인)"
+                f"({self._gap_detail()}; 장중 침묵 {len(self.gaps)}건 감지 — 아래 세션 요약 확인)"
             )
 
-        return f"✅ 정상 종료 — 마지막 수신 {format_clock(self.last_event_ts)}"
+        return (
+            f"✅ 정상 종료 — 마지막 수신 {format_clock(self.last_event_ts)} "
+            f"({self._gap_detail()})"
+        )
 
     def lines(self) -> list[str]:
         """세션 요약 블록. 콘솔과 파일에 같은 내용이 나간다."""
@@ -154,6 +174,7 @@ class SessionReport:
             f"  세션 종료     : {format_stamp(self.ended_at)} ({elapsed})",
             f"  첫 이벤트     : {format_clock(self.first_event_ts)}",
             f"  마지막 이벤트 : {format_clock(self.last_event_ts)}",
+            f"  마지막~종료 갭 : {self._gap_detail()}",
             f"  체결 총건수   : {self.trade_count:,} 건",
             f"  호가 총건수   : {self.quote_count:,} 건",
         ]

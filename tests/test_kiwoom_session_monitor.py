@@ -138,6 +138,18 @@ def test_갭이_없으면_정상_종료로_보고한다():
     assert report.trailing_wall_sec == pytest.approx(302.0)
     assert report.trailing_market_sec == pytest.approx(2.0)
 
+    # 판정 결과("정상 종료")만 찍고 그 근거(갭이 실제로 얼마였는지)를 안 찍으면,
+    # 시각 파싱이 깨져 갭이 늘 0으로 나와도 로그는 영원히 정상이라고만 말한다.
+    # 정상 종료에도 갭 수치·임계값이 실제로 문자열에 박혀야 한다.
+    assert format_duration(302.0) in report.headline   # "5분 2초" — 벽시계 갭
+    assert format_duration(2.0) in report.headline     # "2초" — 장중 결손 판정 갭
+    assert "120초" in report.headline                  # 무엇과 비교해 정상인지(임계값)
+
+    summary = "\n".join(report.lines())
+    assert format_duration(302.0) in summary
+    assert format_duration(2.0) in summary
+    assert "120초" in summary
+
 
 # ── 2. 결손을 정상이라고 말하지 않는다 (사건 재현) ───────────────────────
 
