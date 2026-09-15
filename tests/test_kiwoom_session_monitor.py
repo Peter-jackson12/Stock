@@ -541,3 +541,62 @@ def test_장중_대기큐_최대값과_시각이_세션_요약에_남는다():
     text = "\n".join(report.lines())
     assert "장중 대기큐 최대" in text
     assert "203,692" in text
+
+
+# ── 9. 엔드투엔드 드라이런 — B 를 실제로 닫는다 ───────────────────────────
+#
+# 유닛테스트가 통과한다는 건 "로직이 맞다"는 증거이지 "실제 로그 파일에 그
+# 줄이 찍힌다"는 증거는 아니다. 2026-09-15 실전 수집에서 장중 침묵 경고가
+# 한 번도 발동하지 않은 것이 그 공백이었다 — 로직은 검증됐지만 파일 기록
+# 경로까지 실제로 태워본 적은 없었다.
+#
+# 여기서는 _stats_worker 와 같은 구조(매초 tick() + sample_queue_depth() 를
+# 부르고 알림이 있으면 log.emit())로 실제 SessionLog(RotatingFileHandler)에
+# 쓰고, 파일을 다시 읽어 세 가지가 문자열로 남는지 확인한다: (a) 장중 침묵
+# 경고, (b) 대기큐 적체 경보, (c) 비정상 종료 헤드라인(9/14 사건 재현).
+# 임계값은 실제 운영 기본값을 그대로 쓴다(작게 낮추지 않는다) — 테스트를
+# 쉽게 통과시키려는 게 아니라 운영 기본값이 실제로 작동하는지 보려는 것이다.
+
+
+def test_드라이런_침묵경고_적체경보_비정상종료가_실제_로그파일에_찍힌다(tmp_path):
+    clock = FakeClock(at(8, 58))
+    monitor = SessionMonitor(clock=clock)          # 전부 실제 기본 임계값
+    monitor.start()
+    log = SessionLog(tmp_path / "dryrun.log", stream=None, clock=clock)
+
+    def run_seconds(n: int, *, queue_depth: int) -> None:
+        for _ in range(n):
+            clock.advance(1.0)
+            for notice in (monitor.tick(), monitor.sample_queue_depth(queue_depth)):
+                if notice:
+                    log.emit(notice)
+
+    try:
+        # 09:00:01 첫 체결, 이후 320초 무이벤트 + 대기큐 50,000건이 안 줄고
+        # 그대로 얹혀 있음(기본 임계 120초/20,000건/300초를 모두 실측으로 넘긴다).
+        clock.set(at(9, 0, 1))
+        monitor.on_trade()
+        run_seconds(320, queue_depth=50_000)
+
+        # 수신 재개 + 대기큐 드레인 시작 — 정상 상태로 복귀.
+        monitor.on_trade()
+        run_seconds(60, queue_depth=0)
+
+        # 2026-09-14 사건 재현: 14:41:18 마지막 수신 → 15:35:00 종료.
+        clock.set(at(14, 41, 18))
+        monitor.on_trade()
+        clock.set(at(15, 35, 0))
+        report = monitor.finish("장 마감 (15:35)")
+        log.emit(report.headline)
+        log.emit_all(report.lines())
+    finally:
+        log.close()
+
+    text = (tmp_path / "dryrun.log").read_text(encoding="utf-8")
+
+    assert "⚠️" in text and "신규 이벤트 없음" in text, \
+        "장중 침묵 경고가 실제 로그 파일에 안 찍혔다"
+    assert "🐢" in text and "적체" in text, \
+        "대기큐 적체 경보가 실제 로그 파일에 안 찍혔다"
+    assert "비정상 종료" in text and "14:41:18" in text, \
+        "비정상 종료 헤드라인이 실제 로그 파일에 안 찍혔다"
