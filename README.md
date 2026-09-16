@@ -23,7 +23,7 @@ LOB/초봉 변환은 레거시 회귀용이고 틱 재생의 선행 조건이 �
 1. **전체 데이터 흐름·왜 틱인가:** [ARCHITECTURE_TICK.md](ARCHITECTURE_TICK.md).
 2. **컨트롤 타워 사용법·구축 순서·제어 계약:** [CONTROL_TOWER.md](CONTROL_TOWER.md).
 3. **지금 어디까지 했고 다음에 무엇을 하는가:** [HANDOFF.md](HANDOFF.md)의 현재 인계.
-4. **수집 시작/종료·메타데이터·일봉·fchart 확인:** [수집 실행 안내](docs/COLLECTION_RUNBOOK.md).
+4. **수집 시작/종료·장외 저장 검사·메타데이터·일봉·fchart 확인:** [수집 실행 안내](docs/COLLECTION_RUNBOOK.md).
 5. **닫힌 raw v2로 연구 실행·결과 해석:** [TICK_RESEARCH_RUNBOOK.md](TICK_RESEARCH_RUNBOOK.md).
 
 ### 개발하거나 AI에게 이어 맡기려면
