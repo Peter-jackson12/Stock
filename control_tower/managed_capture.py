@@ -52,7 +52,7 @@ class ManagedCaptures:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=FULL")
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1):
+            if version not in (0, 1, 2):
                 raise ValueError("unsupported managed capture schema")
             conn.execute("""CREATE TABLE IF NOT EXISTS launches (
                 id TEXT PRIMARY KEY, plan TEXT NOT NULL, token_hash TEXT NOT NULL,
@@ -61,7 +61,14 @@ class ManagedCaptures:
                 final_report TEXT, error TEXT, created TEXT NOT NULL, updated TEXT NOT NULL)""")
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_capture ON launches((1)) WHERE state IN ('launching','running','stopping','unknown')")
             conn.execute("CREATE TABLE IF NOT EXISTS audit (seq INTEGER PRIMARY KEY, launch_id TEXT NOT NULL, kind TEXT NOT NULL, recorded TEXT NOT NULL)")
-            conn.execute("PRAGMA user_version=1")
+            if version < 2:
+                conn.execute("BEGIN IMMEDIATE")
+                # Re-read under the migration lock for concurrent UI/peer open.
+                if conn.execute("PRAGMA user_version").fetchone()[0] < 2:
+                    conn.execute("ALTER TABLE launches ADD COLUMN heartbeat_seq INTEGER NOT NULL DEFAULT 0")
+                    conn.execute("ALTER TABLE launches ADD COLUMN challenge TEXT")
+                    conn.execute("ALTER TABLE launches ADD COLUMN challenge_ack TEXT")
+                    conn.execute("PRAGMA user_version=2")
             conn.commit()
             conn.execute("BEGIN IMMEDIATE")
             yield conn
@@ -166,13 +173,22 @@ class ManagedCaptures:
         with self._write() as conn:
             row = self._owned(conn, launch_id, facts)
             if heartbeat:
-                conn.execute("UPDATE launches SET updated=? WHERE id=?", (utc(), launch_id))
+                conn.execute("UPDATE launches SET updated=?,heartbeat_seq=heartbeat_seq+1,challenge_ack=challenge WHERE id=?", (utc(), launch_id))
             if not row["stop_id"] or row["stop_accepted"]:
                 return None
             conn.execute("UPDATE launches SET stop_accepted=1,updated=? WHERE id=?", (utc(), launch_id))
             self._event(conn, launch_id, "stop_accepted")
             identity = ProcessIdentity(**json.loads(row["identity"])) if row["identity"] else None
             return (row["stop_id"], None if identity is None else StopCommand(row["stop_id"], identity, row["revision"]))
+
+    def challenge(self, launch_id, owner):
+        nonce = secrets.token_hex(32)
+        with self._write() as conn:
+            row = conn.execute("SELECT * FROM launches WHERE id=?", (launch_id,)).fetchone()
+            if row is None or row["owner"] != json.dumps(owner, sort_keys=True) or row["state"] not in ACTIVE:
+                raise ValueError("active owned capture required")
+            conn.execute("UPDATE launches SET challenge=? WHERE id=?", (nonce, launch_id))
+            return nonce, row["heartbeat_seq"]
 
     def finish(self, launch_id, facts, report=None, error=None):
         with self._write() as conn:

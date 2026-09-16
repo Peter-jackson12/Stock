@@ -205,6 +205,16 @@ with CollectorLease(sys.argv[1]):
     while store.get(launch)["identity"] is None and child.poll() is None and time.monotonic() < deadline:
         time.sleep(.02)
     assert store.get(launch)["identity"] is not None
+    from control_tower.capture_health import CaptureHealth
+    health = CaptureHealth()
+    assert health.observe(store, store.get(launch))["state"] == "unknown"
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        if health.observe(store, store.get(launch))["state"] == "responsive":
+            break
+        time.sleep(.05)
+    else:
+        pytest.fail("real 32-bit child did not answer current manager challenge")
     store.request_stop(launch)
     stdout, stderr = child.communicate(timeout=15)
     assert child.returncode == 0, stdout + stderr

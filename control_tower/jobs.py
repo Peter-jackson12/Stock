@@ -46,6 +46,9 @@ class JobStore:
                 updated_at TEXT NOT NULL, owner TEXT, result TEXT, error TEXT)""")
             conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS active_request ON jobs(fingerprint)
                 WHERE status IN ('planned','queued','running')""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS replay_schedules (
+                job_id TEXT PRIMARY KEY, due TEXT NOT NULL, expires TEXT NOT NULL,
+                state TEXT NOT NULL, registration TEXT NOT NULL, error TEXT)""")
             conn.commit()
             conn.execute("BEGIN IMMEDIATE")
             yield conn
@@ -94,8 +97,11 @@ class JobStore:
 
     def cancel(self, job_id):
         with self._write() as conn:
-            return conn.execute("UPDATE jobs SET status='cancelled', updated_at=? WHERE id=? AND status IN ('planned','queued')",
+            changed = conn.execute("UPDATE jobs SET status='cancelled', updated_at=? WHERE id=? AND status IN ('planned','queued')",
                                 (utc_now(), job_id)).rowcount == 1
+            if changed:
+                conn.execute("UPDATE replay_schedules SET state='cancelled' WHERE job_id=? AND state='pending'", (job_id,))
+            return changed
 
     def claim_inspection(self, owner):
         if not owner:
@@ -111,6 +117,8 @@ class JobStore:
 
     def queue_replay(self, job_id):
         with self._write() as conn:
+            if conn.execute("SELECT 1 FROM replay_schedules WHERE job_id=?", (job_id,)).fetchone():
+                raise ValueError("scheduled jobs cannot be manually requeued; cancel and create a new plan")
             changed = conn.execute("UPDATE jobs SET status='queued',updated_at=? WHERE id=? AND kind='replay_raw_v2' AND status='planned'",
                 (utc_now(), job_id)).rowcount
             if changed != 1:

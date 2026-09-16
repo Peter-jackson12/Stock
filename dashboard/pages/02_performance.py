@@ -18,6 +18,8 @@ from dashboard.charts import (
 from dashboard.run_selector import get_selected_trades
 
 st.set_page_config(page_title="Performance", page_icon="🔎", layout="wide")
+from dashboard.access import require_access
+require_access()
 st.title("🔎 Performance")
 st.caption("Excel Pivot Table 대신 기간·종목·청산 조건을 선택하면 집계 결과가 자동 갱신됩니다.")
 

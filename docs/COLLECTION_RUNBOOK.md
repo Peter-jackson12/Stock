@@ -154,6 +154,18 @@ SQLite 진행 콜백으로 시간 제한을 검사한다. 오류/시간 초과, 
 
 ### 일봉 실제가 출처 검사 (D-6)
 
+2026-09-16 18:32 KST, `scripts/probe_price_source.py`로 pykrx 1.0.51의
+삼성전자 20180427~20180504 비수정 OHLCV/과거 shares 후보를 제한 요청했다.
+상장/상폐 목록 2회는 HTTP 200, 뒤 가격 요청은 HTTP 400/`LOGOUT`으로 중단했다. shares 후속 요청도 보내지 않았다.
+결과는 `operations_state/price_source_probes/79fd6005c32e416cac0289035bb8d55d/result.json`이며,
+공급자 접근·원천 검증 미완료다. 이 진단은 최대 4요청·요청당 10초·응답당 2 MiB이고 Daily에 쓰지 않는다.
+
+같은 진단의 목록 응답을 설치된 pykrx 호출 순서(상장→상폐)와 대조해 로컬 연구 유니버스와 비교했다.
+2,221종목 중 상장 목록만 2,055, 상폐 목록만 166, 양쪽/어느 쪽에도 없는 경우는 각각 0이었다.
+`listing_reconciliation.json`에 코드 목록과 응답 SHA256을 남겼다. 긴 상품 코드는 6자리로 잘라 합치지 않는다.
+`scripts/reconcile_listing_snapshot.py --listed <응답> --delisted <응답> --output <새 진단.json>`으로 재현한다.
+목록 포함 여부만 확인하며 거래 가능 여부·보통주 분류·과거 PIT를 인증하거나 유니버스에서 삭제하지 않는다.
+
 - 1초봉 엔진은 알려진 fchart 수정주가를 읽기 전에 차단한다. 기존
   `unverified_fchart/` 경로와 새 `_price_manifest.json` 표식을 검사한다.
 - 앞으로의 데이터 검증에는 `python -m engine.main --require-actual-prices`를 사용한다.

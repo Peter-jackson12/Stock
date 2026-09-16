@@ -3,6 +3,8 @@ from __future__ import annotations
 import streamlit as st
 
 st.set_page_config(page_title="Stock Control Tower", page_icon="📈", layout="wide")
+from dashboard.access import require_access
+require_access()
 
 view = st.sidebar.radio("화면", ["운영 관리", "백테스트 분석"], key="main_view")
 if view == "운영 관리":

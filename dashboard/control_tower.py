@@ -1,5 +1,6 @@
 """Control tower UI. Observations and durable plans are separate from execution."""
 from pathlib import Path
+from datetime import datetime
 import sqlite3
 
 import streamlit as st
@@ -9,6 +10,8 @@ from control_tower.service import queue_inspection, plan_replay, start_inspectio
 from control_tower.status import observe_collector, observe_raw_capture
 from control_tower.managed_capture import ManagedCaptures, start_managed_capture, ACTIVE
 from control_tower.offline_worker import start_replay_worker, retry_replay_worker
+from control_tower.capture_health import CaptureHealth
+from control_tower.replay_schedule import schedule_replay, schedules, expire_missed
 
 ROOT = Path(__file__).resolve().parents[1]
 JOB_STATUS = {"planned": "장외 계획", "queued": "실행 대기", "running": "실행 중 · 상태 확인 필요 시 이력 보존",
@@ -117,9 +120,16 @@ def render_control_tower(root=None):
     with history_tab:
         try:
             jobs = store.recent()
+            reservations = {r["job_id"]: r for r in schedules(root)}
         except sqlite3.Error as exc:
             st.error(f"작업 이력 조회 실패: {exc}")
             jobs = []
+            reservations = {}
+        if reservations and st.button("지난 예약 대조 · 재실행 안 함", key="schedule_reconcile"):
+            try:
+                st.info(f"기한이 지난 미실행 예약 {expire_missed(root)}건을 만료 처리했습니다.")
+            except sqlite3.Error as exc:
+                st.error(f"예약 대조 실패: {exc}")
         if not jobs:
             st.info("저장된 작업이 없습니다. 결과 조회나 장외 계획을 등록하면 여기에 표시됩니다.")
         else:
@@ -135,6 +145,22 @@ def render_control_tower(root=None):
                     if job["error"]:
                         st.error(job["error"])
                     st.json(job["payload"])
+                    reservation = reservations.get(job["id"])
+                    if reservation:
+                        st.caption(f"예약 {reservation['due']} · {reservation['state']} · OS 등록 {reservation['registration']}")
+                        if reservation["error"]:
+                            st.warning(reservation["error"])
+                    elif job["kind"] == "replay_raw_v2" and job["status"] == "planned":
+                        with st.form(f"schedule_form_{job['id']}"):
+                            due = st.text_input("예약 시각 (시간대 포함)", placeholder="2026-09-17T18:00:00+09:00", key=f"due_{job['id']}")
+                            reserve = st.form_submit_button("장외 재생 1회 예약")
+                        if reserve:
+                            try:
+                                task_name = schedule_replay(root, job["id"], datetime.fromisoformat(due))
+                                st.success(f"예약 등록: {task_name}")
+                            except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
+                                st.error(f"예약 등록 미완료: {exc}")
+                        st.caption("1분~7일 이내 장외 시각만 허용합니다. PC가 켜져 있고 현재 Windows 사용자가 로그인되어 있어야 합니다. 5분 이상 놓친 예약은 재실행하지 않습니다.")
                     if job["kind"] == "replay_raw_v2" and job["status"] in ("planned", "queued"):
                         if st.button("장외 검사·재생 실행", key=f"replay_{job['id']}"):
                             try:
@@ -166,7 +192,11 @@ def render_control_tower(root=None):
         st.caption("다음 단계: 수집기 제어 계약 → 장외 작업 워커 → 종료/데이터 검증 후 단계별 실행. 로그인과 원격 접근 설정은 별도입니다.")
 
 
+@st.fragment(run_every="5s")
 def render_capture_controls(root):
+    # Fragment reruns bypass app.py; repeat authorization before any action.
+    from dashboard.access import require_access
+    require_access(show_logout=False)
     store = ManagedCaptures(root)
     with st.expander("소규모 수집 시작·종료"):
         st.caption("시작하면 별도 32비트 수집기에서 키움 로그인이 열립니다. 최대 10종목·300초이며 기존 수집기를 인수하지 않습니다.")
@@ -179,6 +209,18 @@ def render_capture_controls(root):
         if current:
             st.write(f"관리 요청 {current['id']} · 기록 상태 {current['state']}")
             st.caption(f"기록 갱신 {current['updated']} · 현재 생존/무누락 인증이 아닙니다.")
+            if active and current["owner"]:
+                key = "capture_health_" + str(root)
+                if key not in st.session_state:
+                    st.session_state[key] = CaptureHealth()
+                try:
+                    health = st.session_state[key].observe(store, current)
+                    if health["state"] == "responsive":
+                        st.info(f"제어 응답 확인 · heartbeat {health['heartbeat_seq']} · 마지막 변화 {health['age_seconds']}초 전")
+                    else:
+                        st.warning(f"제어 응답 미확인: {health['reason']}")
+                except (OSError, ValueError, sqlite3.Error) as exc:
+                    st.warning(f"제어 응답 확인 실패: {exc}")
             if current["error"]:
                 st.error(current["error"])
             if active and st.button("이 관리 세션 종료 요청", key="capture_stop"):

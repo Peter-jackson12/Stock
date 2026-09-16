@@ -7,6 +7,8 @@ from dashboard.metrics import summary_metrics, exit_reason_performance, hour_per
 from dashboard.ollama_client import render_ai_chat, table_to_context
 
 st.set_page_config(page_title="Insight", page_icon="💡", layout="wide")
+from dashboard.access import require_access
+require_access()
 st.title("💡 Automated Insight")
 st.caption("기획안의 최종 의사결정에 맞춰 성과를 해석하고, POC 수준의 추천 전략까지 자동으로 제시합니다.")
 

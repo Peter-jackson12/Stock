@@ -13,6 +13,8 @@ from dashboard.charts import strategy_group_chart, strategy_comparison_chart
 from dashboard.ollama_client import render_ai_chat, table_to_context
 
 st.set_page_config(page_title="Strategy Analysis", page_icon="🧪", layout="wide")
+from dashboard.access import require_access
+require_access()
 st.title("🧪 Strategy Analysis")
 st.caption("기획안의 핵심 질문인 변수 비교, 5/10/30/60초 비교, 단일·복합 조건 전략 비교를 한 페이지에서 확인합니다.")
 

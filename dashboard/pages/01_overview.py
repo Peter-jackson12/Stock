@@ -16,6 +16,8 @@ from dashboard.run_selector import get_selected_trades
 from dashboard.ollama_client import render_ai_chat, table_to_context
 
 st.set_page_config(page_title="Overview", page_icon="📊", layout="wide")
+from dashboard.access import require_access
+require_access()
 st.title("📊 Overview")
 st.caption("기획안의 핵심 성과 지표와 백테스트 상태를 피벗 없이 한 화면에서 확인합니다.")
 

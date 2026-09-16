@@ -8,6 +8,8 @@
 **1단계:** 운영 화면/조회 워커/계획 저장 구현. **2단계:** 제어 계약과 가짜 피어 검증 구현.
 **후속 계약:** 관리자/피어 이력·복구 대조, OS 식별·실제 IPC·작은 raw 저장의 합성 검증 구현.
 운영 raw v2 콜백·종료/저장, 소규모 관리 수집과 장외 검사·재생 워커를 연결했다. 실피드 검증은 별도다.
+상시 challenge/heartbeat, 제어 이력 보관·회전/checkpoint, 장외 1회 예약과 OIDC 접근 차단을 추가했다.
+실제 OIDC 로그인/외부 공개·예약의 정시 트리거/재부팅은 미실측이다. OS 작업 등록·수동 실행·삭제는 격리 진단으로 확인했다.
 
 ## 1. 결정
 
@@ -92,8 +94,8 @@ flowchart TD
 헤더 조회는 최대 2행·행당 64 KiB까지 가져와 잘못된 크기/행 수를 거부한다.
 체크섬·이벤트 순서·데이터 품질은 실제 실행 전에 다시 검증해야 한다.
 
-원격 사용은 당장은 기존 PC 원격 접속 안에서 이 화면을 연다. 인증이 없는 Streamlit을
-공개 IP/`0.0.0.0`으로 노출하는 배포는 하지 않는다. 폰 직접 접속은 후속 인증 경로가 필요하다.
+원격 사용은 기본적으로 기존 PC 원격 접속 안에서 이 화면을 연다. 저장소 설정은 127.0.0.1 바인딩이다.
+외부 바인딩 시에는 아래 OIDC/허용 운영자 검사를 통과해야 한다. 공개 배포 자체는 하지 않았다.
 
 ## 4. 작업 상태와 실패 의미 — 구현
 
@@ -117,7 +119,7 @@ stateDiagram-v2
 - 워커 강제 중단/PC 재부팅이면 `running`이 남을 수 있다. 시간을 근거로 실패 확정하거나
   자동 재시도하지 않는다. 현재는 생존 재확인·운영자 복구 기능이 없으며 이력을 그대로 보존한다.
 - 조회 워커는 최대 10건, 재생 워커는 지정한 1건만 처리하고 끝난다. 화면 연결과 무관하게 동작하지만 PC 종료를 견뎌
-  계속 실행되는 서비스는 아니다. 무인 기동/스케줄러/부팅 복구는 아직 없다.
+  계속 실행되는 서비스는 아니다. 아래 1회 장외 예약 외의 무인 수집/자동 재시작은 없다.
 - payload와 요약 결과는 각각 32 KiB, 오류는 2,048자, 원본 결과 조회는 8 MiB로 제한한다.
   더 큰 결과는 조회 실패로 기록하며 원본은 보존한다.
 - 경로는 등록 시와 실행 시 다시 검사한다. 조회는 실행 시점 파일 내용을 읽는다.
@@ -266,7 +268,8 @@ API 근거: Microsoft의 [GetProcessTimes](https://learn.microsoft.com/en-us/win
   대응하는 유효 closed 보고만 종료 결과를 확정한다. 새로운 실시간 보고로만 생존을 갱신한다.
 - 실제 32/64비트 합성 자식이 작은 raw를 닫은 뒤, 복구한 관리자가 별도 공유 소켓으로 누락된
   drain/closed를 받아 manifest를 대조했다. 소켓 인증·재접속 발견/예약·OS 재부팅/강제 종료 내구성은
-  별도 범위다. 피어 명령 latch는 메모리이고, 관리자 checkpoint·이력 보관/회전 절차는 후속이다.
+  별도 범위다. 소켓 피어 명령 latch는 메모리이며 운영 mailbox는 별도의 내구성 latch를 사용한다.
+  소켓 관리자 재생 압축은 후속이고 운영 제어 이력 보관/회전은 §5-5를 본다.
 
 #### 이력 예산 — `control_tower/history_limits.py`
 
@@ -282,7 +285,7 @@ API 근거: Microsoft의 [GetProcessTimes](https://learn.microsoft.com/en-us/win
   갱신하지 않으므로 기존 관리자 소유권이 유지된다. 재생 도중 적용한 상태도 외부에 노출하지 않는다.
 - 설정 상한은 1,000,000건·1 GiB·30초다. 시간 검사는 재생 반복의 협력적 제한이며 OS I/O·잠금·커밋의
   강제 중단 기한은 아니다. 바이트는 payload 기준으로 SQLite 페이지/WAL·메타데이터를 포함한 디스크
-  사용량 제한이 아니다. 전체 디스크 여유 검사, checkpoint, 보관·회전과 한도 도달 전 운영 대응은 후속이다.
+  사용량 제한이 아니다. 디스크 진입 검사와 운영 제어 이력 보관·회전/checkpoint는 §5-5를 본다.
 
 #### raw v2 큐와 저장 워커 — `collector/kiwoom/queued_capture.py`
 
@@ -321,7 +324,7 @@ closed는 파일 마감 증거이며 파싱 오류가 없는 데이터라는 뜻
 `status.py`는 `operations_state/capture_status.json` 한 파일을 최대 64 KiB 읽는다.
 화면은 접수 콜백·커밋 raw 레코드·미커밋 콜백을 구분하며, 30초 초과/미래 시각을 경고한다.
 파일은 생존/데이터 품질 인증이나 명령 응답이 아니다. 상태 표시는 raw DB를 열지 않는다.
-운영 제어는 아래 로컬 내구성 mailbox를 사용한다. 소켓 재접속 서비스와 상시 제어 heartbeat는 후속이다.
+운영 제어는 아래 로컬 내구성 mailbox와 challenge/heartbeat를 사용한다. 원격 소켓 서비스는 별도 범위다.
 실행 옵션·환경 점검·검증 범위는 [수집 안내](docs/COLLECTION_RUNBOOK.md)를 본다.
 
 `scripts/probe_raw_v2_queue.py`는 새 합성 파일만 생성하는 32/64비트 점검 도구다.
@@ -340,8 +343,8 @@ mailbox다. 기존 소켓 제어 계약을 원격 서비스로 배포한 것이 
 
 `offline_worker.py`는 동일 수집 잠금을 실행 동안 유지한다. 활성 관리 요청·최근 로그·장중 시각을
 차단하고 계획 당시 manifest와 현재 헤더를 대조한다. 32 MiB·10만 레코드 제한 안에서 전체 체크섬을
-검사한 뒤 연구 엔진을 실행한다. 품질 오류나 설정/입력 교체는 실패로 보존한다. 원격 인증·예약·
-자동 회전/checkpoint 정책·대규모 부하 인증은 포함하지 않는다.
+검사한 뒤 연구 엔진을 실행한다. 품질 오류나 설정/입력 교체는 실패로 보존한다.
+원격 인증·예약·이력 유지 절차는 §5-5에 있고, 대규모 부하 인증은 포함하지 않는다.
 
 새 관리 기동·raw 저장 시작·장외 워커 진입은 대상 볼륨에 최소 256 MiB 여유가 있어야 한다.
 이는 기동 차단 기준이며 세션 전체 공간 예약이나 성능 보장이 아니다. 실행 중 저장 오류는 기존
@@ -381,6 +384,60 @@ OCX 로그인/요청 한도는 공유 자원으로 관리한다. 수집·메타�
 추가 실행하지 않는다. 향후 단일 게이트웨이와 분리 소비자 구성을 우선 검토하되 실제 세션
 공존 및 이벤트/주문 동작 검증으로 확정한다. 틱 저장/주문 지연에 영향을 주는 분석은 장외로 보낸다.
 주문 전에는 모의 검증, 자본·미체결·손실 한도, 재시작 주문 대조, 긴급 중단 계약이 별도 선행이다.
+
+### 5-5. 상시 응답·이력 유지·예약·접근 제어
+
+**제어 heartbeat:** `managed_capture.py` 스키마 v2는 소유 프로세스만 5초마다 heartbeat 순번과
+현재 challenge 응답을 저장한다. 화면의 `CaptureHealth`는 OS의 PID/생성 시각/실행 파일/비트를
+대조하고 새 challenge를 보낸 뒤 응답을 기다린다. 관리자 재시작은 항상 unknown에서 시작한다.
+중복 순번·UTC 갱신만으로 생존 시간을 연장하지 않으며, 관리자 단조 시계로 15초 경과 시 다시
+unknown으로 전환한다. 화면 제어 영역은 5초마다 갱신하며 자동 종료/재시작은 하지 않는다.
+여러 화면이 동시에 challenge를 바꾸면 일시적으로 unknown이 될 수 있다. heartbeat는 Qt 제어 응답이며
+실피드 수신·저장 속도·데이터 품질 인증이 아니다. raw 순번/backlog는 기존 별도 계약을 유지한다.
+
+**보관·회전/checkpoint:** `scripts/maintain_control_history.py jobs` 또는 `managed_captures`는
+장외·수집 잠금·미해결 실행·디스크 여유를 확인한 뒤 최대 64 MiB의 제어 DB/WAL만 처리한다.
+SQLite 일관된 백업 → quick_check → SHA256·파일 동기화 → 보관 증거 → 원본 checkpoint 순서다.
+기본은 원본 행을 보존한다. `--prune-before 2026-08-01T00:00:00+09:00`처럼 명시할 때만
+최소 최근 30일을 남기고 더 오래된 terminal 행/관련 audit·예약을 원본에서 회전한다. 원본 DB의
+`history_archives` receipt와 보관 DB에 이력이 남는다. 백업 완료 전 실패는 원본 행을 삭제하지 않는다.
+백업 반복은 협력적 5초 제한이며 OS I/O 강제 기한은 아니다. checkpoint busy는 결과 값으로 남긴다.
+raw/Daily/피어 저널은 대상이 아니다. active 관리자 전체 이력의 압축 checkpoint와 원격 소켓 서비스는 별도다.
+
+**장외 1회 예약:** 계획별로 1분~7일 뒤 시각을 지정하면 SQLite에 예약 의도를 먼저 저장한 뒤
+현재 Windows 사용자의 InteractiveToken/LeastPrivilege 작업을 등록한다. 고정 pythonw/스크립트/
+job ID만 실행한다. 암호를 저장하거나 기존 OS 작업을 덮어쓰지 않는다. PC 전원·로그인이 필요하다.
+`StartWhenAvailable=false`, 5분 만료 창을 사용하고 DB의 dispatch latch로 중복 트리거를 막는다.
+등록 불확실성/재부팅 뒤 누락/실행 도중 중단은 자동 재시도하지 않는다. “지난 예약 대조”는 최대 100개
+만료 상태만 바꾸고, 기존 취소 버튼은 저장된 예약도 취소한다. OS에 남은 기록은 보존하며 지연 호출이
+오더라도 취소/만료 latch가 실행을 막는다. XML은 Windows COM 파서로 수용을 확인했고,
+격리된 표식 전용 OS 작업의 등록·수동 실행·삭제도 확인했다. 실제 재생의 정시 실행/재부팅은 미실측이다.
+명시적 진단은 `scripts/probe_replay_scheduler.py --execute`다. 운영 재생이나 OCX를 실행하지 않는다.
+[Microsoft 스키마](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-schema) 기준이다.
+
+**원격 인증:** `dashboard/access.py`는 모든 화면 진입점과 제어 fragment에 동일한 검사를 적용한다.
+외부 바인딩 또는 `stock_access.require_auth=true`면 OIDC와 정확한 issuer/subject 허용 목록,
+만료되지 않은 exp가 필요하다. 이메일/표시 이름으로 권한을 추정하지 않는다. 설정이 없으면 기능을 차단한다.
+기본 localhost에서는 기존 PC 원격 접속을 계속 쓸 수 있다. reverse proxy를 localhost에 연결할 때도
+`require_auth=true`를 설정해야 한다. TLS 도메인/IdP 앱 등록은 외부 설정이며 자동 생성하지 않았다.
+
+`.streamlit/secrets.toml`은 Git 제외다. 실제 IdP에서 받은 값만 넣는다(아래 값은 실행용이 아니다).
+
+```toml
+[auth]
+redirect_uri = "https://YOUR_HOST/oauth2callback"
+cookie_secret = "YOUR_RANDOM_SECRET"
+client_id = "YOUR_CLIENT_ID"
+client_secret = "YOUR_CLIENT_SECRET"
+server_metadata_url = "https://YOUR_ISSUER/.well-known/openid-configuration"
+
+[stock_access]
+require_auth = true
+operators = [{issuer = "YOUR_EXACT_ISSUER", subject = "YOUR_OPERATOR_SUBJECT"}]
+```
+
+`uv sync --locked`로 `streamlit[auth]` 의존성을 설치한다. 실제 OIDC 왕복 인증·외부 TLS 노출은 미검증이다.
+공식 근거: [Streamlit 인증](https://docs.streamlit.io/develop/concepts/connections/authentication).
 
 ## 6. 진행 순서와 확인 대기
 

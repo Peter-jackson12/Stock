@@ -18,6 +18,7 @@ test_dash.py
 .env
 *.env
 .env.*
+.streamlit/secrets.toml
 
 # ==========================================
 # Practice & Temporary Files (연습용 및 임시 파일 무시)
