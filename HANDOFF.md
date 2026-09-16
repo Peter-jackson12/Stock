@@ -2,6 +2,25 @@
 
 ## 새 컨텍스트 시작점
 
+- 최신 작업: [컨트롤 타워 설계/실행 안내](CONTROL_TOWER.md)와 기존 Streamlit의 운영 관리 화면.
+  `control_tower/`가 로그 관측·작업 이력·별도 경량 워커의 결과 조회를 담당한다.
+  종료된 `sampledata/raw_ticks_v2/` 파일의 재생 설정은 planned로 저장만 한다.
+  수집기 시작/종료, 재생 실행, 예약/부팅 복구, 메타데이터 자동 실행, 주문 전송은 미연결이다.
+  외부 수집기의 자동 인수/재시작이나 운영 raw 변경은 하지 않았다. UI 서버도 상시 기동하지 않았다.
+- 요청 중복 제거, 원자적 선점/실행 전 취소, owner별 결과 기록, 경로 재검사, 입력/출력 크기
+  제한을 구현했다. 죽은 워커의 running 기록은 미확인으로 보존하며 자동 재실행하지 않는다.
+  조회 성공은 연구 성공과 다르며 연구 running/failed는 진단 자료로 남긴다.
+  raw v2 헤더 조회는 최대 2행·64 KiB 제한으로 전체 이벤트를 읽지 않는다.
+- 검증: `test_control_tower.py`, `test_control_tower_ui.py`, `test_raw_v2.py`,
+  `test_capture_session.py`, `test_inspect_tick_research.py` 합계 **84개 통과(6.34초)**.
+  Streamlit AppTest의 화면 조작 5개 포함. 합성 파일만 사용했고 별도 프로세스 시작 API는
+  가짜 Popen으로 확인했다. 실제 원격 단절/Windows 재부팅 복구/OCX 연결 검증은 아니다.
+  pytest 임시 폴더 권한 문제 때문에 승인된 샌드박스 외부 테스트 실행을 사용했다.
+- 다음 독립 작업: 수집기 session/프로세스 식별과 명령/응답/정상 종료 계약을 가짜 프로세스로 검증.
+  실제 raw v2 큐 연결·OCX 필드/부호·종료 drain·부하/재기동 실측은 장외 확인이 선행한다.
+  이후 관리 프로세스의 시작/종료 → 종료 데이터 검증 → 장외 연구 실행 순으로 연결한다.
+  자세한 선행 조건과 일봉/메타데이터의 독립 진행 범위는 CONTROL_TOWER.md §5~§6에 있다.
+
 - 최신 후속: `raw_v2_prototype_2`에서 제어 이벤트를 체결/호가와 같은 연속 seq로 저장한다.
   prototype_1은 계속 읽는다. `CaptureControl`의 접속 중단/복구·파싱/콜백 오류·overflow는
   연구 실행에서 전체 실패로 처리한다. session_start/note는 정보 기록으로 보존한다.

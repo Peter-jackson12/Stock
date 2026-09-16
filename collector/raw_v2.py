@@ -17,6 +17,7 @@ from engine.tick_ordering import OrderedTick, ReceiveOrderReplay
 
 SCHEMA = "raw_v2_prototype_2"
 SUPPORTED_SCHEMAS = {"raw_v2_prototype_1", SCHEMA}
+MAX_MANIFEST_BYTES = 64 * 1024
 CONTROL_TYPES = {"session_start", "session_note", "disconnect", "reconnect",
                  "parse_error", "queue_overflow", "callback_error"}
 
@@ -170,9 +171,13 @@ def read_raw_v2(path):
     try:
         conn.execute("PRAGMA query_only=ON")
         conn.execute("BEGIN")
-        rows = conn.execute("SELECT value FROM metadata").fetchall()
+        # Header-only consumers must not fetch unbounded malformed metadata.
+        rows = conn.execute("SELECT substr(CAST(value AS BLOB),1,?) FROM metadata LIMIT 2",
+                            (MAX_MANIFEST_BYTES + 1,)).fetchall()
         if len(rows) != 1:
             raise ValueError("exactly one manifest required")
+        if rows[0][0] is None or len(rows[0][0]) > MAX_MANIFEST_BYTES:
+            raise ValueError("raw manifest exceeds 64 KiB limit or is null")
         meta = _load_json(rows[0][0])
         _identity(meta)
         if meta.get("schema") not in SUPPORTED_SCHEMAS or meta.get("state") != "closed":

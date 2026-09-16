@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import streamlit as st
 
+st.set_page_config(page_title="Stock Control Tower", page_icon="📈", layout="wide")
+
+view = st.sidebar.radio("화면", ["운영 관리", "백테스트 분석"], key="main_view")
+if view == "운영 관리":
+    from dashboard.control_tower import render_control_tower
+    render_control_tower()
+    st.stop()
+
 from dashboard.charts import cumulative_pnl_by_run_chart, exit_rule_chart, run_comparison_chart
 from dashboard.data_service import compare_runs
 from dashboard.metrics import daily_performance_by_run, exit_rule_performance, summary_metrics
 from dashboard.run_selector import get_selected_trades
-
-st.set_page_config(page_title="Stock Strategy Dashboard", page_icon="📈", layout="wide")
 
 st.title("📈 Stock Strategy Analytics POC")
 st.caption("결과 파일 하나를 열던 화면을 런(run) 비교기로 바꿨습니다. 왼쪽에서 런을 고르면 됩니다.")

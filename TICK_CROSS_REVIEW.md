@@ -36,6 +36,13 @@
 
 ## 알려진 미완료 범위
 
+- 운영 화면/작업 관리: `control_tower/`, `dashboard/control_tower.py`,
+  `tests/test_control_tower.py`, `tests/test_control_tower_ui.py`를 [설계](CONTROL_TOWER.md)와 대조한다.
+  동일 요청이 중복 실행되는가, 대기 취소와 선점이 경쟁하는가, 다른 owner가 완료를 기록하는가,
+  계획만 저장한 재생이 실제로 실행되는가, stale 로그를 수집 종료로 오인하는가를 점검한다.
+  현재 별도 워커는 JSON 조회만 실행한다. 수집기 제어/장외 실행/예약 복구는 후속이다.
+  raw v2 헤더 조회 제한은 전체 체크섬 검증을 대신하지 않는다. AppTest 통과는 실제 운영 배포 인증이 아니다.
+
 - 실제 OCX 콜백에서 순번·단조 시각 부여, 원문 추출·큐 연결은 아직 미적용이다.
 - 접속/파싱 오류 등 제어 이벤트는 prototype_2의 공통 seq 기록과 연구 실패 처리로 추가했다.
   동기식 CaptureSession은 callback_error도 보존한다. 실제 OCX/큐 연결은 없으므로
