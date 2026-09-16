@@ -1,8 +1,9 @@
 # 📌 데이터 수집·리샘플링 파이프라인 리팩토링 기록 (ADR) — L0/L1 범위
 
 > **범위 안내**: 이 문서는 L0(수집)·L1(표준화/리샘플링) 계층에 한정된 의사결정 기록(ADR)이다.
-> L2(피처)~L6(서빙) 설계와 **현재 진행 상황·다음 작업**은 [`ARCHITECTURE_V2.md`](./ARCHITECTURE_V2.md)를 참조할 것 —
-> 특히 그 문서의 "진행 상황 로그"와 §8 로드맵이 상태 추적의 단일 소스다.
+> **현재 문서 시작점은 [README.md](README.md), 최신 상태·다음 작업은 [HANDOFF.md](HANDOFF.md)의 현재 인계다.**
+> 틱 주 경로는 [ARCHITECTURE_TICK.md](ARCHITECTURE_TICK.md), 운영 제어는 [CONTROL_TOWER.md](CONTROL_TOWER.md)를 따른다.
+> L2~L6의 이전 설계는 [ARCHITECTURE_V2.md](ARCHITECTURE_V2.md)를 참고한다. 이 문서의 과거 완료 판정을 현재 검증으로 읽지 않는다.
 > 아래 §4 체크리스트와 §5 핸드오버는 Architecture V2 착수 이전(~2026-08 말) 시점에 고정된 내용이며,
 > §5는 이미 완료/대체되어 이력으로만 남겨둔다.
 

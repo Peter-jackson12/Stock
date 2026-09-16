@@ -16,6 +16,11 @@
 
 ## 코드 검토 순서와 반례
 
+- 수집 제어 계약: `control_tower/lifecycle.py`, `tests/test_capture_lifecycle.py`.
+  PID가 재사용되거나 과거 세션 응답이 도착해도 대상이 섞이지 않는가? 중복 명령이 stop을 반복하는가?
+  큐/in-flight/커밋 불일치와 저장 오류를 정상 종료로 표시하는가? stale/시간 초과를 실패 확정 또는 재시작으로 바꾸는가?
+  이 검증은 가짜 피어와 메모리 계약에 한정되며 실제 프로세스/IPC/영속 복구는 미연결이다.
+
 - 수신 순서: `engine/tick_ordering.py`, `tests/test_tick_receive_order.py`.
   동일 초 호가 A → 체결 → 호가 B에서 체결이 B를 보지 않는가? 미래 suffix 변경이 과거를 바꾸는가?
 - raw v1: `engine/raw_v1_reader.py`의 이전 초 정책이 연구 가정으로 표시되는가?
