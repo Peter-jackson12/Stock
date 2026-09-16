@@ -11,6 +11,7 @@ from pathlib import Path
 import sqlite3
 
 from control_tower.lifecycle import MAX_MESSAGE_BYTES, ProcessIdentity, decode_report, encode_report
+from control_tower.history_limits import DEFAULT_RECORDS, DEFAULT_BYTES, HistoryLimitError, validate_limits
 
 MAX_PAGE = 128
 SCHEMA = "capture_replay_v1"
@@ -97,14 +98,16 @@ def decode_page(text):
 
 
 class ReportJournal:
-    def __init__(self, root, identity):
+    def __init__(self, root, identity, *, max_reports=DEFAULT_RECORDS, max_bytes=DEFAULT_BYTES):
         if not isinstance(identity, ProcessIdentity):
             raise ValueError("explicit journal identity required")
         self.identity = identity
+        validate_limits(max_reports, max_bytes)
+        self.max_reports, self.max_bytes = max_reports, max_bytes
         self.path = Path(root) / "operations_state" / "peer_reports.sqlite3"
         with self._connect(write=True) as conn:
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1):
+            if version not in (0, 1, 2):
                 raise ValueError("unsupported peer journal schema")
             conn.execute("CREATE TABLE IF NOT EXISTS peer (id INTEGER PRIMARY KEY CHECK(id=1), identity TEXT NOT NULL, head INTEGER NOT NULL)")
             conn.execute("CREATE TABLE IF NOT EXISTS reports (revision INTEGER PRIMARY KEY, payload TEXT NOT NULL)")
@@ -112,7 +115,29 @@ class ReportJournal:
             conn.execute("INSERT OR IGNORE INTO peer VALUES (1,?,0)", (value,))
             if conn.execute("SELECT identity FROM peer WHERE id=1").fetchone()[0] != value:
                 raise ValueError("journal process/session identity mismatch")
-            conn.execute("PRAGMA user_version=1")
+            if version < 2:
+                head = conn.execute("SELECT head FROM peer WHERE id=1").fetchone()[0]
+                if type(head) is not int or not 0 <= head <= max_reports:
+                    raise HistoryLimitError("existing peer history exceeds record budget")
+                # Bound migration by row count and stored payload sizes; do not
+                # decode/rewrite reports or silently truncate old evidence.
+                used, count = 0, 0
+                for revision, size in conn.execute(
+                        "SELECT revision,length(CAST(payload AS BLOB)) FROM reports ORDER BY revision LIMIT ?",
+                        (max_reports + 1,)):
+                    count += 1
+                    if count > max_reports or size > MAX_MESSAGE_BYTES or used + size > max_bytes:
+                        raise HistoryLimitError("existing peer history exceeds byte/record budget")
+                    if revision != count:
+                        raise ValueError("existing peer history has a gap")
+                    used += size
+                if count != head:
+                    raise ValueError("existing peer history count mismatch")
+                conn.execute("CREATE TABLE quota (id INTEGER PRIMARY KEY CHECK(id=1), max_reports INTEGER NOT NULL, max_bytes INTEGER NOT NULL, used_bytes INTEGER NOT NULL)")
+                conn.execute("INSERT INTO quota VALUES (1,?,?,?)", (max_reports, max_bytes, used))
+                conn.execute("PRAGMA user_version=2")
+            if conn.execute("SELECT max_reports,max_bytes FROM quota WHERE id=1").fetchone() != (max_reports, max_bytes):
+                raise ValueError("peer journal limits differ from persisted policy")
 
     @contextmanager
     def _connect(self, *, write=False):
@@ -149,15 +174,24 @@ class ReportJournal:
                 return False
             if report.revision != head + 1:
                 raise ValueError("contiguous report revision required")
+            used = conn.execute("SELECT used_bytes FROM quota WHERE id=1").fetchone()[0]
+            size = len(payload.encode("utf-8"))
+            if head >= self.max_reports or used + size > self.max_bytes:
+                raise HistoryLimitError("peer report history full; preserve journal and stop publication")
             conn.execute("INSERT INTO reports VALUES (?,?)", (report.revision, payload))
             conn.execute("UPDATE peer SET head=? WHERE id=1", (report.revision,))
+            conn.execute("UPDATE quota SET used_bytes=used_bytes+? WHERE id=1", (size,))
         return True
 
     def _head(self, conn):
         row = conn.execute("SELECT identity,head FROM peer WHERE id=1").fetchone()
         if (row is None or row[0] != json.dumps(asdict(self.identity), sort_keys=True)
-                or conn.execute("PRAGMA user_version").fetchone()[0] != 1):
+                or conn.execute("PRAGMA user_version").fetchone()[0] != 2):
             raise ValueError("journal identity/schema changed")
+        quota = conn.execute("SELECT max_reports,max_bytes,used_bytes FROM quota WHERE id=1").fetchone()
+        if (quota is None or quota[:2] != (self.max_reports, self.max_bytes)
+                or type(quota[2]) is not int or not 0 <= quota[2] <= self.max_bytes):
+            raise ValueError("journal quota changed or invalid")
         _number(row[1])
         return row[1]
 

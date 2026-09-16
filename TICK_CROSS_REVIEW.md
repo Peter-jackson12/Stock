@@ -44,6 +44,9 @@
   송신 전 저장 실패 시 전송을 막는가? 송신 실패 후 보고가 남는가? 페이지의 잘못된 후속 상태를
   부분 반영하는가? 과거 receiving/빈 페이지를 생존으로 오인하거나 stop을 재전송하는가?
   identity/cursor/순번/메시지 크기 제한과 다른 소켓으로 대조하는 실제 자식 테스트를 확인한다.
+- 이력 예산: `tests/test_history_limits.py`. 저장 한도 초과 시 전송/기존 보고 삭제가 발생하는가?
+  v1 전환 실패가 기존 스키마를 바꾸는가? 관리자 복구량/시간 한도 초과가 기존 소유권을 빼앗는가?
+  payload 바이트 한도를 실제 DB/WAL 전체 크기 제한으로 오인하지 않는가?
 - 변환: `collector/kiwoom/tick_normalizer.py`, `tests/test_tick_normalizer.py`.
   원문·결측·정책·오류가 남는가? 제공자 시각과 UTC/KST 수신 시각을 혼합하지 않는가?
 - 체결: `execution/tick_simulator.py`, `tests/test_tick_simulator.py`.

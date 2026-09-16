@@ -11,6 +11,11 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
+import time
+
+from control_tower.history_limits import (
+    DEFAULT_RECORDS, DEFAULT_BYTES, HistoryLimitError, validate_limits, validate_timeout,
+)
 
 from control_tower.lifecycle import (
     CaptureLifecycle, ProcessIdentity, decode_report, decode_stop,
@@ -25,7 +30,12 @@ class StaleManagerError(RuntimeError):
 
 
 class CaptureHistory:
-    def __init__(self, root):
+    def __init__(self, root, *, replay_max_events=DEFAULT_RECORDS, replay_max_bytes=DEFAULT_BYTES,
+                 replay_timeout=2.0):
+        validate_limits(replay_max_events, replay_max_bytes)
+        validate_timeout(replay_timeout)
+        self.replay_max_events, self.replay_max_bytes = replay_max_events, replay_max_bytes
+        self.replay_timeout = replay_timeout
         self.path = Path(root) / "operations_state" / "capture_control.sqlite3"
 
     @contextmanager
@@ -89,16 +99,26 @@ class CaptureHistory:
                 raise ValueError("session is not registered")
             if ProcessIdentity(**json.loads(row[0])) != identity:
                 raise ValueError("process/session identity mismatch")
+            if type(row[3]) is not int or not 0 <= row[3] <= self.replay_max_events:
+                raise HistoryLimitError("manager history exceeds replay event budget")
             manager = CaptureLifecycle(identity, heartbeat_timeout_ns=row[1])
-            count = 0
-            for ordinal, kind, payload in conn.execute(
-                "SELECT ordinal, kind, payload FROM events WHERE session_id=? ORDER BY ordinal",
-                (identity.session_id,),
+            count, byte_count = 0, 0
+            deadline = time.monotonic() + self.replay_timeout
+            for ordinal, kind, payload, size in conn.execute(
+                "SELECT ordinal,kind,CASE WHEN length(CAST(payload AS BLOB))<=? THEN payload ELSE NULL END,"
+                "length(CAST(payload AS BLOB)) FROM events WHERE session_id=? ORDER BY ordinal LIMIT ?",
+                (min(self.replay_max_bytes, 8 * 1024 * 1024), identity.session_id, self.replay_max_events + 1),
             ):
                 count += 1
+                byte_count += size
+                if (count > self.replay_max_events or payload is None or byte_count > self.replay_max_bytes
+                        or time.monotonic() >= deadline):
+                    raise HistoryLimitError("manager replay exceeded event/byte/time budget")
                 if ordinal != count:
                     raise ValueError("control history has a gap")
                 _apply(manager, kind, json.loads(payload))
+            if time.monotonic() >= deadline:
+                raise HistoryLimitError("manager replay exceeded time budget")
             if count != row[3]:
                 raise ValueError("control history count mismatch")
             manager.manager_restarted()
