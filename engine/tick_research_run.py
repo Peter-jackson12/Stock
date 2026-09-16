@@ -139,7 +139,7 @@ def run_raw_v2(path, *, output_root, simulator_config, quantity, **strategy_opti
     All rows, including unselected symbols, are read to verify the stored checksum.
     Do not invoke on a large production file during capture hours.
     """
-    from collector.raw_v2 import read_raw_v2
+    from collector.raw_v2 import read_raw_v2, CaptureControl
     with read_raw_v2(path) as (manifest, envelopes):
         config = deepcopy(simulator_config)
         if config["source"] != manifest["source"] or config["session_id"] != manifest["session_id"]:
@@ -147,10 +147,14 @@ def run_raw_v2(path, *, output_root, simulator_config, quantity, **strategy_opti
         def selected():
             for envelope in envelopes:
                 event = envelope["event"]
+                if isinstance(event, CaptureControl):
+                    if event.control_type not in ("session_start", "session_note"):
+                        raise ValueError(f"dataset quality event {event.control_type} at seq={event.seq}: {event.details}")
+                    continue
                 if (event.code, event.venue) == (config["code"], config["venue"]):
                     yield event
         return run_research(selected(), output_root=output_root, dataset_label=str(Path(path).resolve()),
                             simulator_config=config, quantity=quantity, close_ns=manifest["close_ns"],
-                            input_provenance=dict(raw_manifest=manifest, reader="raw_v2_prototype_1",
+                            input_provenance=dict(raw_manifest=manifest, reader="raw_v2_reader_2",
                               reader_sha256=hashlib.sha256(Path(__file__).resolve().parents[1].joinpath(
                                   "collector/raw_v2.py").read_bytes()).hexdigest()), **strategy_options)

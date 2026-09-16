@@ -112,7 +112,7 @@ flowchart TD
 
 ### 3.2 저장 경계
 
-오프라인 프로토타입 구현: `collector/raw_v2.py` (`raw_v2_prototype_1`).
+오프라인 프로토타입 구현: `collector/raw_v2.py` (`raw_v2_prototype_2`, prototype_1 읽기 호환).
 원문 필드와 UTC 수신 시각, 원천 시각 원문/정밀도, 정규화 이벤트를 JSON payload로 보존하고
 SQLite 공통 seq를 키로 기록한다. WAL/FULL, 새 파일 전용이며 명시적 batch commit을 지원한다.
 `finish(close_ns=...)`를 성공해야 closed가 된다. 미완료 파일과 append 실패 후 finish를 거부한다.
@@ -120,10 +120,15 @@ SQLite 공통 seq를 키로 기록한다. WAL/FULL, 새 파일 전용이며 명�
 끝까지 확인해야 유효하다. 늦은 오류는 앞서 재생한 결과까지 실패 처리한다.
 `run_raw_v2()`는 전체 스트림 검증 중 선택한 종목/venue만 단일 계좌에 전달한다.
 이는 별도 새 파일용 저장/읽기 계약이며 현재 키움 콜백·큐·운영 DB에는 연결하지 않았다.
-단조 시각은 콜백에서 받아야 하며 정규화/오류 이벤트/재접속 계약과 장외 성능 검증은 남아 있다.
+단조 시각은 콜백에서 받아야 하며 실제 정규화/재접속 연결과 장외 성능 검증은 남아 있다.
 후속 순수 변환기는 `collector/kiwoom/tick_normalizer.py`다. 명시적 가격 부호 정책,
 기본 unknown 방향 정책, 원문/오류 보존, UTC 수신시각과 제공자 HHMMSS 분리를 구현했다.
-호가 top3/10 잔량의 결측을 0으로 채우지 않는다. 실제 콜백·큐 연결과 제어 이벤트 처리는 아직 없다.
+호가 top3/10 잔량의 결측을 0으로 채우지 않는다. 실제 콜백·큐 연결은 아직 없다.
+prototype_2는 CaptureControl을 공통 seq에 포함한다. disconnect/reconnect/parse_error/
+queue_overflow/callback_error가 있으면 기본 연구 실행을 실패 처리한다.
+session_start/note는 정보 기록이며 close는 파일의 종료 상태일 뿐 품질 인증이 아니다.
+`capture_session.py`는 원문 정규화와 제어 이벤트 보존을 잇는 동기식 테스트 프로토타입이다.
+중단 후에는 새 세션/파일이 필요하다. 실제 큐 overflow 감지/네트워크 재접속 구현은 별도다.
 
 - 32비트 수집기는 최소 파싱·순번 부여·큐 적재만 담당한다. 전략 계산과 원본 DB 대량 조회를 넣지 않는다.
 - 단일 기록기가 순서가 있는 큐를 받아 batch commit한다. 지연·대기 건수·미커밋 건수를 분리해서 측정한다.

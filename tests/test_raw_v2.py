@@ -193,3 +193,13 @@ def test_commit_failure_never_leaves_a_closed_replayable_file(tmp_path, operatio
             w.finish(close_ns=20)
     with pytest.raises(ValueError, match="incomplete"):
         read(path)
+
+
+def test_original_prototype_one_files_remain_readable(tmp_path):
+    path = tmp_path / "old-prototype.db"
+    create(path)
+    with sqlite3.connect(path) as c:
+        meta = json.loads(c.execute("SELECT value FROM metadata").fetchone()[0])
+        meta["schema"] = "raw_v2_prototype_1"
+        c.execute("UPDATE metadata SET value=?", (json.dumps(meta),))
+    assert len(read(path)[1]) == 2

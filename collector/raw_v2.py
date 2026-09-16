@@ -5,7 +5,7 @@ assigned by the caller at capture time. Missing/invalid source values belong in
 raw_fields and nullable normalized fields; never synthesize a legacy sequence.
 """
 from contextlib import contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 import hashlib
 import json
@@ -15,7 +15,32 @@ import sqlite3
 from engine.tick_ordering import OrderedTick, ReceiveOrderReplay
 
 
-SCHEMA = "raw_v2_prototype_1"
+SCHEMA = "raw_v2_prototype_2"
+SUPPORTED_SCHEMAS = {"raw_v2_prototype_1", SCHEMA}
+CONTROL_TYPES = {"session_start", "session_note", "disconnect", "reconnect",
+                 "parse_error", "queue_overflow", "callback_error"}
+
+
+@dataclass(frozen=True)
+class CaptureControl:
+    source: str
+    session_id: str
+    seq: int
+    received_ns: int
+    control_type: str
+    details: dict
+
+
+def _common(event, meta, expected_seq, last_ns):
+    if type(event.seq) is not int or event.seq != expected_seq:
+        raise ValueError("contiguous common sequence required")
+    if type(event.received_ns) is not int or event.received_ns < 0 or event.received_ns < last_ns:
+        raise ValueError("invalid or reversed receipt clock")
+    if (event.source, event.session_id) != (meta["source"], meta["session_id"]):
+        raise ValueError("capture source/session mismatch")
+    if isinstance(event, CaptureControl):
+        if event.control_type not in CONTROL_TYPES or not isinstance(event.details, dict):
+            raise ValueError("invalid control type/details")
 
 
 def _load_json(text):
@@ -73,6 +98,7 @@ class RawV2Writer:
         self.finished = False
         self.failed = False
         self.count = 0
+        self.last_ns = 0
         self.digest = hashlib.sha256()
         self.meta = dict(schema=SCHEMA, source=source, session_id=session_id,
                          market_date=market_date, feed_scope=feed_scope, state="incomplete")
@@ -93,15 +119,16 @@ class RawV2Writer:
             raise ValueError("session already finished or failed")
         self.failed = True  # any append failure prevents a false closed marker
         _envelope_fields(received_at_utc, raw_fields, exchange_ts_raw, source_time_precision)
-        if event.seq != self.count + 1:
-            raise ValueError("unfiltered capture requires contiguous common sequence starting at 1")
+        _common(event, self.meta, self.count + 1, self.last_ns)
         payload = _json(dict(event=asdict(event), received_at_utc=received_at_utc,
                              raw_fields=raw_fields, exchange_ts_raw=exchange_ts_raw,
                              source_time_precision=source_time_precision))
-        self.order.accept(event)
+        if not isinstance(event, CaptureControl):
+            self.order.accept(event)
         self.conn.execute("INSERT INTO events VALUES (?,?)", (event.seq, payload))
         self.digest.update(payload.encode("utf-8") + b"\n")
         self.count += 1
+        self.last_ns = event.received_ns
         self.failed = False
 
     def commit(self):
@@ -112,7 +139,7 @@ class RawV2Writer:
             raise
 
     def finish(self, *, close_ns):
-        if self.finished or self.failed or type(close_ns) is not int or close_ns <= (self.order.last_received_ns or 0):
+        if self.finished or self.failed or type(close_ns) is not int or close_ns <= self.last_ns:
             raise ValueError("exclusive closing timestamp must follow all events")
         final = self.meta | dict(state="closed", close_ns=close_ns, event_count=self.count,
                                  payload_sha256=self.digest.hexdigest())
@@ -148,7 +175,7 @@ def read_raw_v2(path):
             raise ValueError("exactly one manifest required")
         meta = _load_json(rows[0][0])
         _identity(meta)
-        if meta.get("schema") != SCHEMA or meta.get("state") != "closed":
+        if meta.get("schema") not in SUPPORTED_SCHEMAS or meta.get("state") != "closed":
             raise ValueError("unsupported or incomplete raw dataset")
         if type(meta.get("close_ns")) is not int or meta["close_ns"] <= 0:
             raise ValueError("invalid close boundary")
@@ -159,6 +186,7 @@ def read_raw_v2(path):
         def records():
             digest = hashlib.sha256()
             count = 0
+            last_ns = 0
             cursor = conn.execute("SELECT seq,payload FROM events ORDER BY seq")
             try:
                 for seq, payload in cursor:
@@ -178,10 +206,18 @@ def read_raw_v2(path):
                             if not isinstance(fields[name], list):
                                 raise ValueError("depth quantities must be arrays or null")
                             fields[name] = tuple(fields[name])
-                    event = OrderedTick(**fields)
+                    if "control_type" in fields:
+                        if meta["schema"] != SCHEMA:
+                            raise ValueError("control records require prototype 2")
+                        event = CaptureControl(**fields)
+                    else:
+                        event = OrderedTick(**fields)
+                    _common(event, meta, count, last_ns)
+                    last_ns = event.received_ns
                     if event.seq != seq or event.received_ns >= meta["close_ns"]:
                         raise ValueError("record/header sequence or closing boundary mismatch")
-                    order.accept(event)
+                    if not isinstance(event, CaptureControl):
+                        order.accept(event)
                     digest.update(payload.encode("utf-8") + b"\n")
                     envelope["event"] = event
                     yield envelope
