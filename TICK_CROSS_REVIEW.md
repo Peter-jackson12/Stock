@@ -14,12 +14,14 @@
 3. 가격 부호 제거도 명시적 정책이다. 원문을 보존하고 positive_only/signed_magnitude를 기록한다.
    일반 호가 검증기에서 음수를 무조건 abs 처리하는 것은 금지한다.
 
-## 코드 검토 순서와 반례
+## 작업에 맞춰 선택할 코드와 반례
 
 - 수집 제어 계약: `control_tower/lifecycle.py`, `tests/test_capture_lifecycle.py`.
   PID가 재사용되거나 과거 세션 응답이 도착해도 대상이 섞이지 않는가? 중복 명령이 stop을 반복하는가?
   큐/in-flight/커밋 불일치와 저장 오류를 정상 종료로 표시하는가? stale/시간 초과를 실패 확정 또는 재시작으로 바꾸는가?
-  이 검증은 가짜 피어와 메모리 계약에 한정되며 실제 프로세스/IPC/영속 복구는 미연결이다.
+  이력/복구는 `control_tower/capture_history.py`, `tests/test_capture_history.py`를 함께 본다.
+  커밋 전 명령이 노출되는가? 재시작 후 과거 heartbeat/시간 제한이 되살아나는가?
+  누락 보고·PID 재사용·저장 실패·이전 관리자 쓰기를 거부하는가? 실제 프로세스/IPC는 미연결이다.
 
 - 수신 순서: `engine/tick_ordering.py`, `tests/test_tick_receive_order.py`.
   동일 초 호가 A → 체결 → 호가 B에서 체결이 B를 보지 않는가? 미래 suffix 변경이 과거를 바꾸는가?
@@ -55,5 +57,3 @@
 - 실제 피드의 방향·가격 부호/venue·세션 범위, 시장별 호가단위 및 비용은 별도 확인 대상이다.
 - FULL/WAL 설정의 실제 지연·종료 drain·강제 종료 내구성은 장외 측정이 필요하다.
 - 실제 하루 재생, raw 대조, 전략 성과/대시보드 연결은 합성 테스트 통과로 완료 처리하지 않는다.
-
-변경 시 HANDOFF와 아키텍처 문서의 구현 상태를 함께 갱신한다. 푸시는 사용자가 직접 한다.

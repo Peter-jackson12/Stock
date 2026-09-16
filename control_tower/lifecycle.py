@@ -230,8 +230,8 @@ class StopReceiver:
 class CaptureLifecycle:
     """In-memory manager for ONE explicitly registered session; no discovery/adoption.
 
-    Calls must be serialized by one owner. After manager restart the instance must
-    not be recreated from PID/logs alone: persistence/reconciliation is a later step.
+    Calls must be serialized by one owner. The durable adapter replays validated
+    control history on restart; PID/logs alone never reconstruct this instance.
     revision counts all protocol reports, including heartbeats; delivery is ordered.
     """
     def __init__(self, identity, *, heartbeat_timeout_ns):
@@ -301,12 +301,24 @@ class CaptureLifecycle:
         _text(reason, "contact loss reason")
         self._lost_reason = reason
 
+    def manager_restarted(self):
+        """Invalidate the previous manager clock and liveness after history replay.
+
+        Unfinished stops retain their identity but no reusable deadline. Only a
+        matching final/error report can resolve their unknown outcome.
+        """
+        self._clock = -1
+        self._last_seen = None
+        self._lost_reason = "manager restarted; reconciliation required"
+        if self.stop_command is not None:
+            self._stop_deadline = 0
+
     def view(self, *, now_ns):
         self._now(now_ns)
         age = None if self._last_seen is None else now_ns - self._last_seen
         # A verified protocol close remains a recorded outcome after the peer exits.
         closed = self.report is not None and self.report.state == "closed"
-        uncertain = self.report is None or self._lost_reason is not None or age >= self.heartbeat_timeout_ns
+        uncertain = age is None or self._lost_reason is not None or age >= self.heartbeat_timeout_ns
         state = "closed" if closed else "unknown" if uncertain else self.report.state
         command_status = None
         if self.stop_command is not None:
