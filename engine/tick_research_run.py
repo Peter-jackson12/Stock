@@ -4,6 +4,7 @@ No raw database reader or production collector is invoked. The result schema is
 separate from legacy round-trip Trade metrics: open positions are not realized PnL.
 """
 from copy import deepcopy
+from collections import Counter
 from dataclasses import asdict
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -14,6 +15,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from execution.tick_simulator import TickSimulator
+from execution.quote_validation import check_ordered_quote
 from strategies.nxt_breakout.tick_research import NxtResearchStrategy
 
 
@@ -90,6 +92,7 @@ def run_research(events, *, output_root, dataset_label, simulator_config,
     _write(path, base | dict(status="running"))
     digest = hashlib.sha256()
     count = 0
+    processed_counts, quote_checks = Counter(), Counter()
     error = None
     try:
         for event in events:
@@ -99,11 +102,16 @@ def run_research(events, *, output_root, dataset_label, simulator_config,
             if event.received_ns >= close_ns:
                 raise ValueError("event at or after exclusive session close")
             view = sim.on_event(event)
+            processed_counts[event.kind] += 1
+            quote_checks[check_ordered_quote(view).reason] += 1
             strategy(view, sim)
         sim.close(close_ns)
     except Exception as exc:
         error = exc
-    status = ("failed" if error is not None else "completed_empty_input" if count == 0
+    no_selection = (count == 0 and isinstance(provenance, dict)
+                    and provenance.get("raw_manifest", {}).get("event_count", 0) > 0)
+    status = ("failed" if error is not None else "completed_no_selected_events" if no_selection
+              else "completed_empty_input" if count == 0
               else "completed_with_open_position" if sim.position else
               "completed_no_fills" if not sim.fills else "completed_flat")
     event_hash = digest.hexdigest()
@@ -114,6 +122,7 @@ def run_research(events, *, output_root, dataset_label, simulator_config,
                          input_complete=error is None, reproducibility_key=reproducibility_key,
                          error=(f"{type(error).__name__}: {error}" if error else None),
                          diagnostics_only=error is not None,
+                         processed_event_counts=dict(processed_counts), quote_checks=dict(quote_checks),
                          final_cash=sim.cash, open_quantity=sim.position,
                          orders=[asdict(order) for order in sim.orders.values()],
                          fills=[asdict(fill) for fill in sim.fills],

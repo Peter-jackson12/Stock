@@ -34,6 +34,8 @@ def test_save_open_position_fills_and_explicit_cost_settings(tmp_path):
     assert saved["settings"]["simulator"]["fee_rate"] == "0.001"
     assert saved["raw_identity_verified"] is False
     assert len(saved["code_sha256"]) == 6
+    assert saved["processed_event_counts"] == {"quote": 1, "trade": 1}
+    assert saved["quote_checks"] == {"eligible": 2}
 
 
 def test_reruns_preserve_previous_files_and_have_same_reproducibility_key(tmp_path):

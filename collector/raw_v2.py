@@ -18,6 +18,32 @@ from engine.tick_ordering import OrderedTick, ReceiveOrderReplay
 SCHEMA = "raw_v2_prototype_1"
 
 
+def _load_json(text):
+    def reject_constant(value):
+        raise ValueError(f"nonfinite JSON value: {value}")
+    return json.loads(text, parse_constant=reject_constant)
+
+
+def _identity(meta):
+    if not isinstance(meta, dict):
+        raise ValueError("manifest object required")
+    for key in ("source", "session_id", "market_date", "feed_scope"):
+        if not isinstance(meta.get(key), str) or not meta[key].strip():
+            raise ValueError(f"nonempty manifest {key} text required")
+    if date.fromisoformat(meta["market_date"]).isoformat() != meta["market_date"]:
+        raise ValueError("ISO market date required")
+
+
+def _envelope_fields(received_at_utc, raw_fields, exchange_ts_raw, source_time_precision):
+    _utc(received_at_utc)
+    if not isinstance(raw_fields, dict):
+        raise ValueError("raw fields object required")
+    if exchange_ts_raw is not None and not isinstance(exchange_ts_raw, str):
+        raise ValueError("source time must be original text or null")
+    if not isinstance(source_time_precision, str) or not source_time_precision.strip():
+        raise ValueError("source time precision text required")
+
+
 def _json(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
 
@@ -37,9 +63,8 @@ class RawV2Writer:
     Commit batches explicitly to bound crash loss. Never resume an old session.
     """
     def __init__(self, path, *, source, session_id, market_date, feed_scope):
+        _identity(dict(source=source, session_id=session_id, market_date=market_date, feed_scope=feed_scope))
         self.order = ReceiveOrderReplay(source=source, session_id=session_id, max_quote_age_ns=0)
-        if date.fromisoformat(market_date).isoformat() != market_date or not feed_scope:
-            raise ValueError("ISO market date and explicit feed scope required")
         self.path = Path(path).resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("xb"):
@@ -67,9 +92,7 @@ class RawV2Writer:
         if self.finished or self.failed:
             raise ValueError("session already finished or failed")
         self.failed = True  # any append failure prevents a false closed marker
-        _utc(received_at_utc)
-        if not isinstance(raw_fields, dict) or not isinstance(source_time_precision, str) or not source_time_precision:
-            raise ValueError("raw fields object and source precision required")
+        _envelope_fields(received_at_utc, raw_fields, exchange_ts_raw, source_time_precision)
         if event.seq != self.count + 1:
             raise ValueError("unfiltered capture requires contiguous common sequence starting at 1")
         payload = _json(dict(event=asdict(event), received_at_utc=received_at_utc,
@@ -82,13 +105,18 @@ class RawV2Writer:
         self.failed = False
 
     def commit(self):
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except BaseException:
+            self.failed = True
+            raise
 
     def finish(self, *, close_ns):
         if self.finished or self.failed or type(close_ns) is not int or close_ns <= (self.order.last_received_ns or 0):
             raise ValueError("exclusive closing timestamp must follow all events")
         final = self.meta | dict(state="closed", close_ns=close_ns, event_count=self.count,
                                  payload_sha256=self.digest.hexdigest())
+        self.failed = True
         self.conn.execute("UPDATE metadata SET value=?", (_json(final),))
         self.conn.commit()
         self.meta, self.finished = final, True
@@ -118,7 +146,8 @@ def read_raw_v2(path):
         rows = conn.execute("SELECT value FROM metadata").fetchall()
         if len(rows) != 1:
             raise ValueError("exactly one manifest required")
-        meta = json.loads(rows[0][0])
+        meta = _load_json(rows[0][0])
+        _identity(meta)
         if meta.get("schema") != SCHEMA or meta.get("state") != "closed":
             raise ValueError("unsupported or incomplete raw dataset")
         if type(meta.get("close_ns")) is not int or meta["close_ns"] <= 0:
@@ -136,13 +165,18 @@ def read_raw_v2(path):
                     count += 1
                     if seq != count:
                         raise ValueError("raw sequence gap")
-                    envelope = json.loads(payload)
-                    _utc(envelope["received_at_utc"])
-                    if not isinstance(envelope["raw_fields"], dict):
-                        raise ValueError("raw fields object required")
+                    envelope = _load_json(payload)
+                    if not isinstance(envelope, dict):
+                        raise ValueError("record envelope object required")
+                    _envelope_fields(envelope.get("received_at_utc"), envelope.get("raw_fields"),
+                                     envelope.get("exchange_ts_raw"), envelope.get("source_time_precision"))
                     fields = envelope["event"]
+                    if not isinstance(fields, dict):
+                        raise ValueError("event object required")
                     for name in ("bid_sizes", "ask_sizes"):
                         if fields.get(name) is not None:
+                            if not isinstance(fields[name], list):
+                                raise ValueError("depth quantities must be arrays or null")
                             fields[name] = tuple(fields[name])
                     event = OrderedTick(**fields)
                     if event.seq != seq or event.received_ns >= meta["close_ns"]:

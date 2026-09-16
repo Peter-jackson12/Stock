@@ -122,3 +122,51 @@ def test_missing_input_does_not_create_database(tmp_path):
     with pytest.raises(FileNotFoundError):
         read(path)
     assert not path.exists()
+
+
+@pytest.mark.parametrize("field,value", [("market_date", "bad-date"), ("source", 123),
+                                        ("session_id", " "), ("feed_scope", None)])
+def test_invalid_manifest_identity_is_rejected(tmp_path, field, value):
+    path = tmp_path / "v2.db"
+    create(path)
+    with sqlite3.connect(path) as c:
+        meta = json.loads(c.execute("SELECT value FROM metadata").fetchone()[0])
+        meta[field] = value
+        c.execute("UPDATE metadata SET value=?", (json.dumps(meta),))
+    with pytest.raises(ValueError):
+        read(path)
+
+
+@pytest.mark.parametrize("field,value", [("source_time_precision", ""),
+                                        ("exchange_ts_raw", 123), ("raw_fields", None)])
+def test_invalid_envelope_fields_rejected(tmp_path, field, value):
+    path = tmp_path / "v2.db"
+    create(path)
+    with sqlite3.connect(path) as c:
+        data = json.loads(c.execute("SELECT payload FROM events WHERE seq=1").fetchone()[0])
+        data[field] = value
+        c.execute("UPDATE events SET payload=? WHERE seq=1", (json.dumps(data),))
+    with pytest.raises(ValueError):
+        read(path)
+
+
+def test_nonempty_dataset_wrong_selection_is_not_empty_input(tmp_path):
+    path = tmp_path / "v2.db"
+    create(path)
+    result = run_raw_v2(path, output_root=tmp_path / "results",
+                        simulator_config=config() | {"code": "000660"}, quantity=2)
+    assert json.loads(result.read_bytes())["status"] == "completed_no_selected_events"
+
+
+def test_cli_closed_fixture_to_result_end_to_end(tmp_path, capsys):
+    from scripts.run_tick_research import main
+    path = tmp_path / "v2.db"
+    create(path)
+    assert main(["--db", str(path), "--output-root", str(tmp_path / "results"),
+                 "--code", "005930", "--venue", "unknown", "--quantity", "2", "--cash", "100000",
+                 "--fee-rate", "0.001", "--buy-latency-sec", "0.000000005",
+                 "--sell-latency-sec", "0.000000005", "--cancel-latency-sec", "0.000000002",
+                 "--max-quote-age-sec", "0.0000001"]) == 0
+    from pathlib import Path
+    result = json.loads(Path(capsys.readouterr().out.strip()).read_bytes())
+    assert result["status"] == "completed_with_open_position"
