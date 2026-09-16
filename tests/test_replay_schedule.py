@@ -1,6 +1,9 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 import xml.etree.ElementTree as ET
+from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -80,3 +83,35 @@ def test_invalid_or_market_time_is_not_scheduled(tmp_path, due):
     with pytest.raises(ValueError):
         schedule_replay(tmp_path, job, due, now=NOW, run=lambda *a, **k: pytest.fail("must not register"))
     assert schedules(tmp_path) == []
+
+
+@pytest.mark.parametrize("claim_worker", [False, True])
+def test_process_exit_after_dispatch_never_restarts_uncertain_work(tmp_path, claim_worker):
+    job = setup(tmp_path)
+    schedule_replay(tmp_path, job, NOW + timedelta(minutes=2), now=NOW,
+                    run=lambda *a, **k: SimpleNamespace(returncode=0))
+    program = """
+import os, sys
+from datetime import datetime
+from control_tower.replay_schedule import dispatch_schedule
+from control_tower.jobs import JobStore
+root, job, due, claim = sys.argv[1:]
+assert dispatch_schedule(root, job, now=datetime.fromisoformat(due))
+if claim == 'yes':
+    assert JobStore(root).claim_replay(job, 'interrupted-worker') is not None
+os._exit(17)
+"""
+    crashed = subprocess.run([sys.executable, "-c", program, str(tmp_path), job,
+                              (NOW + timedelta(minutes=2)).isoformat(), "yes" if claim_worker else "no"],
+                             cwd=Path(__file__).resolve().parents[1], timeout=10, capture_output=True)
+    assert crashed.returncode == 17, crashed.stderr
+    record = JobStore(tmp_path).recent()[0]
+    assert record["status"] == ("running" if claim_worker else "queued")
+    # Reopen durable state in another process, as a scheduler invocation would.
+    resumed = subprocess.run([sys.executable, "-c",
+        "import sys; from control_tower.replay_schedule import run_scheduled; run_scheduled(*sys.argv[1:])",
+        str(tmp_path), job], cwd=Path(__file__).resolve().parents[1], timeout=10, capture_output=True)
+    assert resumed.returncode == 0, resumed.stderr
+    assert JobStore(tmp_path).recent()[0] == record
+    assert schedules(tmp_path)[0]["state"] == "dispatched"
+    assert not (tmp_path / "research_runs").exists()
