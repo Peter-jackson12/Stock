@@ -14,6 +14,7 @@ from control_tower.service import confined_file
 from control_tower.status import observe_collector
 from scripts.run_tick_research import parser
 from engine.tick_research_run import run_raw_v2
+from control_tower.storage_guard import require_disk_space
 
 MAX_BYTES = 32 * 1024 * 1024
 MAX_RECORDS = 100_000
@@ -21,6 +22,7 @@ KST = timezone(timedelta(hours=9))
 
 
 def require_offline(root, now=None):
+    require_disk_space(root)
     now = datetime.now(KST) if now is None else now.astimezone(KST)
     if now.weekday() < 5 and time(8) <= now.time().replace(tzinfo=None) < time(16, 30):
         raise ValueError("장외 워커는 평일 08:00~16:30에 실행하지 않습니다")

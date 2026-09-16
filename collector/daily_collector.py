@@ -85,6 +85,19 @@ def fetch_candles(code: str, count: int = 4000) -> tuple[str, pd.DataFrame, str 
         return name, pd.DataFrame(), f"candle_fetch_failed: {type(exc).__name__}: {exc}"
 
 
+def candle_coverage(frame, trading_dates):
+    """Requested-calendar coverage, not proof of listing status or price basis."""
+    requested = set(trading_dates)
+    available = set(frame.index)
+    matched = requested & available
+    state = ("unknown_calendar" if not requested else "no_candles" if not available else
+             "no_requested_rows" if not matched else "partial" if matched != requested else "complete")
+    return dict(status=state, requested_days=len(requested), matched_days=len(matched),
+                missing_days=len(requested - available),
+                latest_available=max(available) if available else None,
+                latest_requested=max(requested) if requested else None)
+
+
 def fetch_current_meta(code: str) -> dict:
     meta = {
         "shares": None, "shares_reason": "no_source", "observed_date": None,
@@ -198,6 +211,7 @@ class FastDailyCollector:
             )
 
             observed = meta.get("observed_date")
+            coverage = candle_coverage(df, trading_dates)
             applicable = observed == collected_date and start_date <= collected_date <= end_date
             shares = meta["shares"] if applicable else None
             float_ratio = meta["float"] if applicable else None
@@ -208,6 +222,7 @@ class FastDailyCollector:
                 "shares_applied_to": collected_date if shares is not None else None,
                 "snapshot_reason": None if applicable else "observation_date_outside_request_or_unknown",
                 "candles_reason": meta.get("candles_reason") or ("no_candles" if df.empty else None),
+                "candle_coverage": coverage,
             }
             if start_date <= collected_date <= end_date:
                 close = df.loc[collected_date, "close"] if collected_date in df.index else None
@@ -226,6 +241,9 @@ class FastDailyCollector:
             })
             if df.empty:
                 print("⚠️ 데이터 없음")
+                continue
+            if not coverage["matched_days"]:
+                print(f"⚠️ 요청 기간 가격 없음 (응답 마지막 날짜: {coverage['latest_available']})")
                 continue
 
             for d in trading_dates:
@@ -249,7 +267,8 @@ class FastDailyCollector:
                         matrices[f].loc[d, col] = np.nan
 
             success_count += 1
-            print("✅ 완료")
+            print("✅ 요청 기간 가격 수신" if coverage["status"] == "complete" else
+                  f"⚠️ 요청 기간 일부 수신 ({coverage['matched_days']}/{coverage['requested_days']}일)")
             time.sleep(0.05)
 
         if success_count == 0 and not snapshot_rows:

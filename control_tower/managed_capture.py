@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from control_tower.lifecycle import ProcessIdentity, StopCommand, CaptureLifecycle, decode_report, encode_report
 from control_tower.windows_process import WindowsProcess
+from control_tower.storage_guard import require_disk_space
 
 TOKEN_ENV = "STOCK_CAPTURE_LAUNCH_TOKEN"
 ACTIVE = ("launching", "running", "stopping", "unknown")
@@ -252,6 +253,7 @@ def start_managed_capture(root, codes, duration, server, *, popen=subprocess.Pop
     """Only the fixed collector script; no user-supplied executable or shell."""
     root = Path(root).resolve()
     validate_plan(codes, duration, server)
+    require_disk_space(root)
     python = root / ".venv32" / "Scripts" / "python.exe"
     script = root / "collector" / "kiwoom" / "kiwoom_universe_logger.py"
     config = root / ".venv32" / "pyvenv.cfg"

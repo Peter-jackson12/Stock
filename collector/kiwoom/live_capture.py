@@ -16,6 +16,7 @@ from collector.kiwoom.queue_control import QueueStopReports
 from control_tower.lifecycle import CaptureReport, ProcessIdentity
 from control_tower.report_journal import ReportJournal
 from control_tower.windows_process import WindowsProcess
+from control_tower.storage_guard import require_disk_space
 
 TRADE_FIDS = (20, 10, 15, 14, 27, 28)
 QUOTE_FIDS = (21, *range(41, 81))
@@ -31,6 +32,7 @@ class LiveRawCapture:
         if facts.python_bits != 32:
             raise ValueError("operational OCX collector requires 32-bit Python")
         root = Path(root).resolve()
+        require_disk_space(root)
         self.latest_status_path = root / "operations_state" / "capture_status.json"
         session_id = uuid4().hex
         now = datetime.now()

@@ -98,3 +98,34 @@ def test_price_export_failure_does_not_lose_collected_snapshot(tmp_path, monkeyp
     with pytest.raises(OSError):
         collector.FastDailyCollector(tmp_path).collect("20260916", "20260916", ["005930"])
     assert read_all_snapshots(tmp_path).iloc[0].shares == 100
+
+
+def test_old_candles_do_not_count_as_current_prices_or_block_metadata(tmp_path, monkeypatch):
+    mock_source(monkeypatch, ["20260916"])
+    original = collector.fetch_stock_meta_and_candles
+    def fetch(code, **kwargs):
+        name, frame, meta = original(code, **kwargs)
+        if code == "101060":
+            frame = frame.copy()
+            frame.index = ["20220117"]
+        return name, frame, meta
+    monkeypatch.setattr(collector, "fetch_stock_meta_and_candles", fetch)
+    collector.FastDailyCollector(tmp_path).collect("20260916", "20260916", ["101060"])
+    manifest = json.loads((tmp_path / "_meta_manifest.json").read_text(encoding="utf-8"))
+    coverage = manifest["codes"]["101060"]["candle_coverage"]
+    assert coverage["status"] == "no_requested_rows"
+    assert coverage["latest_available"] == "20220117"
+    assert coverage["matched_days"] == 0
+    assert not (tmp_path / "unverified_fchart").exists()
+    snapshot = read_all_snapshots(tmp_path)
+    assert snapshot.iloc[0].shares == 100
+    assert pd.isna(snapshot.iloc[0].mkt)
+
+
+def test_historical_request_accepts_delisted_history_without_claiming_current_listing():
+    frame = pd.DataFrame(index=["20220114", "20220117"])
+    coverage = collector.candle_coverage(frame, ["20220114", "20220117"])
+    assert coverage["status"] == "complete"
+    assert "listed" not in coverage
+    assert collector.candle_coverage(frame, ["20220117", "20220118"])["status"] == "partial"
+    assert collector.candle_coverage(frame, [])["status"] == "unknown_calendar"
