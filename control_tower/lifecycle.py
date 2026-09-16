@@ -1,6 +1,6 @@
-"""Versioned capture-control contract, exercised with fake peers only.
+"""Versioned capture-control contract, exercised with synthetic peers.
 
-Single-owner reducer: a future serialized transport must deliver reports/commands.
+Single-owner reducer: the serialized transport delivers reports/commands.
 No OS process API, OCX, raw-file I/O, UI action or automatic restart lives here.
 Reports are producer claims; a closed writer is not a dataset quality certificate.
 All deadlines use the manager's monotonic clock, never provider/wall timestamps.
