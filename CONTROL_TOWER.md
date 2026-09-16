@@ -45,7 +45,7 @@ flowchart TD
 ## 2. 코드에서 확인한 현재 연결
 
 - `dashboard/app.py`: 기존에는 저장된 런 비교가 중심이었다. 지금은 운영 관리/백테스트 분석을 선택한다.
-- `dashboard/control_tower.py`: 수집 로그, 결과 조회 요청, 장외 재생 계획, 최근 작업 30건을 표시한다.
+- `dashboard/operations.py`: 수집 로그, 결과 조회 요청, 장외 재생 계획, 최근 작업 30건을 표시한다.
 - `control_tower/status.py`: 오늘 KST 로그의 끝부분만 읽는다. 최근/오래됨/미확인/시각 이상을 구분한다.
   프로세스 생존, DB 커밋, 무누락, 실제 venue/매수 방향을 인증하지 않는다.
 - `control_tower/jobs.py`: `operations_state/jobs.sqlite3`에 작업을 보존한다. 수집 DB와 분리했다.

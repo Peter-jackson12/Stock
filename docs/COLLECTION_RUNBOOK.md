@@ -53,8 +53,9 @@ uv sync
 - `operations_state/capture_sessions/session_id/`에 보고 저널·상태를 남긴다.
   `operations_state/capture_status.json`은 약 5초마다 갱신하는 최신 관측 사본이다.
   운영 화면은 최대 64 KiB의 이 파일만 읽으며 raw DB를 스캔하지 않는다.
-- 실제 32비트 환경/OCX 등록 확인과 합성 백엔드 검증을 통과했다. 추가 로그인·실피드 수집은
-  실행하지 않았으므로 실피드 의미·전 종목 부하·지연·공급자 무누락 확인은 남아 있다.
+- 2026-09-16 19:28~19:30 KST 실제 OCX **mock** 로그인·삼성전자 1종목 구독·구독 후 60초 자동 종료를
+  확인했다. 체결/호가 0건이며 raw session_start 1건의 체크섬·closed 보고·잔여 큐 0을 대조했다.
+  저장 종료는 확인했지만 실피드 의미·전 종목 부하·지연·공급자 무누락 검증은 아니다. 근거는 HANDOFF에 있다.
   기존 큐 단독 점검 `scripts/probe_raw_v2_queue.py`도 계속 사용할 수 있다.
 KIS `collector/run_daily_daemon.py`는 별도 프로그램으로 같은 날짜 raw 경로를 사용하므로
 키움 후처리를 하려고 함께 실행하지 않는다. 현재 수집기는 메타데이터나 백테스트를 자동 실행하지 않는다.

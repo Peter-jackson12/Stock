@@ -1,4 +1,4 @@
-"""Control tower UI. Observations and durable plans are separate from execution."""
+"""Operations UI; distinct module name avoids shadowing the control_tower package."""
 from pathlib import Path
 from datetime import datetime
 import sqlite3

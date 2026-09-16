@@ -60,7 +60,7 @@
 
 ## 알려진 미완료 범위
 
-- 운영 화면/작업 관리: `control_tower/`, `dashboard/control_tower.py`,
+- 운영 화면/작업 관리: `control_tower/`, `dashboard/operations.py`,
   `tests/test_control_tower.py`, `tests/test_control_tower_ui.py`를 [설계](CONTROL_TOWER.md)와 대조한다.
   동일 요청이 중복 실행되는가, 대기 취소와 선점이 경쟁하는가, 다른 owner가 완료를 기록하는가,
   계획만 저장한 재생이 실제로 실행되는가, stale 로그를 수집 종료로 오인하는가를 점검한다.

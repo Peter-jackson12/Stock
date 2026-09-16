@@ -8,7 +8,7 @@ require_access()
 
 view = st.sidebar.radio("화면", ["운영 관리", "백테스트 분석"], key="main_view")
 if view == "운영 관리":
-    from dashboard.control_tower import render_control_tower
+    from dashboard.operations import render_control_tower
     render_control_tower()
     st.stop()
 

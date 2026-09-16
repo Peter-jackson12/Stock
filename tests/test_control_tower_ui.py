@@ -8,11 +8,11 @@ from streamlit.testing.v1 import AppTest
 from collector.raw_v2 import RawV2Writer
 from control_tower.jobs import JobStore
 from control_tower.service import run_one_inspection
-from dashboard import control_tower as ui
+from dashboard import operations as ui
 
 
 def screen(tmp_path):
-    script = "from dashboard.control_tower import render_control_tower\nrender_control_tower(" + repr(str(tmp_path)) + ")"
+    script = "from dashboard.operations import render_control_tower\nrender_control_tower(" + repr(str(tmp_path)) + ")"
     return AppTest.from_string(script, default_timeout=10).run()
 
 
