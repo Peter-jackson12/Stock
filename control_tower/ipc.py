@@ -11,6 +11,7 @@ import time
 from control_tower.lifecycle import (
     MAX_MESSAGE_BYTES, decode_report, decode_stop, encode_report, encode_stop,
 )
+from control_tower.report_journal import ReplayRequest, encode_request, decode_request, encode_page, decode_page
 
 
 class ControlChannel:
@@ -78,6 +79,18 @@ class ControlChannel:
     def receive_report(self):
         return self._receive(decode_report)
 
+    def send_replay_request(self, request):
+        self._send(request, encode_request)
+
+    def receive_replay_request(self):
+        return self._receive(decode_request)
+
+    def send_replay_page(self, page):
+        self._send(page, encode_page)
+
+    def receive_replay_page(self):
+        return self._receive(decode_page)
+
 
 class CaptureConnection:
     """Bind transport failures to durable uncertainty, never to clean shutdown.
@@ -128,3 +141,28 @@ class CaptureConnection:
                 self.channel.close()
                 raise
         self.capture.dispatch_stop(send, now_ns=self.clock())
+
+    def reconcile_page(self, *, limit=128):
+        """One bounded request/page; callers explicitly schedule further pages.
+
+        Historical reports do not refresh liveness and never resend stop. The
+        same missing page can be requested after failure using durable revision.
+        """
+        cursor = 0 if self.capture.report is None else self.capture.report.revision
+        request = ReplayRequest(self.capture.identity, cursor, limit)
+        try:
+            self.channel.send_replay_request(request)
+            page = self.channel.receive_replay_page()
+            if page.identity != request.identity or page.after_revision != cursor or len(page.reports) > limit:
+                raise ValueError("replay response does not match request")
+            if self.process is not None:
+                self.process.verify(page.identity, require_alive=False)
+            if page.reports:
+                self.capture.reconcile(page.reports, now_ns=self.clock())
+            else:
+                self.capture.lost_contact(self.capture.identity, reason="empty replay is not a heartbeat", now_ns=self.clock())
+            return page
+        except BaseException:
+            self.channel.close()
+            self.capture.lost_contact(self.capture.identity, reason="replay incomplete or invalid", now_ns=self.clock())
+            raise

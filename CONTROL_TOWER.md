@@ -6,8 +6,8 @@
 [문서 시작점](README.md) · [현재 인계](HANDOFF.md) · [수집 실행 안내](docs/COLLECTION_RUNBOOK.md)
 
 **1단계:** 운영 화면/조회 워커/계획 저장 구현. **2단계:** 제어 계약과 가짜 피어 검증 구현.
-**후속 계약:** 제어 이력 영속화·관리자 복구의 합성 검증 구현.
-실제 수집기 제어/IPC, 운영 관리자 연결, 운영 raw v2 연결은 후속이다.
+**후속 계약:** 관리자/피어 이력·복구 대조, OS 식별·실제 IPC·작은 raw 저장의 합성 검증 구현.
+운영 수집기 제어, 운영 관리자와 raw v2 연결은 후속이다.
 
 ## 1. 결정
 
@@ -165,8 +165,8 @@ stateDiagram-v2
   새 수집은 새 identity/파일을 갖는 별도 세션이어야 하며 자동 재시작은 구현하지 않았다.
 
 이 상태 머신은 **단일 소유자가 순차 호출하는 메모리 상태와 메시지 계약**이다.
-이력 영속화·관리자 복구는 아래 어댑터에서 처리한다. OS PID 확인, 프로세스 기동/종료,
-소켓/파일 IPC, 디스크 여유 관측은 미연결이다. PID/로그로 상태를 복원하거나
+이력 영속화·관리자 복구·OS 식별·IPC는 아래 어댑터에서 처리한다. 운영 프로세스 기동/종료와
+디스크 여유 관측은 미연결이다. PID/로그로 상태를 복원하거나
 이미 실행 중인 수집기를 이 클래스로 감싸서 인수하지 않는다.
 StopReceiver도 메모리 세션 내에서만 중복을 제거한다. 재부팅을 가로지르는 exactly-once 보장이 아니다.
 
@@ -237,11 +237,30 @@ UI·운영 프로세스 연결은 별도 단계다. 합성 피어의 실제 IPC 
   조회 직후 종료되는 경쟁은 전송 성공으로 인증할 수 없으므로 여전히 최종 보고가 필요하다.
   OS 종료 후 버퍼에 남은 drain 보고는 생존을 갱신하지 않으며 후속 유효 closed 보고는 기록할 수 있다.
 - 세션 ID·코드 버전·서버·feed·파일 내용은 OS 조회만으로 인증되지 않는다.
-  운영용 시작/독점 채널 전달/재접속과 피어 보고 영속화는 별도 연결이 필요하다.
+  운영용 시작/독점 채널 전달은 별도 연결이 필요하다. 이미 신뢰가 설정된 재접속 채널의 보고 대조는 아래와 같다.
 
 API 근거: Microsoft의 [GetProcessTimes](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes),
 [실행 파일 조회](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-queryfullprocessimagenamew),
 [IsWow64Process2](https://learn.microsoft.com/en-us/windows/win32/api/wow64apiset/nf-wow64apiset-iswow64process2).
+
+#### 피어 보고 이력과 재접속 대조 — `control_tower/report_journal.py`
+
+- 세션별 전용 root의 `operations_state/peer_reports.sqlite3`에 보고를 전송하기 전에 저장한다.
+  WAL/FULL 트랜잭션으로 revision과 head를 함께 갱신한다. 동일 보고는 중복 저장하지 않으며
+  같은 revision의 내용 변경·순번 누락·다른 identity는 거부한다. 저장 실패 시 전송하지 않는다.
+- 저장 뒤 송신이 실패해도 보고는 남는다. 재개 시 같은 identity만 열 수 있으며 중단된 stop을
+  다시 실행하지 않는다. 이 저장소는 보고 outbox이며 명령 실행/재실행 큐가 아니다.
+- replay 요청은 전체 identity·관리자의 마지막 revision·페이지 한도(최대 128)를 담는다.
+  응답은 동일 identity·요청 cursor·읽기 트랜잭션 시점 head와 연속 보고를 담는다.
+  전체 프레임 32 KiB를 넘기기 전에 페이지를 자른다. 보고 하나도 담을 수 없으면 실패하며 건너뛰지 않는다.
+- `CaptureConnection.reconcile_page()`는 호출당 한 페이지만 요청한다. cursor/identity/개수/순서를
+  대조한 뒤 기존 관리자 reducer로 페이지 전체를 원자적으로 적용한다. 중간 단절·잘못된 후속 상태는
+  페이지를 부분 반영하지 않는다. 이후 호출은 저장된 마지막 revision부터 이어 간다.
+- 이력과 빈 페이지는 heartbeat가 아니다. 과거 receiving은 unknown을 유지하고, 이미 보낸 stop에
+  대응하는 유효 closed 보고만 종료 결과를 확정한다. 새로운 실시간 보고로만 생존을 갱신한다.
+- 실제 32/64비트 합성 자식이 작은 raw를 닫은 뒤, 복구한 관리자가 별도 공유 소켓으로 누락된
+  drain/closed를 받아 manifest를 대조했다. 소켓 인증·재접속 발견/예약·OS 재부팅/강제 종료 내구성은
+  별도 범위다. 피어 명령 latch는 메모리이고, 보고 이력의 장기 보존 한도와 관리자 checkpoint는 후속이다.
 
 #### raw v2 큐와 저장 워커 — `collector/kiwoom/queued_capture.py`
 
@@ -267,7 +286,8 @@ closed는 파일 마감 증거이며 파싱 오류가 없는 데이터라는 뜻
 단계별 종료는 선택 사항이고 기존 request_stop 기본 동작은 자동 마감이다. held drain은
 별도 워커에서도 최대 5초까지만 기다린다. 보고 생성기를 닫거나 제한 시간이 지나면 incomplete로
 남긴다. 송신 실패 시 호출자는 생성기를 닫아야 한다. finish/파일 닫기 실패에는 closed가 없다.
-현재는 종료 보고 연결이며 수집 중 heartbeat·콜백 backlog 보고와 피어 보고 저널은 후속이다.
+현재는 종료 보고 연결이며 수집 중 heartbeat·콜백 backlog 보고는 후속이다.
+합성 피어는 위 보고 저널을 사용하며 운영 수집기는 아직 연결하지 않았다.
 
 `scripts/probe_raw_v2_queue.py`는 새 합성 파일만 생성하는 32/64비트 점검 도구다.
 양쪽 Python에서 500콜백 → 제어 포함 501레코드 저장·종료·체크섬 재읽기를 확인했다.
@@ -317,7 +337,8 @@ OCX 로그인/요청 한도는 공유 자원으로 관리한다. 수집·메타�
    명령 이력·관리자 복구·가짜 sender의 전송 소유권·누락 보고 대조도 합성 검증했다.
    제한 시간 있는 IPC와 실제 32/64비트 합성 자식 통신도 검증했다.
    OS 식별 검증과 raw v2 종료 보고·manifest 대조도 합성 자식에서 검증했다.
-   다음은 수집 중 heartbeat/backlog, 피어 보고 영속화·재접속과 관리 대상 시작 어댑터다.
+   피어 보고 영속화와 새 소켓의 누락 보고 대조도 합성 검증했다.
+   다음은 수집 중 heartbeat/backlog와 관리 대상 시작·채널 전달 어댑터다.
 3. **장외 필요:** raw v2 큐/워커의 실제 OCX 연결, 필드/서버/venue/부호 확인, 작은 수집·종료·오류 복구 실측.
 4. **3 통과 후:** 관리 프로세스에 수집기 시작/종료를 연결하고 종료 데이터 검증을 연결한다.
 5. **종료/자원 계약 통과 후:** 저장된 재생 계획 실행, 실데이터 소규모 대조, 결과 비교 확장.

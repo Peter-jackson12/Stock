@@ -201,7 +201,7 @@ def test_os_identity_change_before_dispatch_prevents_bytes(tmp_path, pair):
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows socket sharing subprocess integration")
-@pytest.mark.parametrize("outcome", ["closed", "raw_closed", "exit_without_report"])
+@pytest.mark.parametrize("outcome", ["closed", "raw_closed", "raw_replay", "exit_without_report"])
 @pytest.mark.parametrize("environment", ["current", ".venv32"])
 def test_actual_fixture_process(tmp_path, outcome, environment):
     """Share a socket capability only with our new child; no TCP listener/OCX."""
@@ -217,6 +217,7 @@ def test_actual_fixture_process(tmp_path, outcome, environment):
         if not interpreter.exists():
             pytest.skip("optional 32-bit base interpreter unavailable")
     left, right = socket.socketpair()
+    replay_left, replay_right = socket.socketpair()
     process = subprocess.Popen(
         [str(interpreter), str(Path(__file__).parent / "fixtures" / "capture_ipc_peer.py")],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -233,15 +234,27 @@ def test_actual_fixture_process(tmp_path, outcome, environment):
                           python_bits=facts.python_bits, dataset_path=str(tmp_path / "fixture.db")))
         config = {"socket": right.share(process.pid).hex(), "report": encode_report(initial),
                   "outcome": outcome, "expected_bits": 32 if environment == ".venv32" else struct.calcsize("P") * 8}
+        if outcome == "raw_replay":
+            config["replay_socket"] = replay_right.share(process.pid).hex()
         process.stdin.write(json.dumps(config) + "\n")
         process.stdin.flush()
         right.close()  # Do not keep EOF hidden by the parent's duplicate handle.
+        replay_right.close()
         capture = CaptureHistory(tmp_path).register(initial.identity, heartbeat_timeout_ns=10**10)
         conn = CaptureConnection(capture, channel, process=guard)
         assert conn.receive()
         conn.capture.request_stop("stop", initial.identity, now_ns=time.monotonic_ns(), timeout_ns=10**10)
         conn.dispatch_stop()
-        if outcome != "exit_without_report":
+        if outcome == "raw_replay":
+            channel.close()
+            capture = CaptureHistory(tmp_path).recover(initial.identity)
+            channel = ControlChannel(replay_left, timeout=5)
+            conn = CaptureConnection(capture, channel, process=guard)
+            page = conn.reconcile_page()
+            assert len(page.reports) == 2 and page.head_revision == 3
+            with pytest.raises(ValueError, match="audit-only"):
+                conn.dispatch_stop()
+        elif outcome != "exit_without_report":
             process.wait(timeout=5)  # Intentionally read buffered reports after OS exit.
             with pytest.raises(ProcessLookupError):
                 guard.require_alive()
@@ -263,7 +276,7 @@ def test_actual_fixture_process(tmp_path, outcome, environment):
         assert state["state"] == ("unknown" if outcome == "exit_without_report" else "closed")
         assert state["stop_status"] == ("unknown" if outcome == "exit_without_report" else "completed")
         assert state["data_quality"] == "unverified"
-        if outcome == "raw_closed":
+        if outcome in ("raw_closed", "raw_replay"):
             with read_raw_v2(initial.identity.dataset_path) as (meta, rows):
                 assert len(list(rows)) == capture.report.finalization.final_seq == 3
                 assert capture.report.callback_count == 1
@@ -271,6 +284,8 @@ def test_actual_fixture_process(tmp_path, outcome, environment):
     finally:
         channel.close()
         right.close()
+        replay_left.close()
+        replay_right.close()
         if process.poll() is None:
             process.kill()  # Only this explicitly created synthetic child.
         process.communicate(timeout=5)

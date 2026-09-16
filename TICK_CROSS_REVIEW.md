@@ -40,6 +40,10 @@
   PID·생성 시각·실행 파일·비트 수 불일치로 전송이 차단되는가? 프로세스 종료 뒤 버퍼 보고를
   생존으로 오인하거나, 유효 최종 보고를 버리는가? 파싱 오류 콜백 수와 raw 수를 구분하는가?
   보고 중단·마감 대기 시간 초과·파일 닫기 실패에서 closed가 잘못 생성되는가?
+- 피어 보고 복구: `control_tower/report_journal.py`, `tests/test_report_journal.py`.
+  송신 전 저장 실패 시 전송을 막는가? 송신 실패 후 보고가 남는가? 페이지의 잘못된 후속 상태를
+  부분 반영하는가? 과거 receiving/빈 페이지를 생존으로 오인하거나 stop을 재전송하는가?
+  identity/cursor/순번/메시지 크기 제한과 다른 소켓으로 대조하는 실제 자식 테스트를 확인한다.
 - 변환: `collector/kiwoom/tick_normalizer.py`, `tests/test_tick_normalizer.py`.
   원문·결측·정책·오류가 남는가? 제공자 시각과 UTC/KST 수신 시각을 혼합하지 않는가?
 - 체결: `execution/tick_simulator.py`, `tests/test_tick_simulator.py`.
