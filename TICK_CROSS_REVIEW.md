@@ -35,6 +35,11 @@
 - 큐/저장 워커: `collector/kiwoom/queued_capture.py`, `tests/test_queued_capture.py`.
   콜백 객체 변경·큐 초과·in-flight 저장 오류·종료 경계·파일 닫기 실패를 보존하는가?
   접수 콜백 수와 저장된 raw seq를 혼동하거나 wait 시간 초과를 완료로 표시하는가?
+- OS/종료 보고: `control_tower/windows_process.py`, `collector/kiwoom/queue_control.py`,
+  `tests/test_windows_process.py`, `tests/test_queue_control.py`, `tests/test_capture_ipc.py`.
+  PID·생성 시각·실행 파일·비트 수 불일치로 전송이 차단되는가? 프로세스 종료 뒤 버퍼 보고를
+  생존으로 오인하거나, 유효 최종 보고를 버리는가? 파싱 오류 콜백 수와 raw 수를 구분하는가?
+  보고 중단·마감 대기 시간 초과·파일 닫기 실패에서 closed가 잘못 생성되는가?
 - 변환: `collector/kiwoom/tick_normalizer.py`, `tests/test_tick_normalizer.py`.
   원문·결측·정책·오류가 남는가? 제공자 시각과 UTC/KST 수신 시각을 혼합하지 않는가?
 - 체결: `execution/tick_simulator.py`, `tests/test_tick_simulator.py`.

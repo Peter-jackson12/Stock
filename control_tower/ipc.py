@@ -87,13 +87,30 @@ class CaptureConnection:
     reconnection and reconciliation; this adapter never retries a stop.
     """
 
-    def __init__(self, capture, channel, *, clock=time.monotonic_ns):
-        self.capture, self.channel, self.clock = capture, channel, clock
+    def __init__(self, capture, channel, *, clock=time.monotonic_ns, process=None):
+        self.capture, self.channel, self.clock, self.process = capture, channel, clock, process
+        if process is not None:
+            try:
+                process.verify(capture.identity)
+            except BaseException:
+                channel.close()
+                raise
 
     def receive(self):
         try:
             report = self.channel.receive_report()
-            return self.capture.receive(report, now_ns=self.clock())
+            if self.process is not None:
+                # Buffered drain/final reports remain inspectable after exit.
+                self.process.verify(report.identity, require_alive=False)
+            changed = self.capture.receive(report, now_ns=self.clock())
+            if self.process is not None and report.state not in ("closed", "failed"):
+                try:
+                    self.process.require_alive()
+                except ProcessLookupError:
+                    self.capture.lost_contact(self.capture.identity,
+                                              reason="bound process exited; final report required",
+                                              now_ns=self.clock())
+            return changed
         except BaseException:
             self.channel.close()
             self.capture.lost_contact(self.capture.identity,
@@ -102,4 +119,12 @@ class CaptureConnection:
             raise
 
     def dispatch_stop(self):
-        self.capture.dispatch_stop(self.channel.send_stop, now_ns=self.clock())
+        def send(command):
+            try:
+                if self.process is not None:
+                    self.process.verify(command.target)
+                self.channel.send_stop(command)
+            except BaseException:
+                self.channel.close()
+                raise
+        self.capture.dispatch_stop(send, now_ns=self.clock())

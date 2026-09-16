@@ -12,6 +12,8 @@ import pytest
 
 from control_tower.capture_history import CaptureHistory
 from control_tower.ipc import CaptureConnection, ControlChannel
+from control_tower.windows_process import WindowsProcess
+from collector.raw_v2 import read_raw_v2
 from control_tower.lifecycle import (
     MAX_MESSAGE_BYTES, CaptureReport, ProcessIdentity, StopCommand,
     encode_report,
@@ -177,8 +179,29 @@ def test_command_frame_cannot_be_received_as_report(tmp_path, pair):
     assert conn.capture.report is None and channel.closed
 
 
+def test_os_identity_change_before_dispatch_prevents_bytes(tmp_path, pair):
+    channel, sock = pair
+    capture = connection(tmp_path, channel).capture
+    class Guard:
+        alive = True
+        def verify(self, identity, **kwargs):
+            if not self.alive:
+                raise ProcessLookupError("bound process exited")
+    guard = Guard()
+    conn = CaptureConnection(capture, channel, process=guard)
+    capture.receive(report(), now_ns=time.monotonic_ns())
+    capture.request_stop("stop", report().identity, now_ns=time.monotonic_ns(), timeout_ns=10**10)
+    guard.alive = False
+    with pytest.raises(ProcessLookupError):
+        conn.dispatch_stop()
+    assert channel.closed and sock.recv(1) == b""
+    assert capture.view(now_ns=time.monotonic_ns())["stop_status"] == "unknown"
+    with pytest.raises(ValueError):
+        conn.dispatch_stop()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows socket sharing subprocess integration")
-@pytest.mark.parametrize("outcome", ["closed", "exit_without_report"])
+@pytest.mark.parametrize("outcome", ["closed", "raw_closed", "exit_without_report"])
 @pytest.mark.parametrize("environment", ["current", ".venv32"])
 def test_actual_fixture_process(tmp_path, outcome, environment):
     """Share a socket capability only with our new child; no TCP listener/OCX."""
@@ -201,17 +224,29 @@ def test_actual_fixture_process(tmp_path, outcome, environment):
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
     channel = ControlChannel(left, timeout=5)
+    guard = None
     try:
-        config = {"socket": right.share(process.pid).hex(), "report": encode_report(report()),
+        guard = WindowsProcess(process.pid)
+        facts = guard.facts
+        initial = replace(report(), identity=replace(report().identity, pid=facts.pid,
+                          started_at_utc=facts.started_at_utc, executable=facts.executable,
+                          python_bits=facts.python_bits, dataset_path=str(tmp_path / "fixture.db")))
+        config = {"socket": right.share(process.pid).hex(), "report": encode_report(initial),
                   "outcome": outcome, "expected_bits": 32 if environment == ".venv32" else struct.calcsize("P") * 8}
         process.stdin.write(json.dumps(config) + "\n")
         process.stdin.flush()
-        conn = connection(tmp_path, channel)
+        right.close()  # Do not keep EOF hidden by the parent's duplicate handle.
+        capture = CaptureHistory(tmp_path).register(initial.identity, heartbeat_timeout_ns=10**10)
+        conn = CaptureConnection(capture, channel, process=guard)
         assert conn.receive()
-        conn.capture.request_stop("stop", report().identity, now_ns=time.monotonic_ns(), timeout_ns=10**10)
+        conn.capture.request_stop("stop", initial.identity, now_ns=time.monotonic_ns(), timeout_ns=10**10)
         conn.dispatch_stop()
-        if outcome == "closed":
+        if outcome != "exit_without_report":
+            process.wait(timeout=5)  # Intentionally read buffered reports after OS exit.
+            with pytest.raises(ProcessLookupError):
+                guard.require_alive()
             assert conn.receive()  # draining acknowledgement
+            assert capture.view(now_ns=time.monotonic_ns())["state"] == "unknown"
             assert conn.receive()  # explicit fixture finalization
             right.close()
             with pytest.raises(EOFError):
@@ -225,12 +260,19 @@ def test_actual_fixture_process(tmp_path, outcome, environment):
         assert process.returncode == 0, stderr
         assert stdout == ""
         state = conn.capture.view(now_ns=time.monotonic_ns())
-        assert state["state"] == ("closed" if outcome == "closed" else "unknown")
-        assert state["stop_status"] == ("completed" if outcome == "closed" else "unknown")
+        assert state["state"] == ("unknown" if outcome == "exit_without_report" else "closed")
+        assert state["stop_status"] == ("unknown" if outcome == "exit_without_report" else "completed")
         assert state["data_quality"] == "unverified"
+        if outcome == "raw_closed":
+            with read_raw_v2(initial.identity.dataset_path) as (meta, rows):
+                assert len(list(rows)) == capture.report.finalization.final_seq == 3
+                assert capture.report.callback_count == 1
+                assert meta["payload_sha256"] == capture.report.finalization.payload_sha256
     finally:
         channel.close()
         right.close()
         if process.poll() is None:
             process.kill()  # Only this explicitly created synthetic child.
         process.communicate(timeout=5)
+        if guard is not None:
+            guard.close()

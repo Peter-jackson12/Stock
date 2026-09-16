@@ -222,10 +222,26 @@ UI·운영 프로세스 연결은 별도 단계다. 합성 피어의 실제 IPC 
   보고 단절·잘못된 세션·프로토콜 오류는 연결을 닫고 불확실성을 기록한다.
   이미 기록한 유효 closed 보고는 이후 EOF로 취소하지 않는다.
 - Windows 테스트는 새 32/64비트 Python 자식에게만 socket.share로 소켓 접근 권한을 전달한다.
-  응답 없는 프로세스 정상 종료도 unknown이다. 테스트 식별자와 종료 체크섬은 합성이며,
-  실제 raw 저장·OS 생성 시각 검증·인증된 프로세스 시작/재접속을 검증한 것이 아니다.
+  부모와 자식이 OS 식별을 대조하고, 작은 합성 raw 파일의 실제 저장·닫기·체크섬을 확인한다.
+  응답 없는 프로세스 정상 종료도 unknown이다. 운영 수집기 시작/재접속 검증은 아니다.
 - 이 모듈은 인증·프로세스 생성/검색/인수 API가 아니다. 공개/무인증 리스너에 직접 연결하지 않는다.
-  운영 프로세스의 PID·생성 시각·실행 파일 검증과 재접속 시 누락 보고 대조는 후속 어댑터에서 연결한다.
+  신뢰하는 소켓의 독점 전달과 세션/코드/데이터 경로 승인은 호출자가 담당한다.
+
+#### Windows 프로세스 식별 — `control_tower/windows_process.py`
+
+- 조회·상태 확인 권한으로 대상 핸들을 유지한다. PID·OS 생성 시각·실행 파일·비트 수를
+  `ProcessIdentity`와 대조한다. PID를 다시 열어 다른 프로세스로 바꾸거나 종료시키는 API는 없다.
+- 생성 시각은 정수 FILETIME에서 Python 3.10과 호환되는 UTC 마이크로초 형식으로 변환한다.
+  프로세스 핸들을 연결 수명 동안 유지하며 사용 후 닫는다. 접근 거부/지원하지 않는 아키텍처는 실패한다.
+- `CaptureConnection(process=...)`은 연결 시와 실제 stop 전송 직전에 검증한다.
+  조회 직후 종료되는 경쟁은 전송 성공으로 인증할 수 없으므로 여전히 최종 보고가 필요하다.
+  OS 종료 후 버퍼에 남은 drain 보고는 생존을 갱신하지 않으며 후속 유효 closed 보고는 기록할 수 있다.
+- 세션 ID·코드 버전·서버·feed·파일 내용은 OS 조회만으로 인증되지 않는다.
+  운영용 시작/독점 채널 전달/재접속과 피어 보고 영속화는 별도 연결이 필요하다.
+
+API 근거: Microsoft의 [GetProcessTimes](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes),
+[실행 파일 조회](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-queryfullprocessimagenamew),
+[IsWow64Process2](https://learn.microsoft.com/en-us/windows/win32/api/wow64apiset/nf-wow64apiset-iswow64process2).
 
 #### raw v2 큐와 저장 워커 — `collector/kiwoom/queued_capture.py`
 
@@ -239,7 +255,19 @@ UI·운영 프로세스 연결은 별도 단계다. 합성 피어의 실제 IPC 
   파일은 incomplete로 둔다. 이미 받은 후속 콜백은 오류 제어 레코드 안에 원문을 보존한다.
   저장 실패 시 queued/in-flight/미확인 커밋 수를 남기며 새 파일/세션 없이 재사용하지 않는다.
 - 콜백 수와 raw 공통 seq는 다르다. session_start/parse_error 등도 raw seq를 사용한다.
-  이 스냅샷을 제어 프로토콜의 accepted_seq로 바로 복사하면 안 된다. 제어 보고 어댑터는 후속이다.
+  콜백 큐 크기를 제어 프로토콜의 accepted_seq로 바로 복사하면 안 된다.
+
+`queue_control.py`의 `QueueStopReports`는 종료 보고를 연결한다. 입력을 멈추고 모든 콜백의
+정규화·커밋이 끝난 뒤 실제 raw 순번으로 draining을 생성한다. 이 보고를 보낸 뒤 finalize를
+허용하고 SQLite 닫기까지 성공해야 실제 manifest의 순번·close 경계·체크섬을 closed로 보고한다.
+저장 대기 중에는 stop이 pending이며, 아직 확정되지 않은 raw 수를 추정한 조기 ack는 만들지 않는다.
+콜백 1건에 파싱 오류가 있으면 session_start/체결/parse_error를 합친 raw 3건으로 보고한다.
+closed는 파일 마감 증거이며 파싱 오류가 없는 데이터라는 뜻이 아니다.
+
+단계별 종료는 선택 사항이고 기존 request_stop 기본 동작은 자동 마감이다. held drain은
+별도 워커에서도 최대 5초까지만 기다린다. 보고 생성기를 닫거나 제한 시간이 지나면 incomplete로
+남긴다. 송신 실패 시 호출자는 생성기를 닫아야 한다. finish/파일 닫기 실패에는 closed가 없다.
+현재는 종료 보고 연결이며 수집 중 heartbeat·콜백 backlog 보고와 피어 보고 저널은 후속이다.
 
 `scripts/probe_raw_v2_queue.py`는 새 합성 파일만 생성하는 32/64비트 점검 도구다.
 양쪽 Python에서 500콜백 → 제어 포함 501레코드 저장·종료·체크섬 재읽기를 확인했다.
@@ -288,7 +316,8 @@ OCX 로그인/요청 한도는 공유 자원으로 관리한다. 수집·메타�
 2. **구현/합성 검증:** 관리 대상 식별/명령/응답 계약, 가짜 피어의 종료·이전 세션 메시지 차단.
    명령 이력·관리자 복구·가짜 sender의 전송 소유권·누락 보고 대조도 합성 검증했다.
    제한 시간 있는 IPC와 실제 32/64비트 합성 자식 통신도 검증했다.
-   다음은 OS 식별을 검증하는 프로세스 어댑터와 raw v2 제어 보고 연결이다.
+   OS 식별 검증과 raw v2 종료 보고·manifest 대조도 합성 자식에서 검증했다.
+   다음은 수집 중 heartbeat/backlog, 피어 보고 영속화·재접속과 관리 대상 시작 어댑터다.
 3. **장외 필요:** raw v2 큐/워커의 실제 OCX 연결, 필드/서버/venue/부호 확인, 작은 수집·종료·오류 복구 실측.
 4. **3 통과 후:** 관리 프로세스에 수집기 시작/종료를 연결하고 종료 데이터 검증을 연결한다.
 5. **종료/자원 계약 통과 후:** 저장된 재생 계획 실행, 실데이터 소규모 대조, 결과 비교 확장.

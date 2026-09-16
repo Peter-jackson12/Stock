@@ -6,7 +6,9 @@ Overflow interrupts capture; queued input and an error marker are drained, but
 the file remains incomplete. Actual callback latency/load still needs measurement.
 """
 from collections import deque
+from datetime import datetime, timezone
 import json
+from pathlib import Path
 import threading
 
 from collector.kiwoom.capture_session import CaptureSession
@@ -23,6 +25,8 @@ class QueuedCapture:
         if type(started_ns) is not int or started_ns < 0:
             raise ValueError("explicit nonnegative started_ns required")
         self._path, self._options, self._factory = path, dict(session_options), session_factory
+        self._dataset_path = str(Path(path).resolve())
+        self._path = self._dataset_path
         self._capacity, self._batch_size, self._max_bytes = capacity, batch_size, max_packet_bytes
         self._condition = threading.Condition()
         self._queue = deque()
@@ -32,9 +36,13 @@ class QueuedCapture:
         self._accepting = self._stopping = self._interrupted = False
         self._terminal = None
         self._close_ns = None
+        self._hold_finalize = False
+        self._finalize_allowed = False
+        self._last_commit_at_utc = self._committed_last_ns = self._finalization = None
+        self._writer_closed = False
         self._last_ns = started_ns
         self._accepted = self._committed = self._dropped = self._committed_seq = 0
-        self.ready, self.done = threading.Event(), threading.Event()
+        self.ready, self.done, self.drained = threading.Event(), threading.Event(), threading.Event()
 
     def start(self):
         with self._condition:
@@ -88,17 +96,34 @@ class QueuedCapture:
             self._condition.notify_all()
             return True
 
-    def request_stop(self, close_ns):
+    def request_stop(self, close_ns, *, hold_finalize=False):
         """Stop acceptance atomically; completion is reported only after worker close."""
         with self._condition:
+            if type(hold_finalize) is not bool:
+                raise ValueError("explicit hold_finalize boolean required")
             if self._stopping and self._close_ns == close_ns and not self._interrupted:
+                if hold_finalize != self._hold_finalize:
+                    raise ValueError("cannot change finalization mode")
                 return
             if not self._accepting:
                 raise ValueError("capture cannot be finalized")
             if type(close_ns) is not int or close_ns <= self._last_ns:
                 raise ValueError("exclusive close boundary must follow all accepted input")
             self._close_ns = close_ns
+            self._hold_finalize = hold_finalize
             self._accepting, self._stopping, self._state = False, True, "draining"
+            self._condition.notify_all()
+
+    def complete_stop(self):
+        """Release a held, fully committed drain after its report was sent.
+
+        The worker waits at most five seconds; a missing release leaves an
+        incomplete file. This is not a retry/restart API.
+        """
+        with self._condition:
+            if not self._hold_finalize or not self.drained.is_set() or self._state != "draining" or self._interrupted:
+                raise ValueError("held clean drain required")
+            self._finalize_allowed = True
             self._condition.notify_all()
 
     def snapshot(self):
@@ -107,7 +132,17 @@ class QueuedCapture:
                         accepted_callbacks=self._accepted, committed_callbacks=self._committed,
                         queued=len(self._queue), in_flight=len(self._batch), dropped_callbacks=self._dropped,
                         pending_callbacks=self._accepted - self._committed,
-                        committed_seq=self._committed_seq, data_quality="unverified")
+                        committed_seq=self._committed_seq, data_quality="unverified",
+                        dataset_path=self._dataset_path, session_id=self._options["session_id"],
+                        feed_scope=self._options["feed_scope"], last_event_ns=self._committed_last_ns,
+                        last_commit_at_utc=self._last_commit_at_utc, writer_closed=self._writer_closed,
+                        finalization=None if self._finalization is None else dict(self._finalization))
+
+    def _record_commit(self, session):
+        # Worker only, under the condition lock, after a successful commit.
+        self._committed_seq = session.writer.count
+        self._committed_last_ns = session.writer.last_ns
+        self._last_commit_at_utc = datetime.now(timezone.utc).isoformat()
 
     def abort(self, reason="capture aborted"):
         """Request incomplete shutdown, including while writer startup is pending."""
@@ -128,7 +163,7 @@ class QueuedCapture:
         try:
             with self._factory(self._path, **self._options) as session:
                 with self._condition:
-                    self._committed_seq = session.writer.count
+                    self._record_commit(session)
                     if not self._stopping:
                         self._state, self._accepting = "running", True
                     self.ready.set()
@@ -153,17 +188,31 @@ class QueuedCapture:
                     session.commit()
                     with self._condition:
                         self._committed += len(batch)
-                        self._committed_seq = session.writer.count
+                        self._record_commit(session)
                         self._batch = []
                 if self._terminal is not None:
                     session.control(*self._terminal)
                     session.commit()
                     with self._condition:
-                        self._committed_seq = session.writer.count
+                        self._record_commit(session)
                 if not self._interrupted:
-                    session.finish(self._close_ns)
+                    with self._condition:
+                        self.drained.set()
+                        if self._hold_finalize:
+                            released = self._condition.wait_for(
+                                lambda: self._finalize_allowed or self._interrupted, timeout=5)
+                            if not released:
+                                self._interrupted = True
+                                self._error = "finalization release timed out"
+                    if not self._interrupted:
+                        session.finish(self._close_ns)
             # Publish closed only after SQLite context exit also succeeds.
             with self._condition:
+                self._writer_closed = True
+                if not self._interrupted:
+                    self._finalization = dict(final_seq=session.writer.meta["event_count"],
+                                              close_ns=session.writer.meta["close_ns"],
+                                              payload_sha256=session.writer.meta["payload_sha256"])
                 self._state = "interrupted" if self._interrupted else "closed"
         except BaseException as exc:
             with self._condition:
