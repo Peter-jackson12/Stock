@@ -1,16 +1,17 @@
-# 작업 원칙
+# Working agreements
 
-`git status --short`로 사용자 변경을 확인하고 [HANDOFF의 현재 인계](HANDOFF.md)를 읽는다.
-상세 문서는 [README의 문서 찾기](README.md)에서 필요한 것만 선택한다.
+Check user changes with `git status --short`, then read the current handoff in [HANDOFF.md](HANDOFF.md).
+Use the documentation index in [README.md](README.md) to select only the details needed for the task.
 
-- 요청한 목표 안에서 구현 방법과 순서를 자율적으로 정하고, 독립적으로 가능한 작업은 끝까지 진행한다.
-  일상적인 코드·문서 수정과 합성 검증에 재확인을 요구하지 않는다. 막힌 항목은 분리하고 나머지를 진행한다.
-- 주 경로는 원본 틱 재생이다. LOB/초봉 변환은 기본 선행 작업이 아니다.
-- `sampledata/Daily_baseline`, `sampledata/old_data`, 원본 수집 데이터와 사용자 변경을 보존한다.
-- 수집 중에는 가벼운 코드·문서 작업, 작은 합성 테스트와 짧은 관측만 한다.
-  수집기 재시작/교체, 추가 OCX 로그인, 운영 DB 대량 처리·전체 백테스트·부하 측정은 장외 검증으로 남긴다.
-- 문서의 완료 표시나 PID·로그·파일 존재만으로 정상 종료·저장 완료·데이터 정확성을 확정하지 않는다.
-  코드와 관련 테스트로 확인하고, 미확인 값은 미확인으로 둔다.
-- 관련된 작은 테스트로 변경을 검증한다. 합성 검증과 운영 적용·실데이터 검증을 구분해 보고한다.
-- 완료 시 HANDOFF의 현재 상태·다음 작업을 갱신하고 로컬 커밋까지 정리한다. 푸시는 사용자가 한다.
-  상세 계약은 담당 문서 한 곳에 두고, 새 문서는 README에 연결한다.
+- Choose implementation and task order autonomously within the requested scope; finish work that can proceed independently.
+  Do not seek reconfirmation for routine code, documentation, or synthetic tests. Isolate blockers and continue other work.
+- The primary path is raw tick replay. LOB/one-second bar conversion is not a default prerequisite.
+- Preserve `sampledata/Daily_baseline`, `sampledata/old_data`, original capture data, and user changes.
+- While capture is running, limit work to lightweight code/docs, small synthetic tests, and brief observations.
+  Defer collector restarts/replacement, additional OCX logins, bulk production DB processing, full backtests, and load tests to off-hours validation.
+- Do not infer clean shutdown, completed persistence, or data correctness from completion claims in docs, PIDs, logs, or file existence alone.
+  Check code and relevant tests; keep unknown values unknown.
+- Validate changes with small relevant tests. Report synthetic validation separately from production deployment and real-data validation.
+- On completion, update HANDOFF with current status and next steps, then commit locally. The user handles pushes.
+  Keep each detailed contract in its owning document and link new documents from README.
+- Respond to the user in Korean unless requested otherwise. Keep shared human-facing documentation in Korean.

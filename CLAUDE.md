@@ -1,3 +1,3 @@
-# Claude 작업 시작점
+# Claude entry point
 
-공통 지침은 [AGENTS.md](AGENTS.md)를 따른다.
+Follow the shared instructions in [AGENTS.md](AGENTS.md).

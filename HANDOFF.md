@@ -13,6 +13,8 @@
 - 에이전트 지침의 중복 경로·절차를 줄이고 범위 내 자율 수행을 명시했다.
   정리 근거: [OpenAI의 간결한 AGENTS 안내](https://learn.chatgpt.com/guides/best-practices), [자율 수행·지침 충돌 점검](https://developers.openai.com/api/docs/guides/latest-model).
   기존 인계는 [보관본](docs/archive/HANDOFF_20260916.md)에 관측 시각·검증 수치와 함께 보존했다.
+- 후속 문서 변경: AI 전용 `AGENTS.md`·`CLAUDE.md`를 영어로 변환했다. 기존 제약과 자율 수행 범위는
+  유지하고 사용자 응답·공용 문서는 한국어로 명시했다. 의미·링크·diff만 확인했으며 코드 테스트는 재실행하지 않았다.
 
 ## 운영 범위
 
