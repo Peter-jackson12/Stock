@@ -24,12 +24,17 @@ class QueueStopReports:
             raise ValueError("queue/session identity mismatch")
         self.queue, self.identity = queue, identity
         self.receiver = StopReceiver(identity)
+        self._started = False
 
     def stop(self, command, previous, *, close_ns, timeout=5):
+        """command=None denotes local shutdown, without a remote stop acknowledgement."""
         if isinstance(timeout, bool) or not isinstance(timeout, (float, int)) or not math.isfinite(timeout) or not 0 < timeout <= 5:
             raise ValueError("stop report timeout must be in (0, 5] seconds")
-        if not self.receiver.accept(command, previous):
+        if previous.identity != self.identity:
+            raise ValueError("previous report identity mismatch")
+        if self._started or (command is not None and not self.receiver.accept(command, previous)):
             raise ValueError("stop already accepted; cannot re-execute")
+        self._started = True
         deadline = time.monotonic() + timeout
         completed = False
         try:
@@ -49,7 +54,8 @@ class QueueStopReports:
                 callback_count=snapshot["accepted_callbacks"], accepted_seq=snapshot["committed_seq"],
                 committed_seq=snapshot["committed_seq"], queued=0, in_flight=0,
                 last_event_ns=snapshot["last_event_ns"], last_commit_at_utc=snapshot["last_commit_at_utc"],
-                input_stopped=True, writer_closed=False, stop_request_id=command.request_id)
+                input_stopped=True, writer_closed=False,
+                stop_request_id=None if command is None else command.request_id)
             yield draining
             if time.monotonic() >= deadline:
                 raise TimeoutError("stop report deadline exceeded")

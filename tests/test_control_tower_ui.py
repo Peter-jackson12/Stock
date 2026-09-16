@@ -34,6 +34,18 @@ def test_initial_screen_never_starts_worker_or_creates_jobs(tmp_path, monkeypatc
     assert not calls and not JobStore(tmp_path).path.exists()
 
 
+def test_raw_session_panel_separates_callback_and_raw_counts(tmp_path, monkeypatch):
+    monkeypatch.setattr(ui, "observe_raw_capture", lambda root: dict(status="stale", age_seconds=100,
+        payload=dict(identity=dict(session_id="fixture", dataset_path="C:/fixture/raw.db"), error=None,
+        snapshot=dict(accepted_callbacks=1, committed_seq=3, pending_callbacks=0, state="closed", error=None))))
+    app = screen(tmp_path)
+    assert not app.exception
+    metrics = {item.label: item.value for item in app.metric}
+    assert metrics["접수 콜백"] == "1" and metrics["커밋 raw 레코드"] == "3"
+    assert any("미확인" in item.value for item in app.warning)
+    assert not JobStore(tmp_path).path.exists()
+
+
 def test_result_request_and_failed_research_warning(tmp_path, monkeypatch):
     path = tmp_path / "research_runs/fixture/result.json"
     path.parent.mkdir(parents=True)

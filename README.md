@@ -11,7 +11,8 @@ LOB/초봉 변환은 레거시 회귀용이고 틱 재생의 선행 조건이 �
 
 - **운영 화면:** 로그 관측, 결과 조회 워커, 장외 재생 계획 저장·취소, 작업 이력.
 - **수집 제어 계약:** 종료 명령·이력·관리자 복구, OS 프로세스 식별·제한 시간 IPC·raw v2 종료 보고의 합성 검증.
-- **남은 운영 연결:** 실제 raw v2 콜백·큐, 수집기 시작/종료 제어, 장외 재생 실행, 원격 인증, 주문 기능.
+- **운영 수집기:** 새 실행의 기본 raw v2 콜백·큐·종료 보고와 상태 관측 연결. 실피드 부하/품질 검증은 남아 있다.
+- **남은 운영 연결:** 화면의 수집 시작/종료 제어, 장외 재생 실행, 원격 인증, 주문 기능.
 
 합성 테스트 통과를 운영 적용이나 실제 데이터 정확성 확인으로 해석하지 않는다.
 현재 수집이 계속되는지는 시각이 붙은 최신 관측으로 확인한다.
@@ -53,7 +54,7 @@ LOB/초봉 변환은 레거시 회귀용이고 틱 재생의 선행 조건이 �
 - `control_tower/`, `dashboard/`: 작업 관리·제어 계약·운영/분석 화면. `.venv`를 사용한다.
 - `engine/`, `execution/`, `strategies/`: 이벤트 재생·가상 체결·전략.
 - `scripts/`, `tests/`: 명시적 실행 도구와 검증.
-- `sampledata/raw_ticks/`: 현재 raw v1. `sampledata/raw_ticks_v2/`: 새 형식용 경로, 운영 연결 미적용.
+- `sampledata/raw_ticks/`: 기존 raw v1 보존. `sampledata/raw_ticks_v2/YYYYMMDD/`: 새 운영 실행의 세션별 raw v2.
 - `research_runs/`: 새 틱 연구 JSON. `runs/`: 기존 Trade/성과 분석 런. 두 결과 계약은 아직 별개다.
 - `operations_state/`: 경량 작업 이력. 수집 DB와 분리하며 Git에 넣지 않는다.
 - `sampledata/Daily_baseline`, `sampledata/old_data`: 보존 대상.

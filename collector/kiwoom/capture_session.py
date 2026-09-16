@@ -2,7 +2,8 @@
 
 All stamps must be taken by the caller at callback entry. This class performs
 SQLite I/O and must not be dropped into a live Qt callback. QueuedCapture owns it
-on a dedicated worker; actual OCX wiring and latency tests remain prerequisites.
+on a dedicated worker; the OCX caller submits raw inputs to that queue. Actual
+callback latency and full-universe load still require measurement.
 """
 from collector.raw_v2 import RawV2Writer, CaptureControl
 from collector.kiwoom.tick_normalizer import normalize_tick

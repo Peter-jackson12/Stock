@@ -6,7 +6,7 @@ import streamlit as st
 
 from control_tower.jobs import JobStore
 from control_tower.service import queue_inspection, plan_replay, start_inspection_worker
-from control_tower.status import observe_collector
+from control_tower.status import observe_collector, observe_raw_capture
 
 ROOT = Path(__file__).resolve().parents[1]
 JOB_STATUS = {"planned": "장외 계획 · 실행 미연결", "queued": "조회 대기", "running": "조회 중 · 상태 확인 필요 시 이력 보존",
@@ -20,12 +20,29 @@ def render_control_tower(root=None):
     if st.button("상태 새로고침", key="control_refresh"):
         st.rerun()
     observation = observe_collector(root)
+    raw = observe_raw_capture(root)
+    if "payload" in raw:
+        payload = raw["payload"]
+        snapshot = payload["snapshot"]
+        st.subheader("raw v2 수집 세션")
+        columns = st.columns(3)
+        columns[0].metric("접수 콜백", f"{snapshot['accepted_callbacks']:,}")
+        columns[1].metric("커밋 raw 레코드", f"{snapshot['committed_seq']:,}")
+        columns[2].metric("미커밋 콜백", f"{snapshot['pending_callbacks']:,}")
+        st.caption(f"보고 상태 {snapshot['state']} · 갱신 경과 {raw['age_seconds']}초 · 세션 {payload['identity']['session_id']}")
+        st.text(payload["identity"]["dataset_path"])
+        if payload["error"] or snapshot["state"] in ("failed", "interrupted"):
+            st.error(f"수집 오류/중단: {payload['error'] or snapshot['error']}")
+        elif raw["status"] != "recent":
+            st.warning("상태 파일이 오래됐거나 시각 확인이 필요합니다. 현재 수집기 생존은 미확인입니다.")
+        st.caption("콜백 수와 raw 수는 다릅니다. 상태 파일은 관측 자료이며 프로세스 생존·데이터 품질 인증이 아닙니다.")
     st.subheader("오늘 수집")
     heartbeat = observation["heartbeat"]
     if heartbeat:
         columns = st.columns(3)
-        columns[0].metric("로그상 체결 적재", f"{heartbeat['trades']:,}")
-        columns[1].metric("로그상 호가 적재", f"{heartbeat['quotes']:,}")
+        label = "수신" if heartbeat.get("counts_kind") == "callbacks" else "적재"
+        columns[0].metric(f"로그상 체결 {label}", f"{heartbeat['trades']:,}")
+        columns[1].metric(f"로그상 호가 {label}", f"{heartbeat['quotes']:,}")
         columns[2].metric("대기 큐", f"{heartbeat['queue']:,}")
         st.caption(f"마지막 하트비트 {heartbeat['time']} · 경과 {observation['age_seconds']}초")
     if observation["status"] == "recent":
@@ -130,7 +147,7 @@ def render_control_tower(root=None):
 
     with connections_tab:
         st.markdown("""- **키움 수집:** 로그 관측 연결. 프로세스 시작·정상 종료 제어 미연결.
-- **raw v2:** 종료 파일의 재생 계획 저장. 운영 수집기 전환 미적용.
+- **raw v2:** 운영 수집기 기본 저장 경로와 상태 관측 연결. 실피드 부하·품질 검증은 별도.
 - **연구 결과:** 별도 경량 워커로 조회 가능. 수익률·총자산을 새로 계산하지 않음.
 - **기존 백테스트 분석:** 왼쪽 화면 선택에서 분석으로 이동.
 - **일봉·메타데이터:** 개별 파일럿 유지. 자동 작업 연결 미완료.

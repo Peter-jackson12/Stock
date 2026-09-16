@@ -20,10 +20,38 @@ uv sync
 .\.venv32\Scripts\python.exe collector/kiwoom/kiwoom_universe_logger.py
 ```
 
-현재 수집기는 raw v1 형식이다. raw v2 콜백/큐 연결은 미적용이며 컨트롤 타워의 시작 버튼도 아직 없다.
-새 `queued_capture.py`는 합성 입력의 전용 저장 워커까지 구현했다. OCX를 쓰지 않는 32/64비트
-연결 점검은 `scripts/probe_raw_v2_queue.py`로 실행하며, 새 파일을 `operations_state/queue_probes/`에 만든다.
-실제 콜백 필드·지연·부하를 확인하기 전 기존 수집기를 이 코드로 교체하지 않는다.
+사용자의 운영 적용 요청에 따라 위 진입점의 기본 저장 방식을 **raw v2**로 변경했다.
+변경 후 새로 실행한 세션부터 적용되며 실행 중인 프로세스를 교체하지 않는다.
+`sampledata/raw_ticks_v2/YYYYMMDD/session_id.db`에 새 파일을 만들고 기존 raw v1 파일은 열지 않는다.
+`--storage raw-v1`을 지정한 경우에만 예전 날짜별 저장 경로를 사용한다.
+운영 화면은 상태 관측까지 연결했으며 화면의 시작/종료 버튼과 운영 IPC 제어는 아직 없다.
+
+```powershell
+# 로그인/OCX 객체 생성 없이 32비트 환경과 OCX 등록만 확인
+.\.venv32\Scripts\python.exe collector/kiwoom/kiwoom_universe_logger.py --preflight
+
+# OCX 없이 운영 백엔드에 합성 콜백 20건을 넣어 저장/종료/체크섬 확인
+.\.venv32\Scripts\python.exe scripts/probe_live_capture.py
+
+# 실피드 최초 확인용: 중복 접속이 없을 때 한 종목, 최대 60초
+.\.venv32\Scripts\python.exe collector/kiwoom/kiwoom_universe_logger.py --codes 005930 --duration-seconds 60
+```
+
+- 기본 실행은 기존 유니버스와 15:35 종료 조건을 사용한다. 제한 시간 옵션은 1~10종목 명시 시에만
+  1~300초로 허용한다. 장외 제한 실행도 실제 로그인이며 체결이 없으면 실피드 검증이 되지 않는다.
+- CLI는 OCX 생성 전 같은 체크아웃의 단일 수집 잠금을 획득한다. 남은 lock 파일 자체로 생존을
+  판정하지 않는다. 다른 앱/체크아웃의 브로커 로그인 공존까지 보장하는 잠금은 아니다.
+- 로그인 후 실제 서버 응답이 0/1인지 확인하고 미확인은 중단한다. 콜백 진입 시 단조/UTC 시각을
+  잡고 원문 FID를 Qt 스레드에서 추출한다. 누적 거래대금 FID 14로 방향을 추정하지 않는다.
+  방향과 venue는 unknown, 가격 부호 처리는 명시된 signed_magnitude 정책이며 원문은 그대로 남는다.
+- 큐 8,192콜백·워커 배치 최대 512콜백으로 저장한다. 큐 초과·FID 조회 예외·연결 단절·구독 거부는
+  중단하고 정상 완료로 기록하지 않는다. 파싱 불가 값은 원문과 품질 오류 레코드로 남긴다.
+- `operations_state/capture_sessions/session_id/`에 보고 저널·상태를 남긴다.
+  `operations_state/capture_status.json`은 약 5초마다 갱신하는 최신 관측 사본이다.
+  운영 화면은 최대 64 KiB의 이 파일만 읽으며 raw DB를 스캔하지 않는다.
+- 실제 32비트 환경/OCX 등록 확인과 합성 백엔드 검증을 통과했다. 추가 로그인·실피드 수집은
+  실행하지 않았으므로 실피드 의미·전 종목 부하·지연·공급자 무누락 확인은 남아 있다.
+  기존 큐 단독 점검 `scripts/probe_raw_v2_queue.py`도 계속 사용할 수 있다.
 KIS `collector/run_daily_daemon.py`는 별도 프로그램으로 같은 날짜 raw 경로를 사용하므로
 키움 후처리를 하려고 함께 실행하지 않는다. 현재 수집기는 메타데이터나 백테스트를 자동 실행하지 않는다.
 
@@ -77,6 +105,15 @@ shares·시가총액·유통비율을 수신한다. 현재 자동 실행/운영 
 [요청·응답 메서드와 이벤트 명세](https://download.kiwoom.com/web/openapi/kiwoom_openapi_plus_devguide_ver_1.7.pdf).
 
 ### 틱 수집기 종료와 저장 확인
+
+- 기본 raw v2는 수신 중단 → 모든 콜백 정규화/커밋 → draining 보고 저장 → manifest 마감 및 파일 닫기
+  → closed 보고 저장 순서다. 로컬 종료에는 원격 stop 수락 ID를 만들어 붙이지 않는다.
+- `raw v2 저장 완료`와 세션 상태/보고를 대조한다. raw 레코드는 session_start/parse_error도 포함하므로
+  콜백 건수와 다르다. 저장 완료는 데이터 품질 합격이 아니다. 최초 실피드의 전체 체크섬은 장외에 검증한다.
+- 실패/제한 시간 초과에는 종료 코드 2와 진단을 남긴다. 아직 저장 워커가 살아 있으면 단일 수집 잠금을
+  유지한 채 기다린다. 강제 종료·전원 장애 내구성은 별도 실측 대상이다.
+
+아래는 `--storage raw-v1` 호환 모드의 종료 확인이다.
 
 - Ctrl+C 또는 15:35 자동 종료 시 수신을 멈추고 대기큐와 저장 중인 배치를
   끝까지 커밋한 뒤 종료한다. `종료 후 미커밋: 0 건`과 `DB 저장 결과: 커밋 완료`를 확인한다.

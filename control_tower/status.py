@@ -2,6 +2,9 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import re
+import json
+
+from control_tower.lifecycle import ProcessIdentity, Finalization
 
 KST = timezone(timedelta(hours=9))
 MAX_LOG_BYTES = 64 * 1024
@@ -38,7 +41,8 @@ def observe_collector(root, *, now=None):
                 counts = [int(x.replace(",", "")) for x in match.groups()[1:]]
             except ValueError:
                 continue  # a damaged line must not break the entire operations screen
-            samples.append(dict(time=stamp.isoformat(), trades=counts[0], quotes=counts[1], queue=counts[2]))
+            samples.append(dict(time=stamp.isoformat(), trades=counts[0], quotes=counts[1], queue=counts[2],
+                                counts_kind="callbacks" if "수신 콜백" in line else "legacy_rows"))
     observation["recent_messages"] = [line for line in lines if any(
         marker in line for marker in ("실패", "오류", "침묵", "적체", "종료"))][-5:]
     if not samples:
@@ -47,3 +51,49 @@ def observe_collector(root, *, now=None):
     age = (now - datetime.fromisoformat(latest["time"])).total_seconds()
     return observation | dict(status="clock_ahead" if age < -5 else "recent" if age <= 180 else "stale",
                               heartbeat=latest, age_seconds=round(age, 1))
+
+
+def observe_raw_capture(root, *, now=None):
+    """Read one bounded status file, not raw DBs; no liveness/quality attestation."""
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        raise ValueError("timezone-aware observation time required")
+    path = Path(root) / "operations_state" / "capture_status.json"
+    result = dict(status="unavailable", path=str(path), process_state="unverified", data_quality="unverified")
+    try:
+        with path.open("rb") as stream:
+            data = stream.read(MAX_LOG_BYTES + 1)
+        if len(data) > MAX_LOG_BYTES:
+            raise ValueError("status file exceeds size limit")
+        payload = json.loads(data)
+        if payload["status_schema"] != "raw_capture_status_v1" or payload["control_heartbeat"] is not False:
+            raise ValueError("unsupported status schema")
+        identity = ProcessIdentity(**payload["identity"])
+        stamp = datetime.fromisoformat(payload["observed_at_utc"].replace("Z", "+00:00"))
+        if stamp.utcoffset() != timedelta(0):
+            raise ValueError("explicit UTC observation required")
+        snap = payload["snapshot"]
+        for error in (payload["error"], snap["error"]):
+            if error is not None and not isinstance(error, str):
+                raise ValueError("invalid status error")
+        if (snap["session_id"] != identity.session_id or snap["dataset_path"] != identity.dataset_path
+                or snap["feed_scope"] != identity.feed_scope):
+            raise ValueError("status identity mismatch")
+        for key in ("accepted_callbacks", "committed_callbacks", "queued", "in_flight", "pending_callbacks", "dropped_callbacks", "committed_seq"):
+            if type(snap[key]) is not int or snap[key] < 0:
+                raise ValueError("invalid status counter")
+        if (snap["accepted_callbacks"] - snap["committed_callbacks"] != snap["pending_callbacks"]
+                or snap["queued"] + snap["in_flight"] != snap["pending_callbacks"]):
+            raise ValueError("status callback accounting mismatch")
+        if snap["state"] not in ("starting", "running", "draining", "closed", "interrupted", "failed"):
+            raise ValueError("unknown status state")
+        if snap["state"] == "closed":
+            final = Finalization(**snap["finalization"])
+            if (snap["writer_closed"] is not True or snap["pending_callbacks"] or snap["dropped_callbacks"]
+                    or final.final_seq != snap["committed_seq"]):
+                raise ValueError("inconsistent closed status")
+        age = (now - stamp).total_seconds()
+        return result | dict(status="clock_ahead" if age < -5 else "recent" if age <= 30 else "stale",
+                             age_seconds=round(age, 1), payload=payload)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        return result | {"reason": str(exc)}

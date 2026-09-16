@@ -1,9 +1,9 @@
 """
-키움증권 Open API+ 순수 보통주(~2,550개) 실시간 체결 및 10호가 LOB 수집 엔진 (32비트 전용)
-- 코스피 / 코스닥 보통주 자동 선별 (우선주, ETF, ETN, 스팩 제외)
-- 매수/매도 2중 판정 완비 (FID 14 + 최우선 매도호가 FID 27 비교로 매수 틱 100% 포착)
+키움증권 Open API+ 코스피/코스닥 후보군 실시간 체결 및 10호가 수집 엔진 (32비트 전용)
+- 기존 코드/이름 필터 사용. 종목 분류 정확성은 별도 대조 필요.
+- 기본 raw v2: 원문 FID·수신 순서 보존, 방향/venue 미확인은 unknown
 - 화면번호 26개 분할 등록 (SetRealReg)
-- 멀티스레드 대용량 큐 버퍼링으로 틱 누락 0% 방어
+- 제한 큐와 저장 워커; 초과/오류 시 중단하며 무누락을 보장하지 않음
 - Ctrl+C 정상 종료 처리 완비
 - 수신 침묵 감시: 장중 무이벤트 구간을 주기 루프에서 경고하고, 종료 시
   결손이 남아 있으면 '정상 종료' 라고 보고하지 않는다 (session_monitor).
@@ -11,13 +11,17 @@
 - 대기큐 적체 감시: 절대값이 아니라 "바닥 이상을 일정 시간 유지하며
   줄지 않는가"로 판정한다. 장중 최대 적체값과 시각을 세션 요약에 남긴다.
 - 회전 파일 로그: logs/kiwoom_universe_{YYYYMMDD}.log (콘솔 출력 동시 기록)
-- 저장소: sampledata/raw_ticks/{YYYYMMDD}_raw.db
+- 저장소: sampledata/raw_ticks_v2/{YYYYMMDD}/{session_id}.db (실행별 새 파일)
+- --storage raw-v1: 기존 호환 경로를 명시적으로 선택
 """
 
 import sys
 import os
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
+import argparse
+import json
+import subprocess
 import time
 import queue
 import threading
@@ -36,7 +40,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 RAW_DIR = PROJECT_ROOT / "sampledata" / "raw_ticks"
-RAW_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR = PROJECT_ROOT / "logs"
 
 from collector.kiwoom.session_monitor import (                         # noqa: E402
@@ -49,6 +52,7 @@ from collector.kiwoom.session_monitor import (                         # noqa: E
 
 
 from collector.kiwoom.tick_writer import TickWriter  # noqa: E402
+from collector.kiwoom.live_capture import LiveRawCapture  # noqa: E402
 
 
 class KiwoomUniverseLogger:
@@ -58,7 +62,20 @@ class KiwoomUniverseLogger:
         gap_threshold_sec: float = DEFAULT_GAP_THRESHOLD_SEC,
         queue_backlog_floor: int = DEFAULT_QUEUE_BACKLOG_FLOOR,
         queue_stuck_window_sec: float = DEFAULT_QUEUE_STUCK_WINDOW_SEC,
+        storage="raw-v2",
+        code_revision=None,
+        codes=None,
+        duration_seconds=None,
     ):
+        if storage not in ("raw-v1", "raw-v2"):
+            raise ValueError("unsupported storage backend")
+        self.storage = storage
+        self.code_revision = code_revision or subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, text=True, timeout=3).strip()
+        self.codes, self.duration_seconds = codes, duration_seconds
+        self._subscribed_at = None
+        self.raw_capture = None
+        self._login_handled = False
         self.app = QApplication(sys.argv)
 
         # 파이썬 인터프리터가 Ctrl+C를 감지할 수 있도록 0.2초 주기 타이머 가동
@@ -92,7 +109,10 @@ class KiwoomUniverseLogger:
         self.quote_queue = queue.Queue()
         self.is_running = True
         self.accepting_events = True
-        self.writer = TickWriter(self.db_path, self.trade_queue, self.quote_queue)
+        self.writer = None
+        if storage == "raw-v1":
+            RAW_DIR.mkdir(parents=True, exist_ok=True)
+            self.writer = TickWriter(self.db_path, self.trade_queue, self.quote_queue)
 
         # 키움 OCX 초기화
         try:
@@ -109,19 +129,28 @@ class KiwoomUniverseLogger:
 
     @property
     def total_trades(self):
-        return self.writer.total_trades
+        return self.writer.total_trades if self.storage == "raw-v1" else self.raw_capture.received_trades
 
     @property
     def total_quotes(self):
-        return self.writer.total_quotes
+        return self.writer.total_quotes if self.storage == "raw-v1" else self.raw_capture.received_quotes
 
     def _poll_control(self):
         # OCX calls and shutdown run on the Qt thread, between event callbacks.
         # In particular, SIGINT must not drain while a callback is about to put().
         if self._shutdown_done:
             return
-        if self.writer.error:
+        if self.writer is not None and self.writer.error:
             self._shutdown_requested = "DB 저장 오류"
+        if self.raw_capture is not None:
+            try:
+                self.raw_capture.write_status()
+                if int(self.ocx.dynamicCall("GetConnectState()")) != 1:
+                    self.raw_capture.queue.abort("OCX connection lost")
+                    self._shutdown_requested = "OCX 연결 끊김"
+            except Exception as exc:
+                self.raw_capture.queue.abort(f"control polling failed: {exc}")
+                self._shutdown_requested = "수집 상태 확인 오류"
         if self._shutdown_requested:
             self._shutdown(self._shutdown_requested)
 
@@ -129,7 +158,7 @@ class KiwoomUniverseLogger:
         self.monitor.start()
         self.log.emit("=" * 65)
         self.log.emit("🚀 [키움증권 보통주 전 종목 실시간 틱/호가 수집 데몬]")
-        self.log.emit(f"📁 저장 파일: {self.db_path.name}")
+        self.log.emit(f"📁 저장 방식: {self.storage}; raw v2는 로그인 확인 후 새 파일 생성")
         self.log.emit(f"📝 로그 파일: {self.log_path}")
         self.log.emit("=" * 65)
         self.log.emit("🔑 키움 OpenAPI+ 서버 접속 시도 중...")
@@ -143,6 +172,13 @@ class KiwoomUniverseLogger:
     def _on_login(self, err_code: int):
         if self._shutdown_done:
             return
+        if self._login_handled:
+            self.exit_code = 2
+            if self.raw_capture is not None:
+                self.raw_capture.queue.abort("unexpected login/reconnect event")
+            self._shutdown("중복 로그인/재접속 이벤트")
+            return
+        self._login_handled = True
         if err_code != 0:
             self.exit_code = 2
             self.log.emit(f"❌ 로그인 실패 (에러코드: {err_code})")
@@ -152,15 +188,40 @@ class KiwoomUniverseLogger:
         self.log.emit("🎉 [성공] 키움증권 서버 로그인 완료!")
 
         # 1. 백그라운드 DB 저장 워커 스레드 가동
-        self.db_thread = threading.Thread(target=self.writer.run, daemon=False)
-        self.db_thread.start()
+        if self.storage == "raw-v2":
+            try:
+                flag = str(self.ocx.dynamicCall("KOA_Functions(QString, QString)", "GetServerGubun", "")).strip()
+                server = {"1": "mock", "0": "live"}.get(flag)
+                if server is None:
+                    raise ValueError(f"unknown server flag: {flag!r}")
+                self.raw_capture = LiveRawCapture(PROJECT_ROOT, server=server, code_revision=self.code_revision)
+                self.writer = self.raw_capture
+                self.db_path = self.raw_capture.path
+                self.log.emit(f"📁 raw v2 저장 파일: {self.db_path}")
+                self.log.emit(f"📝 세션 상태: {self.raw_capture.directory / 'status.json'}")
+            except Exception as exc:
+                self.exit_code = 2
+                self.log.emit(f"❌ raw v2 시작 실패: {exc}")
+                self._shutdown("raw v2 시작 실패")
+                return
+        else:
+            self.db_thread = threading.Thread(target=self.writer.run, daemon=False)
+            self.db_thread.start()
 
         # 2. 통계 출력 스레드 가동
         self.stats_thread = threading.Thread(target=self._stats_worker, daemon=True)
         self.stats_thread.start()
 
         # 3. 보통주 선별 및 26개 화면 분할 등록
-        self._register_all_universe()
+        try:
+            self._register_all_universe()
+            self._subscribed_at = time.monotonic()
+        except Exception as exc:
+            self.log.emit(f"❌ 실시간 등록 실패: {exc}")
+            if self.raw_capture is not None:
+                self.raw_capture.queue.abort(f"registration failed: {exc}")
+            self.exit_code = 2
+            self._shutdown("실시간 등록 실패")
 
     def _register_all_universe(self):
         """코스피/코스닥에서 순수 보통주만 선별하여 100개씩 화면번호 분할 등록"""
@@ -186,7 +247,13 @@ class KiwoomUniverseLogger:
                 continue
             filtered_codes.append(c)
 
-        self.log.emit(f"📊 최종 수집 대상 보통주: 총 {len(filtered_codes)}개 종목 (잡주/ETF 제외 완료)")
+        self.log.emit(f"📊 코드/이름 필터 적용: {len(filtered_codes)}개 후보 (종목 분류 정확성은 별도 확인)")
+        if self.codes is not None:
+            if not set(self.codes) <= set(filtered_codes):
+                raise ValueError("requested codes absent from observed common-stock universe")
+            filtered_codes = list(self.codes)
+        if not filtered_codes:
+            raise ValueError("empty collection universe")
 
         # 2. FID 리스트 정의 (27:최우선매도호가, 28:최우선매수호가 추가로 정밀 매수 판정 지원)
         fids = "20;10;15;14;27;28;21;" + ";".join(str(f) for f in range(41, 81))
@@ -201,21 +268,43 @@ class KiwoomUniverseLogger:
             screen_no = str(screen_base + (idx // chunk_size))
             code_str = ";".join(chunk)
 
-            self.ocx.dynamicCall(
+            result = self.ocx.dynamicCall(
                 "SetRealReg(QString, QString, QString, QString)",
                 screen_no,
                 code_str,
                 fids,
                 "0"
             )
+            if self.storage == "raw-v2" and str(result).strip() != "0":
+                raise RuntimeError(f"SetRealReg rejected screen {screen_no}: {result!r}")
             time.sleep(0.05)
 
         self.log.emit(f"✅ 코스피/코스닥 보통주 ({len(filtered_codes)}개) 실시간 수신 등록 완료!")
         self.log.emit("🔴 실시간 체결/호가 수집 가동 중... (종료하려면 터미널에서 Ctrl + C)")
 
     def _on_receive_real_data(self, code: str, real_type: str, real_data: str):
-        """키움 실시간 이벤트 수신 핸들러 (2중 방어 매수/매도 판정 적용)"""
+        """Capture entry clocks before extracting raw FIDs on the Qt thread."""
         if not self.accepting_events:
+            return
+        if self.storage == "raw-v2":
+            received_ns = time.perf_counter_ns()
+            received_at_utc = datetime.now(timezone.utc).isoformat()
+            if self.raw_capture is None:
+                return
+            try:
+                accepted = self.raw_capture.on_tick(code, real_type,
+                    lambda fid: self.ocx.dynamicCall("GetCommRealData(QString, int)", code, fid),
+                    received_ns=received_ns, received_at_utc=received_at_utc)
+                if accepted:
+                    if real_type == "주식체결":
+                        self.monitor.on_trade()
+                    elif real_type == "주식호가잔량":
+                        self.monitor.on_quote()
+                elif real_type in ("주식체결", "주식호가잔량"):
+                    self._shutdown_requested = "raw v2 큐 입력 거부"
+            except Exception as exc:
+                self.raw_capture.queue.abort(f"callback failed: {exc}")
+                self._shutdown_requested = "raw v2 콜백 오류"
             return
         now_str = datetime.now().strftime("%H%M%S")
 
@@ -267,7 +356,7 @@ class KiwoomUniverseLogger:
             now = datetime.now()
             now_int = int(now.strftime("%H%M%S"))
             now_str = now.strftime("%H:%M:%S")
-            queue_depth = self.trade_queue.qsize() + self.quote_queue.qsize()
+            queue_depth = self.writer.pending if self.storage == "raw-v2" else self.trade_queue.qsize() + self.quote_queue.qsize()
 
             # 침묵/적체 판정은 이 주기 루프 안에서만 한다. 이벤트 수신 경로에는
             # 판정도 I/O 도 붙이지 않는다.
@@ -276,14 +365,18 @@ class KiwoomUniverseLogger:
                     self.log.end_status_line()   # 상태줄(\r) 위에 겹쳐 찍히지 않도록
                     self.log.emit(notice)
 
-            if now_int >= 153500:
+            if self.duration_seconds is not None:
+                if self._subscribed_at is not None and time.monotonic() - self._subscribed_at >= self.duration_seconds:
+                    self._shutdown_requested = "제한 수집 시간 종료"
+                    break
+            elif now_int >= 153500:
                 self.log.end_status_line()
                 self.log.emit("🔔 [15:35 장 마감 감지] 전 종목 수집을 종료합니다.")
                 self._shutdown_requested = "장 마감 (15:35)"
                 break
 
             self.log.status(
-                f"⏱️ [{now_str}] 실시간 보통주 적재 현황 ➔ "
+                f"⏱️ [{now_str}] {'수신 콜백' if self.storage == 'raw-v2' else 'DB 반영'} ➔ "
                 f"체결: {self.total_trades:,}건 | 호가: {self.total_quotes:,}건 "
                 f"(대기큐: {queue_depth:,})"
             )
@@ -316,6 +409,20 @@ class KiwoomUniverseLogger:
         # Freeze reception end before disk drain; drain time is not a feed gap.
         report = self.monitor.finish(reason)
         self.log.emit("💾 수신을 멈추고 남은 체결/호가의 DB 커밋을 기다립니다.")
+        if self.storage == "raw-v2":
+            clean = self.raw_capture is not None and self.raw_capture.finish(reason)
+            if not clean:
+                self.exit_code = 2
+                self.log.emit(f"❌ raw v2 종료 미확인: {self.raw_capture.error if self.raw_capture else reason}")
+            else:
+                snapshot = self.raw_capture.queue.snapshot()
+                self.log.emit(f"💾 raw v2 저장 완료: {snapshot['committed_seq']:,} 레코드 / 콜백 {snapshot['accepted_callbacks']:,}건")
+                self.log.emit("데이터 방향·venue·무누락 품질은 미검증입니다.")
+                self.log.emit(report.headline)
+            self.log.emit_all(report.lines())
+            self.log.close()
+            self.app.quit()
+            return
         self.writer.stop.set()
         worker = getattr(self, "db_thread", None)
         if worker is not None:
@@ -356,9 +463,32 @@ class KiwoomUniverseLogger:
 
 
 if __name__ == "__main__":
-    logger = KiwoomUniverseLogger()
-    try:
-        sys.exit(logger.start())
-    except KeyboardInterrupt:
-        # 시그널 핸들러가 먼저 처리했다면 _shutdown 은 한 번만 실행된다.
-        logger._shutdown("사용자 중단 (Ctrl+C)")
+    parser = argparse.ArgumentParser(description="Kiwoom collector; default raw-v2, no orders")
+    parser.add_argument("--storage", choices=("raw-v2", "raw-v1"), default="raw-v2")
+    parser.add_argument("--codes", help="explicit comma-separated common-stock codes for a small run")
+    parser.add_argument("--duration-seconds", type=int)
+    parser.add_argument("--preflight", action="store_true", help="read-only environment check; no OCX instance/login")
+    args = parser.parse_args()
+    if args.preflight:
+        from collector.kiwoom.preflight import inspect_environment
+        result = inspect_environment()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        sys.exit(0 if result["ready"] else 2)
+    codes = None if not args.codes else list(dict.fromkeys(args.codes.split(",")))
+    if codes is not None and (not 1 <= len(codes) <= 10 or any(len(c) != 6 or not c.isdigit() for c in codes)):
+        parser.error("--codes requires 1..10 six-digit codes")
+    if args.duration_seconds is not None and (codes is None or not 1 <= args.duration_seconds <= 300):
+        parser.error("--duration-seconds requires --codes and 1..300 seconds")
+    from collector.kiwoom.collector_lease import CollectorLease
+    with CollectorLease(PROJECT_ROOT):
+        logger = KiwoomUniverseLogger(storage=args.storage, codes=codes, duration_seconds=args.duration_seconds)
+        try:
+            logger.start()
+        except KeyboardInterrupt:
+            logger._shutdown("사용자 중단 (Ctrl+C)")
+        finally:
+            # Keep the lease while any accepted data is still being drained.
+            if logger.raw_capture is not None:
+                while not logger.raw_capture.queue.wait(5):
+                    print("raw v2 저장 워커 종료 대기 중", flush=True)
+        sys.exit(logger.exit_code)

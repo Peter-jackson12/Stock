@@ -1,4 +1,4 @@
-"""Offline raw-v2 SQLite contract prototype; not connected to the live collector.
+"""Raw-v2 SQLite contract used by offline tools and the collector queue worker.
 
 Each record retains normalized input AND provider raw fields. Receipt sequence is
 assigned by the caller at capture time. Missing/invalid source values belong in

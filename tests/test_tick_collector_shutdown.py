@@ -71,7 +71,7 @@ def collector(monkeypatch, tmp_path):
         def end_status_line(self):
             pass
     monkeypatch.setattr(module, "SessionLog", Log)
-    logger = module.KiwoomUniverseLogger()
+    logger = module.KiwoomUniverseLogger(storage="raw-v1", code_revision="fixture")
     logger.monitor.start()
     logger.monitor.on_trade()
     logger.monitor.on_quote()

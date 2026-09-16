@@ -1,4 +1,4 @@
-"""Bounded raw-v2 callback queue; no OCX calls or production collector wiring.
+"""Bounded raw-v2 callback queue used by the operational collector backend.
 
 The producer supplies callback-entry timestamps and raw fields. Only the worker
 creates/uses/closes CaptureSession and SQLite. Queue acceptance is not persistence.
