@@ -166,3 +166,13 @@ def test_zero_latency_happens_after_trigger_and_duplicate_id_rejected():
     assert len(s.fills) == 1
     with pytest.raises(ValueError):
         s.submit("a", "buy", 1)
+
+
+def test_cannot_retroactively_close_at_already_processed_timestamp():
+    s = sim()
+    s.on_event(quote())
+    s.submit("a", "buy", 1)
+    s.advance(5)
+    with pytest.raises(ValueError, match="strictly after"):
+        s.close(5)
+    assert s.fills[0].time_ns == 5 and not s.closed

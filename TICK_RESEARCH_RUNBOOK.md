@@ -30,6 +30,15 @@
 
 ## 결과 읽기
 
+원본 DB를 열지 않는 경량 조회:
+
+```powershell
+.venv/Scripts/python.exe scripts/inspect_tick_research.py research_runs/<run-id>/result.json
+```
+
+최대 8 MiB까지 읽는다. 완료 상태는 종료 코드 0, 실행 중/실패는 2,
+파일 누락·크기 초과·형식/상태 모순은 3이다. 원본 전체 검증을 대신하지 않는다.
+
 - `failed`: 결과는 진단 전용이다. 중간 체결이 있더라도 정상 수익으로 사용하지 않는다.
 - `running`: 완료 기록이 없다. 강제 중단/저장 실패 등의 가능성이 있어 완료 결과로 사용하지 않는다.
 - `completed_empty_input`: 입력 이벤트가 비어 있다.
@@ -64,3 +73,10 @@ raw 조회가 끝난 뒤에야 체크섬이 확정되므로 끝에서 발견한 
 4. 검증된 실제 하루에서 원본 → 이벤트 → 신호 → 주문 → 체결을 대조.
 
 Daily_baseline·old_data·현재 수집 raw는 이 작업을 위해 수정하거나 재생성하지 않는다.
+
+## 교차 검증 및 원천 필드 주의
+
+[TICK_CROSS_REVIEW.md](TICK_CROSS_REVIEW.md)에 코드별 검토 포인트를 기록했다.
+현재 운영 수집기의 FID 14는 누적거래대금이며 방향 판정 근거가 아니다.
+새 FID 변환기의 방향 기본값은 unknown이고 원천 확인 없이 매수/매도 방향을 만들어내지 않는다.
+실제 OCX 연결은 아직 미적용이며 기존 raw is_buy를 이 변환기의 검증된 출력으로 취급하지 않는다.

@@ -170,3 +170,26 @@ def test_cli_closed_fixture_to_result_end_to_end(tmp_path, capsys):
     from pathlib import Path
     result = json.loads(Path(capsys.readouterr().out.strip()).read_bytes())
     assert result["status"] == "completed_with_open_position"
+
+
+@pytest.mark.parametrize("operation", ["commit", "finish"])
+def test_commit_failure_never_leaves_a_closed_replayable_file(tmp_path, operation):
+    path = tmp_path / "v2.db"
+    with writer(path) as w:
+        append(w, event())
+        original = w.conn
+        class FailCommit:
+            def execute(self, *args):
+                return original.execute(*args)
+            def commit(self):
+                raise sqlite3.OperationalError("synthetic disk failure")
+            def close(self):
+                original.close()
+        w.conn = FailCommit()
+        with pytest.raises(sqlite3.OperationalError):
+            w.commit() if operation == "commit" else w.finish(close_ns=20)
+        assert w.failed and not w.finished
+        with pytest.raises(ValueError):
+            w.finish(close_ns=20)
+    with pytest.raises(ValueError, match="incomplete"):
+        read(path)

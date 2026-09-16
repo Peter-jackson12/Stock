@@ -163,8 +163,8 @@ class TickSimulator:
         Never fabricate an end-of-session liquidation at the last known price.
         """
         _ns(time_ns)
-        if self.closed or time_ns < self.now:
-            raise ValueError("closed session or clock reversal")
+        if self.closed or time_ns <= self.now:
+            raise ValueError("exclusive close must be strictly after the processed clock")
         if time_ns > self.now:
             self.advance(time_ns - 1)
         self.now = time_ns
