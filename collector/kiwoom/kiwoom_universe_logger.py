@@ -21,7 +21,6 @@ from datetime import datetime
 import time
 import queue
 import threading
-import sqlite3
 import signal
 
 from PyQt5.QtWidgets import QApplication
@@ -49,6 +48,9 @@ from collector.kiwoom.session_monitor import (                         # noqa: E
 )
 
 
+from collector.kiwoom.tick_writer import TickWriter  # noqa: E402
+
+
 class KiwoomUniverseLogger:
     def __init__(
         self,
@@ -61,7 +63,7 @@ class KiwoomUniverseLogger:
 
         # 파이썬 인터프리터가 Ctrl+C를 감지할 수 있도록 0.2초 주기 타이머 가동
         self.timer = QTimer()
-        self.timer.timeout.connect(lambda: None)
+        self.timer.timeout.connect(self._poll_control)
         self.timer.start(200)
 
         self.today_str = datetime.now().strftime("%Y%m%d")
@@ -81,12 +83,16 @@ class KiwoomUniverseLogger:
         )
         self._shutdown_lock = threading.Lock()
         self._shutdown_done = False
+        self._shutdown_requested = None
+        self.exit_code = 0
         self._install_sigint_handler()
 
         # 고속 메모리 큐 (UI 렉 방지)
         self.trade_queue = queue.Queue()
         self.quote_queue = queue.Queue()
         self.is_running = True
+        self.accepting_events = True
+        self.writer = TickWriter(self.db_path, self.trade_queue, self.quote_queue)
 
         # 키움 OCX 초기화
         try:
@@ -99,9 +105,25 @@ class KiwoomUniverseLogger:
         self.ocx.OnEventConnect.connect(self._on_login)
         self.ocx.OnReceiveRealData.connect(self._on_receive_real_data)
 
-        # 통계 카운터
-        self.total_trades = 0
-        self.total_quotes = 0
+        self.app.aboutToQuit.connect(lambda: self._shutdown("Qt 종료"))
+
+    @property
+    def total_trades(self):
+        return self.writer.total_trades
+
+    @property
+    def total_quotes(self):
+        return self.writer.total_quotes
+
+    def _poll_control(self):
+        # OCX calls and shutdown run on the Qt thread, between event callbacks.
+        # In particular, SIGINT must not drain while a callback is about to put().
+        if self._shutdown_done:
+            return
+        if self.writer.error:
+            self._shutdown_requested = "DB 저장 오류"
+        if self._shutdown_requested:
+            self._shutdown(self._shutdown_requested)
 
     def start(self):
         self.monitor.start()
@@ -112,10 +134,17 @@ class KiwoomUniverseLogger:
         self.log.emit("=" * 65)
         self.log.emit("🔑 키움 OpenAPI+ 서버 접속 시도 중...")
         self.ocx.dynamicCall("CommConnect()")
-        self.app.exec_()
+        try:
+            self.app.exec_()
+        finally:
+            self._shutdown("이벤트 루프 종료")
+        return self.exit_code
 
     def _on_login(self, err_code: int):
+        if self._shutdown_done:
+            return
         if err_code != 0:
+            self.exit_code = 2
             self.log.emit(f"❌ 로그인 실패 (에러코드: {err_code})")
             self._shutdown(f"로그인 실패 (에러코드 {err_code})")
             return
@@ -123,7 +152,7 @@ class KiwoomUniverseLogger:
         self.log.emit("🎉 [성공] 키움증권 서버 로그인 완료!")
 
         # 1. 백그라운드 DB 저장 워커 스레드 가동
-        self.db_thread = threading.Thread(target=self._db_writer_worker, daemon=True)
+        self.db_thread = threading.Thread(target=self.writer.run, daemon=False)
         self.db_thread.start()
 
         # 2. 통계 출력 스레드 가동
@@ -186,6 +215,8 @@ class KiwoomUniverseLogger:
 
     def _on_receive_real_data(self, code: str, real_type: str, real_data: str):
         """키움 실시간 이벤트 수신 핸들러 (2중 방어 매수/매도 판정 적용)"""
+        if not self.accepting_events:
+            return
         now_str = datetime.now().strftime("%H%M%S")
 
         # 1. 주식체결 수신
@@ -230,50 +261,6 @@ class KiwoomUniverseLogger:
             except Exception:
                 pass
 
-    def _db_writer_worker(self):
-        """백그라운드에서 SQLite WAL 모드로 대용량 배치 INSERT 전담"""
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=OFF;")
-        cur = conn.cursor()
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS raw_trades (
-                t_time TEXT, code TEXT, price REAL, vol INTEGER, is_buy INTEGER
-            );
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS raw_quotes (
-                q_time TEXT, code TEXT, offer_p TEXT, offer_v TEXT, bid_p TEXT, bid_v TEXT
-            );
-        """)
-        conn.commit()
-
-        trade_batch = []
-        quote_batch = []
-
-        while self.is_running:
-            while not self.trade_queue.empty() and len(trade_batch) < 1000:
-                trade_batch.append(self.trade_queue.get())
-
-            while not self.quote_queue.empty() and len(quote_batch) < 1000:
-                quote_batch.append(self.quote_queue.get())
-
-            if trade_batch:
-                cur.executemany("INSERT INTO raw_trades VALUES (?, ?, ?, ?, ?)", trade_batch)
-                self.total_trades += len(trade_batch)
-                trade_batch.clear()
-
-            if quote_batch:
-                cur.executemany("INSERT INTO raw_quotes VALUES (?, ?, ?, ?, ?, ?)", quote_batch)
-                self.total_quotes += len(quote_batch)
-                quote_batch.clear()
-
-            conn.commit()
-            time.sleep(0.5)
-
-        conn.close()
-
     def _stats_worker(self):
         """수집 현황 주기 출력 + 장중 침묵/대기큐 적체 감시 + 장 마감 종료 (기존 1초 루프)"""
         while self.is_running:
@@ -292,7 +279,7 @@ class KiwoomUniverseLogger:
             if now_int >= 153500:
                 self.log.end_status_line()
                 self.log.emit("🔔 [15:35 장 마감 감지] 전 종목 수집을 종료합니다.")
-                self._shutdown("장 마감 (15:35)")
+                self._shutdown_requested = "장 마감 (15:35)"
                 break
 
             self.log.status(
@@ -315,28 +302,40 @@ class KiwoomUniverseLogger:
                 return
             self._shutdown_done = True
 
-        # is_running 을 내리기 전에 읽어야 DB writer 가 아직 반영하지 못한
-        # 잔여 큐가 몇 건인지 보고에 남길 수 있다.
-        pending = self.trade_queue.qsize() + self.quote_queue.qsize()
-        report = self.monitor.finish(
-            reason,
-            extra=[
-                ("DB 반영 건수  ", f"체결 {self.total_trades:,} 건 / 호가 {self.total_quotes:,} 건"),
-                ("종료 시 대기큐", f"{pending:,} 건"),
-            ],
-        )
-
-        self.log.emit(report.headline)
-        self.log.emit_all(report.lines())
-        if pending:
-            self.log.emit(f"⚠️ 종료 시점 대기큐 {pending:,}건은 DB 에 반영되지 않았습니다.")
-
+        self.accepting_events = False
         self.is_running = False
+        self.timer.stop()
         try:
             self.ocx.dynamicCall("SetRealRemove(QString, QString)", "ALL", "ALL")
-        except Exception as e:  # 종료 중 실패가 보고를 삼키지 않도록
+        except Exception as e:
             self.log.emit(f"⚠️ 실시간 등록 해제 실패: {e}")
 
+        stats = getattr(self, "stats_thread", None)
+        if stats is not None:
+            stats.join()
+        # Freeze reception end before disk drain; drain time is not a feed gap.
+        report = self.monitor.finish(reason)
+        self.log.emit("💾 수신을 멈추고 남은 체결/호가의 DB 커밋을 기다립니다.")
+        self.writer.stop.set()
+        worker = getattr(self, "db_thread", None)
+        if worker is not None:
+            while worker.is_alive():
+                worker.join(timeout=5.0)
+                if worker.is_alive():
+                    self.log.emit(f"💾 종료 저장 중: 미커밋 약 {self.writer.pending:,}건")
+        pending = self.writer.pending
+        storage_failed = bool(self.writer.error or pending)
+        report.extra.extend([
+            ("DB 반영 건수  ", f"체결 {self.total_trades:,} 건 / 호가 {self.total_quotes:,} 건"),
+            ("종료 후 미커밋", f"{pending:,} 건"),
+            ("DB 저장 결과  ", self.writer.error or ("미저장 잔여 있음" if pending else "커밋 완료")),
+        ])
+        if storage_failed:
+            self.exit_code = 2
+            self.log.emit(f"❌ 비정상 종료 — DB 저장 실패 / 미커밋 {pending:,}건. 재시작으로 복구되지 않습니다.")
+        else:
+            self.log.emit(report.headline)
+        self.log.emit_all(report.lines())
         self.log.close()
         self.app.quit()
 
@@ -351,7 +350,7 @@ class KiwoomUniverseLogger:
             signal.signal(signal.SIGINT, signal.SIG_DFL)   # 다음 번엔 강제 종료
             self.log.end_status_line()
             self.log.emit("🛑 사용자에 의해 수집이 중단되었습니다 (Ctrl+C).")
-            self._shutdown("사용자 중단 (Ctrl+C)")
+            self._shutdown_requested = "사용자 중단 (Ctrl+C)"
 
         signal.signal(signal.SIGINT, _handler)
 
@@ -359,7 +358,7 @@ class KiwoomUniverseLogger:
 if __name__ == "__main__":
     logger = KiwoomUniverseLogger()
     try:
-        logger.start()
+        sys.exit(logger.start())
     except KeyboardInterrupt:
         # 시그널 핸들러가 먼저 처리했다면 _shutdown 은 한 번만 실행된다.
         logger._shutdown("사용자 중단 (Ctrl+C)")

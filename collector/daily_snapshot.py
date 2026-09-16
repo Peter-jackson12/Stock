@@ -1,32 +1,17 @@
+"""D-5: 날짜가 명시된 관측 스냅샷과 파생 wide CSV.
+동일 날짜는 최초 유효값을 보존하며 결측과 새 종목만 보충한다.
+단일 수집 프로세스에서 사용한다(동시 writer는 지원하지 않음).
 """
-collector/daily_snapshot.py — 일별 tidy 스냅샷 저장소 (rev.2 §5, D-5)
-
-daily_collector 는 매 실행마다 shares/float/mkt 를 포함한 8개 wide 매트릭스
-(open.csv 등, 행=날짜·열=종목)를 통째로 다시 썼다. open/high/low/close/tradamt
-는 매일 다시 받아도 그 자체가 그날그날의 실제 시세라 문제가 없지만, shares
-(상장주식수)와 float(유통비율)는 "수집 시점 하나의 스냅샷"일 뿐이다. 이걸
-wide 포맷에 직접 쓰면 다음 수집이 전체를 다시 덮어쓸 때 과거 날짜에 오늘
-값이 새어 들어가거나(발견 #0-3 broadcast 버그), 결측이 이전 값으로 조용히
-남는 사고가 반복된다.
-
-그래서 shares/float/mkt 세 컬럼은 **tidy(날짜 컬럼이 있는 long 포맷) 스냅샷을
-유일한 소스**로 삼는다. 하루치 스냅샷 파일(sampledata/Daily/snapshots/
-YYYYMMDD.csv)은 그날 실제로 관측한 값만 담고, wide CSV(엔진이 읽는 레거시
-포맷)는 스냅샷 전체를 피벗해 **파생**한다 — 스냅샷에 없는 날짜는 구조적으로
-NaN 이 된다. 과거 날짜에 오늘 값을 broadcast 하는 경로 자체가 없어진다.
-
-open/high/low/close/tradamt 는 이 모듈이 다루지 않는다. daily_collector 가
-기존 방식(네이버 fchart 다년치 재수집)대로 직접 wide CSV 에 쓴다.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime
+import os
+import tempfile
 
 import pandas as pd
 
-#: 스냅샷 파일 한 장에 들어가는 컬럼(날짜는 파일명에 있으므로 제외).
-SNAPSHOT_COLUMNS = ["code", "name", "mkt", "shares", "float"]
+SNAPSHOT_COLUMNS = ["date", "code", "name", "mkt", "shares", "float"]
 
 #: 스냅샷에서 파생하는 wide CSV. 나머지(open/high/low/close/tradamt)는
 #: daily_collector 가 직접 쓴다.
@@ -39,33 +24,58 @@ def snapshot_dir(daily_dir: Path | str) -> Path:
     return d
 
 
-def write_snapshot(daily_dir: Path | str, date: str, rows: pd.DataFrame) -> Path:
-    """
-    그날 전체 유니버스의 (code, name, mkt, shares, float) 행을 저장한다.
-
-    같은 날짜에 다시 수집하면 파일을 통째로 덮어쓴다 — 멱등이며, 하루 안의
-    재실행은 최신 수집이 그날의 정답이라는 의미다.
-    """
+def _validate(date: str, rows: pd.DataFrame) -> pd.DataFrame:
+    if datetime.strptime(date, "%Y%m%d").strftime("%Y%m%d") != date:
+        raise ValueError("date must be YYYYMMDD")
     missing = set(SNAPSHOT_COLUMNS) - set(rows.columns)
     if missing:
         raise ValueError(f"스냅샷에 컬럼 누락: {sorted(missing)}")
+    rows = rows[SNAPSHOT_COLUMNS].copy()
+    rows["date"] = rows["date"].astype(str)
+    if not rows["date"].eq(date).all():
+        raise ValueError("snapshot date does not match filename")
+    rows["code"] = rows["code"].astype(str).str.zfill(6)
+    if not rows["code"].str.fullmatch(r"[0-9]{6}").all():
+        raise ValueError("invalid stock code")
+    if rows["code"].duplicated().any():
+        raise ValueError("duplicate snapshot code")
+    return rows
 
+
+def _read_snapshot(path: Path) -> pd.DataFrame:
+    rows = pd.read_csv(path, encoding="utf-8-sig", dtype={"code": str, "date": str})
+    # 이전 파일은 읽기만 호환한다. 파일명은 과거 관측 시점의 진위를 증명하지 않는다.
+    if "date" not in rows:
+        rows.insert(0, "date", path.stem)
+    return _validate(path.stem, rows)
+
+
+def write_snapshot(daily_dir: Path | str, date: str, rows: pd.DataFrame) -> Path:
+    """최초 유효값 보존, 결측 보충, 새 종목 추가. 실패 시 기존 파일 보존."""
+    rows = _validate(date, rows)
     out = snapshot_dir(daily_dir) / f"{date}.csv"
-    rows[SNAPSHOT_COLUMNS].to_csv(out, index=False, encoding="utf-8-sig")
+    if out.exists():
+        old = _read_snapshot(out).set_index("code")
+        new = rows.set_index("code")
+        # shares가 달라졌으면 기존 shares에 새 시총을 붙이지 않는다.
+        for code in old.index.intersection(new.index):
+            if pd.notna(old.loc[code, "shares"]) and old.loc[code, "shares"] != new.loc[code, "shares"]:
+                new.loc[code, "mkt"] = float("nan")
+        rows = old.combine_first(new).reset_index()[SNAPSHOT_COLUMNS]
+    fd, tmp = tempfile.mkstemp(prefix=".snapshot-", suffix=".tmp", dir=out.parent)
+    os.close(fd)
+    try:
+        rows.to_csv(tmp, index=False, encoding="utf-8-sig")
+        os.replace(tmp, out)
+    finally:
+        Path(tmp).unlink(missing_ok=True)
     return out
 
 
 def read_all_snapshots(daily_dir: Path | str) -> pd.DataFrame:
-    """지금까지 쌓인 스냅샷 전부를 날짜 컬럼을 붙여 하나의 tidy DataFrame 으로."""
-    frames = []
-    for path in sorted(snapshot_dir(daily_dir).glob("*.csv")):
-        date = path.stem
-        df = pd.read_csv(path, encoding="utf-8-sig")
-        df.insert(0, "date", date)
-        frames.append(df)
-
+    frames = [_read_snapshot(p) for p in sorted(snapshot_dir(daily_dir).glob("*.csv"))]
     if not frames:
-        return pd.DataFrame(columns=["date", *SNAPSHOT_COLUMNS])
+        return pd.DataFrame(columns=SNAPSHOT_COLUMNS)
     return pd.concat(frames, ignore_index=True)
 
 
@@ -82,6 +92,8 @@ def rebuild_wide_csvs(daily_dir: Path | str, *, name_map: dict[str, str]) -> Non
         return
 
     tidy = tidy.copy()
+    stored_names = {"A" + r.code: r.name for r in tidy.itertuples() if pd.notna(r.name)}
+    name_map = {**stored_names, **name_map}
     tidy["col"] = "A" + tidy["code"].astype(str).str.zfill(6)
 
     for metric in DERIVED_METRICS:

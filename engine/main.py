@@ -48,6 +48,10 @@ def _parse_args() -> argparse.Namespace:
         "--strict-universe", action="store_true",
         help="미처리 비율이 임계를 넘으면 경고가 아니라 실패로 처리한다",
     )
+    parser.add_argument(
+        "--require-actual-prices", action="store_true",
+        help="일봉의 실제가 출처 선언이 없거나 수정주가이면 실행을 중단한다",
+    )
     return parser.parse_args()
 
 
@@ -62,6 +66,7 @@ if __name__ == "__main__":
         universe=args.universe,
         missing_threshold_pct=args.missing_threshold,
         strict_universe=args.strict_universe,
+        require_actual_prices=args.require_actual_prices,
     )
     engine.run()
 

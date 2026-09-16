@@ -11,7 +11,10 @@ sampledata 로 두 엔진을 돌려** 다음 세 가지를 확인한다.
 
 실행:
     uv run python scripts/verify_phase_a.py
-    uv run python scripts/verify_phase_a.py --code 005930
+    uv run python scripts/verify_phase_a.py --date YYYYMMDD --code 005930
+
+기본 실행은 보존된 1초봉 기준선만 검증한다. 틱은 실제 확보한 날짜를 명시한다.
+특정 과거 날짜의 누락은 앞으로의 수집을 막는 게이트가 아니다.
 
 이 스크립트는 results/ 의 기존 CSV 를 건드리지 않는다. 레거시 출력은 임시
 디렉토리로 돌려 비교만 하고, 기존 결과 파일은 그대로 둔다.
@@ -212,7 +215,11 @@ def verify_bar_engine(runs_root: Path, tmp_results: Path) -> None:
 def verify_tick_engine(runs_root: Path, date_str: str, code: str) -> None:
     print(f"\n[2] 틱 엔진 (engine/nxt_tick_engine.py) — {date_str} {code}")
 
-    first = NextradeTickEngine(date_str=date_str, target_code=code, runs_root=runs_root)
+    try:
+        first = NextradeTickEngine(date_str=date_str, target_code=code, runs_root=runs_root)
+    except FileNotFoundError as exc:
+        check("틱 엔진 입력 존재", False, str(exc))
+        return
     key_one = first.run_strategy(latency_sec=1, cooldown_sec=10)
 
     with warnings.catch_warnings():
@@ -270,7 +277,7 @@ def _bar_keys(store: RunStore) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Phase A (런 스토어) 수용 검증")
     parser.add_argument("--code", default="053260", help="틱 엔진 검증 대상 종목")
-    parser.add_argument("--date", default="20260911", help="틱 엔진 검증 대상 날짜")
+    parser.add_argument("--date", default=None, help="확보한 틱 데이터 날짜 YYYYMMDD (생략 시 틱 미검증)")
     parser.add_argument("--keep", action="store_true", help="검증용 임시 런 디렉토리를 남긴다")
     args = parser.parse_args()
 
@@ -286,7 +293,10 @@ def main() -> int:
 
     try:
         verify_bar_engine(runs_root, tmp_results)
-        verify_tick_engine(runs_root, args.date, args.code)
+        if args.date:
+            verify_tick_engine(runs_root, args.date, args.code)
+        else:
+            print("\n[2] 틱 검증 미실행 — 확보한 날짜를 --date YYYYMMDD로 지정하세요.")
     finally:
         if not args.keep:
             shutil.rmtree(workdir, ignore_errors=True)
@@ -303,7 +313,9 @@ def main() -> int:
         print("\n⚠️ 검증이 통과하지 않았습니다. 레거시 CSV 경로를 제거하지 마세요.")
         return 1
 
-    print("🎉 전부 통과. 레거시 CSV 와 런 스토어가 같은 거래를 담고 있습니다.")
+    print("🎉 요청한 검증 통과. 레거시 CSV 와 런 스토어가 같은 거래를 담고 있습니다.")
+    if not args.date:
+        print("   틱 엔진 검증은 포함되지 않았습니다.")
     print("   (CSV 제거는 대시보드를 런 스토어 기반으로 옮긴 뒤에 결정하세요 — §7.5)")
     return 0
 

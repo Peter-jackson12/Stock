@@ -2,16 +2,22 @@ from pathlib import Path
 import sqlite3
 import pandas as pd
 from engine.config import CSV_PATH, SEC_PATH, ENCODING  # ⭐️ engine. 추가
+from core.price_policy import check_daily_price_basis
 
 class DataLoader:
     """일봉 CSV 데이터 및 초봉 SQLite DB 파일 로드를 전담하는 클래스"""
 
-    def __init__(self):
+    def __init__(self, *, require_actual_prices=False):
         self.csv_path = CSV_PATH
         self.sec_path = SEC_PATH
+        self.require_actual_prices = require_actual_prices
+        self.price_provenance = None
 
     def load_daily_csvs(self) -> dict[str, pd.DataFrame]:
         """기본 일봉 데이터프레임들을 디셔너리로 로드"""
+        self.price_provenance = check_daily_price_basis(
+            self.csv_path, require_actual=self.require_actual_prices,
+        )
         files = ['mkt', 'open', 'high', 'low', 'close', 'tradamt', 'float', 'shares']
         daily_data = {}
         for f in files:

@@ -53,3 +53,8 @@ sampledata/features/
 # 수 GB 규모라 git 으로 추적하지 않는다 — 로컬에서만 보존.
 # ==========================================
 sampledata/old_data/
+
+# 키움 메타데이터 배치 상태/원응답/파일럿 산출물 (운영 Daily와 분리)
+sampledata/kiwoom_meta/
+sampledata/Daily_kiwoom_pilot/
+logs/fchart_probe/

@@ -1,35 +1,13 @@
+"""네이버 일봉 수집기.
+D-6: fchart는 삼성전자 2018년 분할 전 가격을 조정한다.
+OHLCV는 unverified_fchart/에 격리하며 실제가용 wide CSV를 덮어쓰지 않는다.
+현재 메타데이터는 한국 관측일에만 기록하며 과거 요청일에 소급하지 않는다.
 """
-네이버 금융 다이렉트 연동 일봉 8대 매트릭스 수집기 (개선판)
-- count=4000 확장으로 2022년 과거 데이터 및 오늘 최신 데이터까지 완벽 지원
-- IndexError 방어 로직 추가
-- 기존 엔진 규격(1행 Name, 1열 Code, 열 A000000, 억원/원 단위, CP949) 100% 호환
-
-[2026-09-15 rev.2 §2' 스텁 제거]
-과거에는 shares/float 를 못 구하면 각각 1억주/60.0% 상수로 채워 넣었다.
-이 상수는 룩어헤드 이전에 **거짓 데이터**다 — 결측이면 하류(D-3 보수적 null
-정책)가 안전하게 걸러내지만, 그럴듯한 상수는 아무도 못 잡는다.
-
-또한 shares 는 매일 finance.naver.com 에서 스크랩한 "지금 이 순간의" 상장주식수
-하나를 **전 거래일(2022년~오늘)에 그대로 broadcast** 하고 있었다(발견 #0-3).
-액면분할 등으로 과거와 현재 상장주식수가 다른 종목에서는 이게 곧 시점 위반
-(D-4 point-in-time)이자 룩어헤드다. 지금은 날짜별 상장주식수 소스가 없으므로
-(§3-a/§3-b 대기 중), 이 스크랩값은 **수집 시점(가장 최근 거래일)에만** 쓰고
-과거 날짜는 전부 NaN 으로 둔다. mkt(시가총액)도 shares 가 없으면 NaN — 있는
-값을 억지로 계산하지 않는다. float_ratio 크롤러는 아직 없으므로 항상 NaN.
-
-[2026-09-15 rev.2 §5 tidy 스냅샷]
-mkt/shares/float 는 이제 wide CSV 에 직접 쓰지 않는다. 수집 시점(last_date)의
-관측값을 collector/daily_snapshot.py 로 하루치 tidy 스냅샷(sampledata/Daily/
-snapshots/YYYYMMDD.csv)에 저장하고, 그 스냅샷 전체를 피벗해 mkt.csv/
-shares.csv/float.csv 를 **파생**시킨다. 스냅샷이 없는 날짜는 구조적으로
-NaN 이 된다 — broadcast 버그가 다시 생길 경로 자체가 없다.
-open/high/low/close/tradamt 는 그대로 이 파일이 직접 wide CSV 에 쓴다(매번
-다시 받아도 그날그날의 실제 시세라 시점 문제가 없다).
-"""
-
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import json
+import os
+import uuid
 import re
 import sys
 import time
@@ -42,89 +20,107 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 from engine.config import CSV_PATH
 from collector.daily_snapshot import write_snapshot, rebuild_wide_csvs
+from core.price_policy import PRICE_MANIFEST, ADJUSTED
 
 #: 이 파일이 직접 wide CSV 로 쓰는 매트릭스. mkt/shares/float 는 daily_snapshot
 #: 이 tidy 스냅샷에서 파생시키므로 여기 없다.
+KST = timezone(timedelta(hours=9))
+
+def observation_date() -> str:
+    return datetime.now(KST).strftime("%Y%m%d")
+
+
 DAILY_FILES = ["open", "high", "low", "close", "tradamt"]
 
 
-def fetch_stock_meta_and_candles(
-    code: str, count: int = 4000
-) -> tuple[str, pd.DataFrame, dict]:
-    """네이버 fchart API에서 종목명과 일봉 OHLCV 데이터를 가져옵니다.
+def _get(url: str, *, timeout: float, attempts: int = 3):
+    """일시적인 통신 오류만 제한된 횟수로 재시도한다."""
+    for attempt in range(attempts):
+        try:
+            response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=timeout)
+            response.raise_for_status()
+            return response
+        except requests.RequestException as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            retryable = status is None or status in (408, 429) or status >= 500
+            if not retryable or attempt == attempts - 1:
+                raise
+            time.sleep(0.5 * (2 ** attempt))
 
-    :param count: 4000 (약 16년 치 일봉 데이터)
-    """
-    url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count={count}&requestType=0"
-    headers = {"User-Agent": "Mozilla/5.0"}
 
-    try:
-        res = requests.get(url, headers=headers, timeout=10)
-        root = ET.fromstring(res.text)
-    except Exception as e:
-        print(f"❌ [{code}] 네이버 캔들 통신 실패: {e}")
-        return (
-            f"종목_{code}",
-            pd.DataFrame(),
-            {
-                "shares": None,
-                "shares_reason": f"candle_fetch_failed: {e}",
-                "float": None,
-                "float_reason": "no_crawler_implemented",
-            },
-        )
-
-    # 1. 종목명 추출
+def parse_candles(code: str, text: str) -> tuple[str, pd.DataFrame, str | None]:
+    """수집기와 응답 실측 도구가 공유하는 fchart 검증/파싱 경로."""
+    name = f"종목_{code}"
+    root = ET.fromstring(text)
     chartdata = root.find("chartdata")
-    stock_name = (
-        chartdata.attrib.get("name", f"종목_{code}")
-        if chartdata is not None
-        else f"종목_{code}"
-    )
-
-    # 2. 일봉 데이터 파싱 (날짜|시가|고가|저가|종가|거래량)
+    if chartdata is not None:
+        name = chartdata.attrib.get("name", name)
     records = []
     for item in root.findall(".//item"):
-        raw = item.attrib.get("data", "")
-        parts = raw.split("|")
-        if len(parts) >= 6:
-            records.append(
-                {
-                    "date": parts[0].strip(),
-                    "open": float(parts[1]),
-                    "high": float(parts[2]),
-                    "low": float(parts[3]),
-                    "close": float(parts[4]),
-                    "vol": float(parts[5]),
-                }
-            )
+        parts = item.attrib.get("data", "").split("|")
+        if len(parts) != 6:
+            raise ValueError("unexpected candle field count")
+        date = parts[0].strip()
+        if datetime.strptime(date, "%Y%m%d").strftime("%Y%m%d") != date:
+            raise ValueError("invalid candle date")
+        values = [float(value) for value in parts[1:]]
+        if not all(np.isfinite(value) and value >= 0 for value in values):
+            raise ValueError("invalid candle number")
+        records.append(dict(zip(["date", "open", "high", "low", "close", "vol"], [date, *values])))
+    if not records:
+        return name, pd.DataFrame(), "no_candles"
+    frame = pd.DataFrame(records).set_index("date").sort_index()
+    if frame.index.has_duplicates:
+        raise ValueError("duplicate candle date")
+    return name, frame, None
 
-    df = pd.DataFrame(records)
-    if not df.empty:
-        df.set_index("date", inplace=True)
 
-    # 3. 보조 메타데이터 크롤링 — 성공해도 "지금 이 순간" 값 하나뿐이다.
-    # 과거 날짜에 broadcast 하지 않는다(호출자가 최신 거래일에만 반영).
-    meta = {"shares": None, "shares_reason": "no_source"}
+def fetch_candles(code: str, count: int = 4000) -> tuple[str, pd.DataFrame, str | None]:
+    """캔들 요청/파싱 실패를 메타데이터 수집과 분리한다."""
+    name = f"종목_{code}"
+    url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count={count}&requestType=0"
     try:
-        page_url = f"https://finance.naver.com/item/main.naver?code={code}"
-        page_res = requests.get(page_url, headers=headers, timeout=5)
-        m_shares = re.search(
-            r"상장주식수.*?<em.*?>([\d,]+)</em>", page_res.text, re.DOTALL
-        )
-        if m_shares:
-            meta["shares"] = int(m_shares.group(1).replace(",", ""))
-            meta["shares_reason"] = None
+        return parse_candles(code, _get(url, timeout=10).text)
+    except (requests.RequestException, ET.ParseError, ValueError) as exc:
+        return name, pd.DataFrame(), f"candle_fetch_failed: {type(exc).__name__}: {exc}"
+
+
+def fetch_current_meta(code: str) -> dict:
+    meta = {
+        "shares": None, "shares_reason": "no_source", "observed_date": None,
+        "float": None, "float_reason": "no_crawler_implemented",
+    }
+    try:
+        page = _get(f"https://finance.naver.com/item/main.naver?code={code}", timeout=5)
+        meta["observed_date"] = observation_date()
+        match = re.search(r"상장주식수.*?<em.*?>([\d,]+)</em>", page.text, re.DOTALL)
+        if match:
+            shares = int(match.group(1).replace(",", ""))
+            if shares <= 0:
+                raise ValueError("shares must be positive")
+            meta.update(shares=shares, shares_reason=None)
         else:
             meta["shares_reason"] = "page_pattern_not_found"
-    except Exception as e:
-        meta["shares_reason"] = f"page_fetch_failed: {e}"
+    except (requests.RequestException, ValueError) as exc:
+        meta["shares_reason"] = f"page_fetch_failed: {type(exc).__name__}: {exc}"
+    return meta
 
-    # float_ratio 크롤러 부재 확정(발견 #0-3) — 항상 NaN, 이유를 남긴다.
-    meta["float"] = None
-    meta["float_reason"] = "no_crawler_implemented"
 
-    return stock_name, df, meta
+def fetch_stock_meta_and_candles(
+    code: str, count: int = 4000, *, include_meta: bool = True,
+) -> tuple[str, pd.DataFrame, dict]:
+    name, frame, reason = fetch_candles(code, count)
+    meta = fetch_current_meta(code) if include_meta else {}
+    meta["candles_reason"] = reason
+    return name, frame, meta
+
+
+def _record_attempt(path: Path, event: dict) -> None:
+    """실행별 추기 로그. 중단 이후에도 완료된 관측과 사유를 확인한다."""
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(event, ensure_ascii=False) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
 
 
 class FastDailyCollector:
@@ -141,34 +137,40 @@ class FastDailyCollector:
     ):
         start_date = start_date.replace("-", "")
         end_date = end_date.replace("-", "")
-        targets = [str(t).zfill(6) for t in target_tickers]
+        targets = list(dict.fromkeys(str(t).zfill(6) for t in target_tickers))
+        collected_date = observation_date()
+        run_dir = self.output_dir / "collection_runs"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        journal = run_dir / f"{collected_date}_{uuid.uuid4().hex}.jsonl"
+        _record_attempt(journal, {
+            "event": "started", "at": datetime.now(KST).isoformat(),
+            "start_date": start_date, "end_date": end_date, "targets": targets,
+        })
 
         print(
             f"🚀 [네이버 API 직결] {len(targets)}개 종목 수집 시작: {start_date} ~ {end_date}"
         )
 
         # 1. 기준 영업일 달력 추출 (삼성전자 기준, count=4000)
-        _, cal_df, _ = fetch_stock_meta_and_candles("005930", count=4000)
+        _, cal_df, _ = fetch_stock_meta_and_candles("005930", count=4000, include_meta=False)
         if cal_df.empty:
             print("❌ 영업일 캘린더 데이터를 가져오지 못했습니다.")
-            return
+            cal_df = pd.DataFrame(index=pd.Index([], dtype=str))
 
         # 기간 필터링
         cal_df = cal_df.loc[
             (cal_df.index >= start_date) & (cal_df.index <= end_date)
         ]
-        trading_dates = list(cal_df.index)
+        trading_dates = sorted(set(cal_df.index))
 
         # 빈 날짜 예외 방어
         if not trading_dates:
             print(
                 f"❌ 지정한 기간({start_date} ~ {end_date})에 해당하는 개장일(영업일)이 없습니다."
             )
-            return
 
-        print(
-            f"📅 대상 영업일: {trading_dates[0]} ~ {trading_dates[-1]} (총 {len(trading_dates)}일)"
-        )
+        if trading_dates:
+            print(f"📅 대상 영업일: {trading_dates[0]} ~ {trading_dates[-1]} (총 {len(trading_dates)}일)")
 
         col_keys = [f"A{t}" for t in targets]
 
@@ -179,8 +181,8 @@ class FastDailyCollector:
         }
         name_map = {}
         meta_reasons: dict[str, dict] = {}
-        snapshot_rows: list[dict] = []     # last_date 시점 관측값만 (§5 tidy)
-        last_date = trading_dates[-1]
+        snapshot_rows: list[dict] = []
+        last_date = trading_dates[-1] if trading_dates else None
 
         # 2. 종목별 데이터 채우기
         success_count = 0
@@ -195,19 +197,36 @@ class FastDailyCollector:
                 end=" ",
             )
 
-            if df.empty:
-                print("⚠️ 데이터 없음")
-                continue
-
-            # 스크랩값은 "수집 시점(가장 최근 거래일)"에만 유효한 단일 스냅샷이다.
-            # 과거 거래일에 그대로 broadcast 하면 시점 위반(D-4)이므로 쓰지 않는다.
-            shares = meta["shares"]
-            float_ratio = meta["float"]
+            observed = meta.get("observed_date")
+            applicable = observed == collected_date and start_date <= collected_date <= end_date
+            shares = meta["shares"] if applicable else None
+            float_ratio = meta["float"] if applicable else None
             meta_reasons[code] = {
                 "shares_reason": meta.get("shares_reason"),
                 "float_reason": meta.get("float_reason"),
-                "shares_applied_to": last_date if shares is not None else None,
+                "observed_date": observed,
+                "shares_applied_to": collected_date if shares is not None else None,
+                "snapshot_reason": None if applicable else "observation_date_outside_request_or_unknown",
+                "candles_reason": meta.get("candles_reason") or ("no_candles" if df.empty else None),
             }
+            if start_date <= collected_date <= end_date:
+                close = df.loc[collected_date, "close"] if collected_date in df.index else None
+                snapshot_rows.append({
+                    "date": collected_date, "code": code, "name": stock_name,
+                    "shares": shares, "float": float_ratio,
+                    "mkt": int(close * shares / 100_000_000)
+                    if close is not None and pd.notna(close) and shares is not None else np.nan,
+                })
+                # 뒤 종목/가격 파일 실패가 이미 받은 당일 관측을 잃게 하지 않는다.
+                write_snapshot(self.output_dir, collected_date, pd.DataFrame([snapshot_rows[-1]]))
+            _record_attempt(journal, {
+                "event": "observed", "at": datetime.now(KST).isoformat(),
+                "code": code, "meta": meta, "reasons": meta_reasons[code],
+                "snapshot_date": collected_date if start_date <= collected_date <= end_date else None,
+            })
+            if df.empty:
+                print("⚠️ 데이터 없음")
+                continue
 
             for d in trading_dates:
                 if d in df.index:
@@ -225,19 +244,6 @@ class FastDailyCollector:
                     matrices["close"].loc[d, col] = c_close
                     matrices["tradamt"].loc[d, col] = tradamt_eok
 
-                    if d == last_date:
-                        mkt_eok = (
-                            int((c_close * shares) / 100_000_000)
-                            if shares is not None
-                            else np.nan
-                        )
-                        snapshot_rows.append({
-                            "code": code,
-                            "name": stock_name,
-                            "mkt": mkt_eok,
-                            "shares": shares if shares is not None else np.nan,
-                            "float": float_ratio if float_ratio is not None else np.nan,
-                        })
                 else:
                     for f in DAILY_FILES:
                         matrices[f].loc[d, col] = np.nan
@@ -246,13 +252,35 @@ class FastDailyCollector:
             print("✅ 완료")
             time.sleep(0.05)
 
-        if success_count == 0:
+        if success_count == 0 and not snapshot_rows:
             print("🚨 수집된 데이터가 없습니다.")
+            _record_attempt(journal, {"event": "no_data", "at": datetime.now(KST).isoformat()})
             return
 
         # 3. OHLCV CSV 저장 (기존 규격: 1행 Name, 1열 Code, CP949 인코딩)
         print(f"\n💾 {len(DAILY_FILES)}개 일봉 CSV 파일 저장 중...")
-        for f in DAILY_FILES:
+        candle_dir = self.output_dir / "unverified_fchart"
+        if success_count and trading_dates:
+            candle_dir.mkdir(parents=True, exist_ok=True)
+            # Mark the local price files BEFORE exporting any CSV. An interrupted
+            # export must not leave unlabelled adjusted prices for a consumer.
+            price_manifest = {
+                "schema_version": 1,
+                "source": "naver_fchart",
+                "price_basis": ADJUSTED,
+                "files": [f"{name}.csv" for name in DAILY_FILES],
+            }
+            marker_tmp = candle_dir / f".{uuid.uuid4().hex}.tmp"
+            try:
+                with marker_tmp.open("w", encoding="utf-8") as marker:
+                    json.dump(price_manifest, marker, ensure_ascii=False, indent=2)
+                    marker.flush()
+                    os.fsync(marker.fileno())
+                os.replace(marker_tmp, candle_dir / PRICE_MANIFEST)
+            finally:
+                marker_tmp.unlink(missing_ok=True)
+            print("  ⚠️ D-6: fchart 분할조정 가격은 unverified_fchart/에 격리합니다.")
+        for f in DAILY_FILES if success_count and trading_dates else []:
             mat = matrices[f]
             name_row = pd.DataFrame(
                 [{c: name_map.get(c, "") for c in mat.columns}], index=["Name"]
@@ -261,7 +289,7 @@ class FastDailyCollector:
             final_df.index.name = "Code"
             final_df.reset_index(inplace=True)
 
-            out_path = self.output_dir / f"{f}.csv"
+            out_path = candle_dir / f"{f}.csv"
             final_df.to_csv(out_path, encoding="CP949", index=False)
             print(f"  📁 {out_path.name} 저장 완료 (Shape: {final_df.shape})")
 
@@ -270,7 +298,7 @@ class FastDailyCollector:
         # 구조적으로 NaN — broadcast 가 다시 생길 경로가 없다.
         if snapshot_rows:
             snapshot_df = pd.DataFrame(snapshot_rows)
-            snap_path = write_snapshot(self.output_dir, last_date, snapshot_df)
+            snap_path = write_snapshot(self.output_dir, collected_date, snapshot_df)
             print(f"  📁 snapshots/{snap_path.name} 저장 완료 ({len(snapshot_df)}종목)")
             rebuild_wide_csvs(self.output_dir, name_map=name_map)
             for f in ("mkt", "shares", "float"):
@@ -281,8 +309,14 @@ class FastDailyCollector:
         # 4. shares/float 결측 사유 매니페스트 — "왜 비었는가"가 조용히 사라지지 않게.
         manifest_path = self.output_dir / "_meta_manifest.json"
         manifest = {
-            "collected_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "collected_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"),
             "last_date": last_date,
+            "observation_date": collected_date,
+            "attempt_log": str(journal),
+            "price_source": "naver_fchart",
+            "price_basis": "split_adjusted_observed",
+            "d6_status": "blocked_pending_actual_price_source",
+            "tradamt_basis": "close_times_volume_estimate",
             "note": (
                 "shares/float/mkt 는 sampledata/Daily/snapshots/ 의 tidy 스냅샷에서 "
                 "파생된다 — 스냅샷 없는 날짜는 NaN. float 는 크롤러 부재로 항상 "
@@ -294,6 +328,7 @@ class FastDailyCollector:
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         print(f"  📁 {manifest_path.name} 저장 완료 (결측 사유 {len(meta_reasons)}종목)")
+        _record_attempt(journal, {"event": "completed", "at": datetime.now(KST).isoformat()})
 
 
 if __name__ == "__main__":
@@ -303,6 +338,6 @@ if __name__ == "__main__":
     # (원하시는 기간으로 언제든 변경 가능합니다)
     collector.collect(
         start_date="20220420",
-        end_date=datetime.now().strftime("%Y%m%d"),  # 2022년부터 오늘 날짜까지
+        end_date=observation_date(),  # 2022년부터 오늘 날짜까지
         target_tickers=["000270", "005930", "000660"],
     )

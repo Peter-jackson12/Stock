@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import traceback
+from contextlib import closing
 from datetime import datetime
 from typing import Optional, Sequence
 import numpy as np
@@ -23,6 +24,8 @@ from engine.utils import (
     calculate_time_spread,
 )
 from engine.data_loader import DataLoader
+from engine.price_inputs import strict_previous_close
+from core.price_policy import PriceBasisError
 from engine.risk_manager import check_exit_signals
 from engine.strategy import (
     REQUIRED_FEATURES,
@@ -93,6 +96,7 @@ class BackTestEngine:
         universe_path=None,
         missing_threshold_pct: float = MISSING_THRESHOLD_PCT,
         strict_universe: bool = False,
+        require_actual_prices: bool = False,
     ):
         """
         codes — 대상 종목 필터. None 이면 engine.config.TARGET_CODES 를 따른다
@@ -105,6 +109,10 @@ class BackTestEngine:
 
         dates — 대상 날짜 필터(YYYYMMDD). None 이면 일봉 매트릭스의 전체 날짜.
                 특정 구간만 재현해야 하는 대조 실행에 쓴다.
+
+        require_actual_prices — True이면 일봉 디렉터리의 실제가 출처 선언을 요구한다.
+                기본 False는 과거 기준선 재현 호환용이며, 실제가 인증이 아니다.
+                알려진 수정주가는 어느 모드에서든 차단한다.
 
         feature_source — "store" 는 fs_v1 parquet 조회(기본), "inline" 은 기존
                 calculate_window_metrics() 루프 계산. 두 경로의 거래 목록이
@@ -129,7 +137,8 @@ class BackTestEngine:
         self.part = part
         self.split = split
         self.strategy = STRATEGY_NAME
-        self.loader = DataLoader()
+        self.loader = DataLoader(require_actual_prices=require_actual_prices)
+        self.require_actual_prices = require_actual_prices
         self.codes: Optional[tuple[str, ...]] = tuple(codes) if codes is not None else TARGET_CODES
         self.dates: Optional[tuple[str, ...]] = tuple(str(d) for d in dates) if dates is not None else None
 
@@ -180,6 +189,8 @@ class BackTestEngine:
             else "인라인 계산 (calculate_window_metrics)"
         )
         print(f"🚀 [Part {self.part}/{self.split}] 백테스트 엔진 가동 시작 — {source_label}")
+        if self.loader.price_provenance["price_basis"] in ("unknown", "unknown_legacy"):
+            print("⚠️ D-6: 일봉 가격 출처 미확정 — 레거시 재현 모드입니다. 실제가 검증 통과가 아닙니다.")
         self.trading = self._init_trading_dict()
         self.trades = []
 
@@ -228,32 +239,32 @@ class BackTestEngine:
             if conn is None:
                 continue
 
-            cursor = conn.cursor()
-            sec_tables = set(name[0] for name in cursor.execute("SELECT name FROM sqlite_master WHERE type='table';"))
-            seen_in_lob |= sec_tables
+            with closing(conn):
+                cursor = conn.cursor()
+                sec_tables = set(name[0] for name in cursor.execute("SELECT name FROM sqlite_master WHERE type='table';"))
+                seen_in_lob |= sec_tables
 
-            # 선언된 유니버스 ∩ 그날 수집된 종목 ∩ 일봉 매트릭스에 있는 종목.
-            # 세 번째 조건이 아직 남아 있는 이유: 종목명과 전일 종가(상한가 계산의
-            # 입력)를 일봉 매트릭스에서만 얻을 수 있기 때문이다. 그래서 여기서
-            # 빠지는 종목은 no_daily 로 집계된다 — 사라지되 세어진다.
-            targets = [
-                (daily_col[code], code)
-                for code in declared
-                if code in sec_tables and code in daily_col
-            ]
+                # 선언된 유니버스 ∩ 그날 수집된 종목 ∩ 일봉 매트릭스에 있는 종목.
+                # 세 번째 조건이 아직 남아 있는 이유: 종목명과 전일 종가(상한가 계산의
+                # 입력)를 일봉 매트릭스에서만 얻을 수 있기 때문이다. 그래서 여기서
+                # 빠지는 종목은 no_daily 로 집계된다 — 사라지되 세어진다.
+                targets = [
+                    (daily_col[code], code)
+                    for code in declared
+                    if code in sec_tables and code in daily_col
+                ]
 
-            # 🆕 Phase B-1 — 하루치 피처를 파일 하나에서 한 번에 읽는다.
-            # 종목마다 열면 같은 parquet 푸터를 종목 수만큼 다시 파싱하게 된다.
-            day_features = self._load_day_features(today_str, [c for _, c in targets])
+                # 🆕 Phase B-1 — 하루치 피처를 파일 하나에서 한 번에 읽는다.
+                # 종목마다 열면 같은 parquet 푸터를 종목 수만큼 다시 파싱하게 된다.
+                day_features = self._load_day_features(today_str, [c for _, c in targets])
 
-            for code_col, code in targets:
-                if self.feature_source == FEATURE_SOURCE_STORE and code not in day_features:
-                    missing_features.add(code)
-                    continue
-                processed.add(code)
-                self._process_stock(conn, code_col, code, today_str, day_features.get(code))
+                for code_col, code in targets:
+                    if self.feature_source == FEATURE_SOURCE_STORE and code not in day_features:
+                        missing_features.add(code)
+                        continue
+                    processed.add(code)
+                    self._process_stock(conn, code_col, code, today_str, day_features.get(code))
 
-            conn.close()
 
         self.reconciliation = reconcile(
             declared,
@@ -350,6 +361,13 @@ class BackTestEngine:
             "universe_filter": ",".join(self.codes) if self.codes else "all",
             "partition": {"part": self.part, "split": self.split},
         }
+        # Keep frozen legacy replay identity; strict runs have a separate hash.
+        if self.require_actual_prices:
+            self.run_params["price_policy"] = {
+                "require_actual_prices": True,
+                "reference_input_policy": "strict_daily_predecessor_v1",
+                **self.loader.price_provenance,
+            }
         self.run_id = make_run_id(
             strategy_id=self.strategy,
             strategy_version=STRATEGY_VERSION,
@@ -378,6 +396,8 @@ class BackTestEngine:
             notes=(
                 f"feature_source={self.feature_source} · "
                 f"universe={self.universe_spec.name} · "
+                f"daily_price_basis={self.loader.price_provenance['price_basis']} · "
+                f"require_actual_prices={self.require_actual_prices} · "
                 f"legacy CSV 병행 출력: {RESULT_DIR / f'{self.strategy}_{self.part}.csv'}"
             ),
         )
@@ -469,6 +489,10 @@ class BackTestEngine:
         (§1.6 — engine/data_loader.py 가 로드만 하고 쓰지 않던 'close' 매트릭스를
         여기서 처음 사용한다)
         """
+        if self.require_actual_prices:
+            return strict_previous_close(
+                self.daily_data.get('close'), self.daily_data.get('open'), code_col, today_str,
+            )
         csv_close = self.daily_data.get('close')
         if csv_close is None or code_col not in csv_close.columns:
             return None
@@ -550,7 +574,12 @@ class BackTestEngine:
 
             # 수치 데이터 타입 강제 변환 (SQLite 문자열 타입 방지)
             times = np.array(raw_data[0]).astype(str)
-            opens = np.array(raw_data[1]).astype(float)
+            try:
+                opens = np.array(raw_data[1]).astype(float)
+            except (TypeError, ValueError) as exc:
+                if self.require_actual_prices:
+                    raise PriceBasisError(f"D-6 {today_str}/{code}: LOB 시가를 숫자로 변환할 수 없습니다") from exc
+                raise
             highs = np.array(raw_data[2]).astype(float)
             lows = np.array(raw_data[3]).astype(float)
             closes = np.array(raw_data[4]).astype(float)
@@ -571,6 +600,8 @@ class BackTestEngine:
             #
             # ⚠️ 두 값 모두 백테스트 결과를 바꾼다 — 상수가 아니라 실제 계산이기 때문이다.
             prev_close = self._prev_close(code_col, today_str)
+            if self.require_actual_prices and (not np.isfinite(opens[0]) or opens[0] <= 0):
+                raise PriceBasisError(f"D-6 {today_str}/{code}: LOB 당일 시가가 양의 유한값이 아닙니다")
             if prev_close is not None:
                 upper = calculate_upperlimit(prev_close, today_str)
             else:
@@ -668,6 +699,9 @@ class BackTestEngine:
                     stock['entry_price'] = stock['high'][stock['entry_t']]
                     print(f"★ [매수 진입] 종목: {stock['name']}({code}), 시간: {time_str}, 진입가: {stock['entry_price']}")
 
+        except PriceBasisError:
+            # Invalid strict inputs must fail the run, not become a skipped stock.
+            raise
         except Exception as e:
             # 에러 원인 출력 (숨기지 않음!)
             # stock 딕셔너리는 try 블록 중간(위 stock = {...})에서만 만들어진다.

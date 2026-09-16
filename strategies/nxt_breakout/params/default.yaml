@@ -92,3 +92,9 @@ account:
   max_positions: 3                # 동시 보유 종목 수
   max_position_pct: 0.34          # 종목당 최대 비중
   daily_loss_limit_pct: -2.0      # 일일 손실 한도 초과 시 당일 신규 진입 정지
+
+# D-6 계약. fchart 분할조정 가격은 절대 가격 판단용으로 사용할 수 없다.
+price_policy:
+  absolute_levels: actual_at_event_time
+  adjusted_prices: ratio_calculations_only
+  daily_source_basis: actual_required
