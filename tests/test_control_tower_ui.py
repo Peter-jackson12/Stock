@@ -27,11 +27,28 @@ def enter(app, label, value):
 def test_initial_screen_never_starts_worker_or_creates_jobs(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(ui, "start_inspection_worker", lambda: calls.append(True))
+    monkeypatch.setattr(ui, "start_managed_capture", lambda *args: calls.append(True))
     app = screen(tmp_path)
     assert not app.exception
     assert app.title[0].value == "Stock 운영 관리"
     assert len(app.tabs) == 4
     assert not calls and not JobStore(tmp_path).path.exists()
+    assert not ui.ManagedCaptures(tmp_path).path.exists()
+
+
+def test_capture_start_requires_click_and_stop_is_durable(tmp_path, monkeypatch):
+    calls = []
+    def start(root, codes, duration, server):
+        calls.append((codes, duration, server))
+        return ui.ManagedCaptures(root).create(codes, duration, server, ["C:/fixture/python.exe"])[0]
+    monkeypatch.setattr(ui, "start_managed_capture", start)
+    app = screen(tmp_path)
+    button(app, "소규모 수집 시작 · 로그인").click().run()
+    assert not app.exception and calls == [(["005930"], 60, "mock")]
+    button(app, "상태 새로고침").click().run()
+    assert button(app, "소규모 수집 시작 · 로그인").disabled
+    button(app, "이 관리 세션 종료 요청").click().run()
+    assert ui.ManagedCaptures(tmp_path).get()["state"] == "cancelled"
 
 
 def test_raw_session_panel_separates_callback_and_raw_counts(tmp_path, monkeypatch):

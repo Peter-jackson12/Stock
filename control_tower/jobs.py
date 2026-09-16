@@ -109,6 +109,23 @@ class JobStore:
             job = self._record(row)
             return job | {"status": "running", "owner": owner}
 
+    def queue_replay(self, job_id):
+        with self._write() as conn:
+            changed = conn.execute("UPDATE jobs SET status='queued',updated_at=? WHERE id=? AND kind='replay_raw_v2' AND status='planned'",
+                (utc_now(), job_id)).rowcount
+            if changed != 1:
+                raise ValueError("only an unexecuted replay plan can be queued")
+
+    def claim_replay(self, job_id, owner):
+        if not owner:
+            raise ValueError("worker identity required")
+        with self._write() as conn:
+            row = conn.execute("SELECT * FROM jobs WHERE id=? AND kind='replay_raw_v2' AND status='queued'", (job_id,)).fetchone()
+            if row is None:
+                return None
+            conn.execute("UPDATE jobs SET status='running',owner=?,updated_at=? WHERE id=?", (owner, utc_now(), job_id))
+            return self._record(row) | {"status": "running", "owner": owner}
+
     def complete(self, job_id, owner, *, result=None, error=None):
         if (result is None) == (error is None):
             raise ValueError("exactly one worker outcome required")

@@ -7,10 +7,12 @@ import streamlit as st
 from control_tower.jobs import JobStore
 from control_tower.service import queue_inspection, plan_replay, start_inspection_worker
 from control_tower.status import observe_collector, observe_raw_capture
+from control_tower.managed_capture import ManagedCaptures, start_managed_capture, ACTIVE
+from control_tower.offline_worker import start_replay_worker, retry_replay_worker
 
 ROOT = Path(__file__).resolve().parents[1]
-JOB_STATUS = {"planned": "장외 계획 · 실행 미연결", "queued": "조회 대기", "running": "조회 중 · 상태 확인 필요 시 이력 보존",
-              "succeeded": "조회 완료", "failed": "조회 실패", "cancelled": "취소됨"}
+JOB_STATUS = {"planned": "장외 계획", "queued": "실행 대기", "running": "실행 중 · 상태 확인 필요 시 이력 보존",
+              "succeeded": "작업 완료", "failed": "작업 실패", "cancelled": "취소됨"}
 
 
 def render_control_tower(root=None):
@@ -53,7 +55,7 @@ def render_control_tower(root=None):
         st.warning("로그 시각이 현재보다 앞섭니다. PC 시각을 확인하세요.")
     else:
         st.info("오늘의 읽을 수 있는 하트비트가 없습니다. 수집 중/중지 여부는 미확인입니다.")
-    st.caption("현재 수집기는 이 화면 밖에서 실행됩니다. 시작·종료 제어는 아직 연결하지 않았습니다.")
+    render_capture_controls(root)
     with st.expander("최근 로그 메시지와 관측 근거"):
         st.text(observation["log_path"])
         st.text("\n".join(observation["recent_messages"]) or "읽은 로그 끝부분에 해당 메시지가 없습니다.")
@@ -86,7 +88,7 @@ def render_control_tower(root=None):
         st.caption("화면 연결이 끊겨도 실행된 워커와 기록은 유지됩니다. 워커가 중단된 실행은 자동 재실행하지 않습니다.")
 
     with plan_tab:
-        st.write("종료된 raw v2의 재생 설정을 저장합니다. 지금은 계획 저장만 가능하며 실제 재생은 시작하지 않습니다.")
+        st.write("종료된 raw v2의 재생 설정을 저장합니다. 작업 이력에서 장외 검사·재생을 별도로 실행할 수 있습니다.")
         with st.form("replay_plan_form"):
             db = st.text_input("닫힌 raw v2 경로", placeholder="sampledata/raw_ticks_v2/<session>.db", key="control_db")
             code = st.text_input("종목 코드", value="005930")
@@ -110,7 +112,7 @@ def render_control_tower(root=None):
                 st.error(f"계획을 저장하지 못했습니다: {exc}")
             else:
                 st.success(f"장외 계획 저장: {job_id}")
-        st.caption("헤더의 closed 표기만 확인합니다. 전체 체크섬·품질·운영 수집 종료 확인은 실행 전 별도로 필요합니다.")
+        st.caption("계획 저장은 헤더만 확인합니다. 별도 실행 시 전체 무결성을 검사하며, 화면 실행은 32 MiB·10만 raw 이내로 제한합니다.")
 
     with history_tab:
         try:
@@ -133,6 +135,14 @@ def render_control_tower(root=None):
                     if job["error"]:
                         st.error(job["error"])
                     st.json(job["payload"])
+                    if job["kind"] == "replay_raw_v2" and job["status"] in ("planned", "queued"):
+                        if st.button("장외 검사·재생 실행", key=f"replay_{job['id']}"):
+                            try:
+                                start = start_replay_worker if job["status"] == "planned" else retry_replay_worker
+                                start(root, job["id"])
+                                st.success("워커 시작을 요청했습니다. 결과는 새로고침으로 확인하세요.")
+                            except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+                                st.error(f"재생 시작 미완료: {exc}")
                     if job["status"] in ("queued", "planned"):
                         if st.button("이 대기 작업 취소", key=f"cancel_{job['id']}"):
                             try:
@@ -146,10 +156,51 @@ def render_control_tower(root=None):
                                     st.warning("이미 실행되었거나 상태가 바뀌어 취소하지 않았습니다.")
 
     with connections_tab:
-        st.markdown("""- **키움 수집:** 로그 관측 연결. 프로세스 시작·정상 종료 제어 미연결.
+        st.markdown("""- **키움 수집:** 로그 관측 및 이 화면에서 만든 소규모 세션의 시작·종료 요청 연결.
 - **raw v2:** 운영 수집기 기본 저장 경로와 상태 관측 연결. 실피드 부하·품질 검증은 별도.
 - **연구 결과:** 별도 경량 워커로 조회 가능. 수익률·총자산을 새로 계산하지 않음.
+- **장외 재생:** 닫힌 소규모 raw v2 전체 무결성 검사 후 별도 워커에서 재생. 품질 오류는 실패로 보존.
 - **기존 백테스트 분석:** 왼쪽 화면 선택에서 분석으로 이동.
 - **일봉·메타데이터:** 개별 파일럿 유지. 자동 작업 연결 미완료.
 - **모의·실전 주문:** 미구현. 주문 전송 버튼 없음.""")
         st.caption("다음 단계: 수집기 제어 계약 → 장외 작업 워커 → 종료/데이터 검증 후 단계별 실행. 로그인과 원격 접근 설정은 별도입니다.")
+
+
+def render_capture_controls(root):
+    store = ManagedCaptures(root)
+    with st.expander("소규모 수집 시작·종료"):
+        st.caption("시작하면 별도 32비트 수집기에서 키움 로그인이 열립니다. 최대 10종목·300초이며 기존 수집기를 인수하지 않습니다.")
+        try:
+            current = store.get()
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            st.error(f"수집 제어 기록 확인 실패: {exc}")
+            return
+        active = current is not None and current["state"] in ACTIVE
+        if current:
+            st.write(f"관리 요청 {current['id']} · 기록 상태 {current['state']}")
+            st.caption(f"기록 갱신 {current['updated']} · 현재 생존/무누락 인증이 아닙니다.")
+            if current["error"]:
+                st.error(current["error"])
+            if active and st.button("이 관리 세션 종료 요청", key="capture_stop"):
+                try:
+                    store.request_stop(current["id"])
+                    st.success("종료 요청을 저장했습니다. 저장 완료 보고는 새로고침하여 확인하세요.")
+                except (OSError, ValueError, sqlite3.Error) as exc:
+                    st.error(f"종료 요청 실패: {exc}")
+            if active and current["owner"] and st.button("종료된 관리 프로세스 이력 대조", key="capture_reconcile"):
+                try:
+                    state = store.reconcile(current["id"])
+                    st.success(f"저장 보고 대조 결과: {state}. 원본 무결성·품질 검사는 별도입니다.")
+                except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+                    st.error(f"대조 미완료: {exc}")
+        with st.form("capture_start_form"):
+            codes = st.text_input("수집 종목 (쉼표 구분)", value="005930", key="capture_codes")
+            duration = st.number_input("수집 시간 (초)", min_value=1, max_value=300, value=60, step=1)
+            server = st.selectbox("로그인할 서버", ["mock", "live"])
+            start = st.form_submit_button("소규모 수집 시작 · 로그인", disabled=active)
+        if start:
+            try:
+                launch = start_managed_capture(root, [c.strip() for c in codes.split(",")], int(duration), server)
+                st.success(f"시작 요청 저장: {launch}. 실제 로그인 서버가 다르면 수집하지 않습니다.")
+            except (OSError, ValueError, KeyError, sqlite3.Error) as exc:
+                st.error(f"시작 요청 실패: {exc}")

@@ -104,7 +104,7 @@ class LiveRawCapture:
             temporary.replace(path)
         self._last_status = now
 
-    def finish(self, reason):
+    def finish(self, reason, command=None):
         if self._finished:
             return self.queue.snapshot()["state"] == "closed" and not self.error
         self._finished = True
@@ -113,7 +113,7 @@ class LiveRawCapture:
             if self.error:
                 raise RuntimeError(self.error)
             reports = QueueStopReports(self.queue, self.identity).stop(
-                None, self.report, close_ns=time.perf_counter_ns())
+                command, self.report, close_ns=time.perf_counter_ns())
             for report in reports:
                 self.journal.append(report)
                 self.report = report

@@ -66,10 +66,12 @@ class KiwoomUniverseLogger:
         code_revision=None,
         codes=None,
         duration_seconds=None,
+        managed=None,
     ):
         if storage not in ("raw-v1", "raw-v2"):
             raise ValueError("unsupported storage backend")
         self.storage = storage
+        self.managed = managed
         self.code_revision = code_revision or subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, text=True, timeout=3).strip()
         self.codes, self.duration_seconds = codes, duration_seconds
@@ -140,6 +142,15 @@ class KiwoomUniverseLogger:
         # In particular, SIGINT must not drain while a callback is about to put().
         if self._shutdown_done:
             return
+        if self.managed is not None:
+            try:
+                if self.managed.poll():
+                    self._shutdown_requested = "관리 화면 종료 요청"
+            except Exception as exc:
+                if self.raw_capture is not None:
+                    self.raw_capture.queue.abort(f"managed control failed: {exc}")
+                self.exit_code = 2
+                self._shutdown_requested = "관리 채널 오류"
         if self.writer is not None and self.writer.error:
             self._shutdown_requested = "DB 저장 오류"
         if self.raw_capture is not None:
@@ -155,6 +166,9 @@ class KiwoomUniverseLogger:
             self._shutdown(self._shutdown_requested)
 
     def start(self):
+        if self.managed is not None and self.managed.poll():
+            self._shutdown("로그인 전 취소")
+            return self.exit_code
         self.monitor.start()
         self.log.emit("=" * 65)
         self.log.emit("🚀 [키움증권 보통주 전 종목 실시간 틱/호가 수집 데몬]")
@@ -172,6 +186,15 @@ class KiwoomUniverseLogger:
     def _on_login(self, err_code: int):
         if self._shutdown_done:
             return
+        if self.managed is not None:
+            try:
+                if self.managed.poll():
+                    self._shutdown("로그인 중 취소")
+                    return
+            except Exception as exc:
+                self.exit_code = 2
+                self._shutdown(f"관리 채널 오류: {exc}")
+                return
         if self._login_handled:
             self.exit_code = 2
             if self.raw_capture is not None:
@@ -194,7 +217,11 @@ class KiwoomUniverseLogger:
                 server = {"1": "mock", "0": "live"}.get(flag)
                 if server is None:
                     raise ValueError(f"unknown server flag: {flag!r}")
+                if self.managed is not None and server != self.managed.plan["server"]:
+                    raise ValueError("observed server does not match requested server")
                 self.raw_capture = LiveRawCapture(PROJECT_ROOT, server=server, code_revision=self.code_revision)
+                if self.managed is not None:
+                    self.managed.bind(self.raw_capture.report)
                 self.writer = self.raw_capture
                 self.db_path = self.raw_capture.path
                 self.log.emit(f"📁 raw v2 저장 파일: {self.db_path}")
@@ -202,6 +229,8 @@ class KiwoomUniverseLogger:
             except Exception as exc:
                 self.exit_code = 2
                 self.log.emit(f"❌ raw v2 시작 실패: {exc}")
+                if self.raw_capture is not None:
+                    self.raw_capture.queue.abort(f"startup failed: {exc}")
                 self._shutdown("raw v2 시작 실패")
                 return
         else:
@@ -410,9 +439,12 @@ class KiwoomUniverseLogger:
         report = self.monitor.finish(reason)
         self.log.emit("💾 수신을 멈추고 남은 체결/호가의 DB 커밋을 기다립니다.")
         if self.storage == "raw-v2":
-            clean = self.raw_capture is not None and self.raw_capture.finish(reason)
+            command = self.managed.stop[1] if self.managed is not None and self.managed.stop else None
+            clean = self.raw_capture is not None and self.raw_capture.finish(reason, command=command)
             if not clean:
-                self.exit_code = 2
+                cancelled_before_capture = self.raw_capture is None and self.managed is not None and self.managed.stop
+                if not cancelled_before_capture:
+                    self.exit_code = 2
                 self.log.emit(f"❌ raw v2 종료 미확인: {self.raw_capture.error if self.raw_capture else reason}")
             else:
                 snapshot = self.raw_capture.queue.snapshot()
@@ -468,6 +500,7 @@ if __name__ == "__main__":
     parser.add_argument("--codes", help="explicit comma-separated common-stock codes for a small run")
     parser.add_argument("--duration-seconds", type=int)
     parser.add_argument("--preflight", action="store_true", help="read-only environment check; no OCX instance/login")
+    parser.add_argument("--managed-launch", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.preflight:
         from collector.kiwoom.preflight import inspect_environment
@@ -481,14 +514,40 @@ if __name__ == "__main__":
         parser.error("--duration-seconds requires --codes and 1..300 seconds")
     from collector.kiwoom.collector_lease import CollectorLease
     with CollectorLease(PROJECT_ROOT):
-        logger = KiwoomUniverseLogger(storage=args.storage, codes=codes, duration_seconds=args.duration_seconds)
+        managed = None
+        if args.managed_launch:
+            if codes or args.duration_seconds is not None or args.storage != "raw-v2":
+                parser.error("managed launch uses its stored plan only")
+            from control_tower.managed_capture import ManagedCapturePeer, TOKEN_ENV
+            managed = ManagedCapturePeer(PROJECT_ROOT, args.managed_launch, os.environ.pop(TOKEN_ENV, ""))
+            codes, args.duration_seconds = managed.plan["codes"], managed.plan["duration"]
+        logger = None
+        failure = None
         try:
+            if managed is not None and managed.poll():
+                managed.finish()
+                sys.exit(0)
+            logger = KiwoomUniverseLogger(storage=args.storage, codes=codes,
+                duration_seconds=args.duration_seconds, managed=managed)
             logger.start()
         except KeyboardInterrupt:
-            logger._shutdown("사용자 중단 (Ctrl+C)")
+            if logger is not None:
+                logger._shutdown("사용자 중단 (Ctrl+C)")
+        except BaseException as exc:
+            failure = f"{type(exc).__name__}: {exc}"
+            raise
         finally:
             # Keep the lease while any accepted data is still being drained.
-            if logger.raw_capture is not None:
+            if logger is not None and logger.raw_capture is not None:
+                if not logger._shutdown_done:
+                    logger.raw_capture.queue.abort(failure or "unexpected collector exit")
                 while not logger.raw_capture.queue.wait(5):
                     print("raw v2 저장 워커 종료 대기 중", flush=True)
+            if managed is not None and not managed.finished:
+                capture = logger.raw_capture if logger is not None else None
+                report = capture.report if capture is not None and capture.report.state == "closed" else None
+                error = failure or (capture.error if capture else None)
+                if error is None and logger is not None and logger.exit_code:
+                    error = f"collector exited with code {logger.exit_code}; see capture log"
+                managed.finish(report, error)
         sys.exit(logger.exit_code)
