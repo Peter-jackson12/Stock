@@ -1,8 +1,8 @@
 """Durable control history and explicit manager recovery; no transport or raw I/O.
 
-Each handle has one serialized caller. Recovering a registered session fences old
-handles in SQLite, not at an external peer. A future transport must also fence
-dispatch: a command already returned to an old caller cannot be recalled here.
+Each handle has one serialized caller. Guarded dispatch serializes local sender
+acceptance against recovery. It cannot recall bytes already sent or authenticate
+a remote peer. Future transports must bound sends and preserve session identity.
 """
 from contextlib import contextmanager
 from copy import deepcopy
@@ -16,6 +16,8 @@ from control_tower.lifecycle import (
     CaptureLifecycle, ProcessIdentity, decode_report, decode_stop,
     encode_report, encode_stop,
 )
+
+MAX_RECONCILE_REPORTS = 128
 
 
 class StaleManagerError(RuntimeError):
@@ -121,6 +123,22 @@ def _apply(manager, kind, payload):
         return manager.lost_contact(manager.identity, **payload)
     if kind == "recovery" and payload == {}:
         return manager.manager_restarted()
+    if kind == "dispatch" and set(payload) == {"command", "now_ns"}:
+        return manager.record_dispatch(decode_stop(payload["command"]), now_ns=payload["now_ns"])
+    if kind == "reconcile" and set(payload) == {"reports", "now_ns"}:
+        reports = payload["reports"]
+        if not isinstance(reports, list) or not 1 <= len(reports) <= MAX_RECONCILE_REPORTS:
+            raise ValueError("bounded nonempty report batch required")
+        for text in reports:
+            report = decode_report(text)
+            expected = 1 if manager.report is None else manager.report.revision + 1
+            if report.revision != expected:
+                raise ValueError("reconciliation requires the next contiguous revision")
+            manager.receive(report, now_ns=payload["now_ns"])
+        # Historical delivery is not a fresh heartbeat, even if it fills the gap.
+        manager.lost_contact(manager.identity, reason="history reconciled; fresh heartbeat required",
+                             now_ns=payload["now_ns"])
+        return len(reports)
     raise ValueError("unsupported control history event")
 
 
@@ -168,6 +186,16 @@ class DurableCapture:
     def receive(self, report, *, now_ns):
         return self._mutate("report", {"report": encode_report(report), "now_ns": now_ns})
 
+    def reconcile(self, reports, *, now_ns):
+        """Atomically validate/store a bounded page of missing historical reports.
+
+        Call receive only for subsequent fresh reports from the live channel.
+        Duplicates/gaps invalidate the whole page. This method never dispatches stop.
+        """
+        if not isinstance(reports, (list, tuple)) or not 1 <= len(reports) <= MAX_RECONCILE_REPORTS:
+            raise ValueError("bounded nonempty report batch required")
+        return self._mutate("reconcile", {"reports": [encode_report(r) for r in reports], "now_ns": now_ns})
+
     def request_stop(self, request_id, target, *, now_ns, timeout_ns):
         if self._recovered_command:
             raise ValueError("recovered stop is audit-only; reconcile reports, do not resend")
@@ -180,6 +208,31 @@ class DurableCapture:
         if identity != self.identity:
             raise ValueError("process/session identity mismatch")
         return self._mutate("loss", {"reason": reason, "now_ns": now_ns})
+
+    def dispatch_stop(self, sender, *, now_ns):
+        """Commit intent, then fence a bounded synchronous sender against takeover.
+
+        sender(command) must not call back into this store; network implementations
+        need their own short timeout. Its return value is not a completion report.
+        An attempted dispatch is never retried, including failure before delivery.
+        Local SQLite ownership cannot retract a command already accepted by a peer.
+        """
+        if self._recovered_command:
+            raise ValueError("recovered stop is audit-only; reconcile reports, do not resend")
+        command = self.stop_command
+        if command is None or not callable(sender):
+            raise ValueError("stored stop and callable sender required")
+        self._mutate("dispatch", {"command": encode_stop(command), "now_ns": now_ns})
+        try:
+            with self._history._write() as conn:
+                self._check_owner(conn)
+                sender(command)
+        except BaseException:
+            try:
+                self.lost_contact(self.identity, reason="dispatch outcome unknown", now_ns=now_ns)
+            except (StaleManagerError, sqlite3.Error):
+                pass  # persisted intent still prevents retry after recovery
+            raise
 
     def view(self, *, now_ns):
         # Read-only ownership check; viewing never writes or renews peer liveness.

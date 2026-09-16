@@ -1,8 +1,8 @@
 """Synchronous, injectable capture-session prototype; NOT an OCX callback adapter.
 
 All stamps must be taken by the caller at callback entry. This class performs
-SQLite I/O and must not be dropped into a live Qt callback. A bounded queue/worker
-and on-device latency tests are required before deployment.
+SQLite I/O and must not be dropped into a live Qt callback. QueuedCapture owns it
+on a dedicated worker; actual OCX wiring and latency tests remain prerequisites.
 """
 from collector.raw_v2 import RawV2Writer, CaptureControl
 from collector.kiwoom.tick_normalizer import normalize_tick

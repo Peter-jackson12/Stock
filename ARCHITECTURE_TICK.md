@@ -133,7 +133,8 @@ prototype_2는 CaptureControl을 공통 seq에 포함한다. disconnect/reconnec
 queue_overflow/callback_error가 있으면 기본 연구 실행을 실패 처리한다.
 session_start/note는 정보 기록이며 close는 파일의 종료 상태일 뿐 품질 인증이 아니다.
 `capture_session.py`는 원문 정규화와 제어 이벤트 보존을 잇는 동기식 테스트 프로토타입이다.
-중단 후에는 새 세션/파일이 필요하다. 실제 큐 overflow 감지/네트워크 재접속 구현은 별도다.
+중단 후에는 새 세션/파일이 필요하다. `queued_capture.py`가 제한 큐·저장 워커·overflow 보존을 연결한다.
+실제 OCX 콜백 연결·네트워크 재접속·부하 검증은 별도다. 큐/종료 계약은 [CONTROL_TOWER §5](CONTROL_TOWER.md#5-제어-계약과-후속-운영-연결)를 본다.
 
 - 32비트 수집기는 최소 파싱·순번 부여·큐 적재만 담당한다. 전략 계산과 원본 DB 대량 조회를 넣지 않는다.
 - 단일 기록기가 순서가 있는 큐를 받아 batch commit한다. 지연·대기 건수·미커밋 건수를 분리해서 측정한다.

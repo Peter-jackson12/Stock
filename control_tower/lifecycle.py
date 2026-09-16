@@ -244,6 +244,7 @@ class CaptureLifecycle:
         self._stop_deadline = None
         self._stop_acknowledged = False
         self._stop_completed = False
+        self._dispatch_attempted = False
         self._last_seen = None
         self._clock = -1
         self._lost_reason = None
@@ -349,3 +350,12 @@ class CaptureLifecycle:
         self.stop_command = StopCommand(request_id, self.identity, self.report.revision)
         self._stop_deadline = now_ns + timeout_ns
         return self.stop_command
+
+    def record_dispatch(self, command, *, now_ns):
+        """Record one dispatch intent; delivery/acknowledgement is a separate fact."""
+        self._now(now_ns)
+        if command != self.stop_command or command is None:
+            raise ValueError("dispatch must match the stored stop")
+        if self._dispatch_attempted or self.view(now_ns=now_ns)["stop_status"] != "pending":
+            raise ValueError("stop cannot be dispatched again or after uncertainty")
+        self._dispatch_attempted = True

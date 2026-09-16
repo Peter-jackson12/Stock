@@ -21,6 +21,9 @@ uv sync
 ```
 
 현재 수집기는 raw v1 형식이다. raw v2 콜백/큐 연결은 미적용이며 컨트롤 타워의 시작 버튼도 아직 없다.
+새 `queued_capture.py`는 합성 입력의 전용 저장 워커까지 구현했다. OCX를 쓰지 않는 32/64비트
+연결 점검은 `scripts/probe_raw_v2_queue.py`로 실행하며, 새 파일을 `operations_state/queue_probes/`에 만든다.
+실제 콜백 필드·지연·부하를 확인하기 전 기존 수집기를 이 코드로 교체하지 않는다.
 KIS `collector/run_daily_daemon.py`는 별도 프로그램으로 같은 날짜 raw 경로를 사용하므로
 키움 후처리를 하려고 함께 실행하지 않는다. 현재 수집기는 메타데이터나 백테스트를 자동 실행하지 않는다.
 
