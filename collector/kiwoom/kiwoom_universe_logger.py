@@ -39,6 +39,9 @@ signal.signal(signal.SIGINT, signal.SIG_DFL)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+#: 실시간 등록 FID. 전 종목 경로와 구독 계획 경로가 같은 목록을 쓴다.
+REAL_FIDS = "20;10;15;14;27;28;21;" + ";".join(str(f) for f in range(41, 81))
+
 RAW_DIR = PROJECT_ROOT / "sampledata" / "raw_ticks"
 LOG_DIR = PROJECT_ROOT / "logs"
 
@@ -51,7 +54,9 @@ from collector.kiwoom.session_monitor import (                         # noqa: E
 )
 
 
+from collector.kiwoom.market_sessions import resolve_profile  # noqa: E402
 from collector.kiwoom.resource_log import ResourceHistory  # noqa: E402
+from collector.kiwoom.subscription_plan import MODE_NXT  # noqa: E402
 from collector.kiwoom.tick_writer import TickWriter  # noqa: E402
 from collector.kiwoom.live_capture import LiveRawCapture  # noqa: E402
 
@@ -69,6 +74,7 @@ class KiwoomUniverseLogger:
         duration_seconds=None,
         managed=None,
         diagnostics=None,
+        plan=None,
     ):
         if storage not in ("raw-v1", "raw-v2"):
             raise ValueError("unsupported storage backend")
@@ -78,6 +84,13 @@ class KiwoomUniverseLogger:
         self.code_revision = code_revision or subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, text=True, timeout=3).strip()
         self.codes, self.duration_seconds = codes, duration_seconds
+        # 구독 계획. None 이면 기존 정규장 경로 그대로다 — 접미사 허용은 계획이 있을 때만이다.
+        self.plan = plan
+        if plan is not None:
+            if codes is not None:
+                raise ValueError("구독 계획과 --codes 를 함께 줄 수 없다")
+            if plan.mode != MODE_NXT:
+                raise ValueError("구독 계획은 명시적 NXT 모드에서만 받는다")
         self._subscribed_at = None
         self.raw_capture = None
         self._login_handled = False
@@ -99,6 +112,7 @@ class KiwoomUniverseLogger:
         # 수신 침묵 감시기 + 대기큐 적체 감시기(발견 #13). 판정은 _stats_worker 의
         # 기존 1초 루프에서만 돈다.
         self.monitor = SessionMonitor(
+            sessions=None if plan is None else resolve_profile(plan.market_profile),
             gap_threshold_sec=gap_threshold_sec,
             queue_backlog_floor=queue_backlog_floor,
             queue_stuck_window_sec=queue_stuck_window_sec,
@@ -237,6 +251,12 @@ class KiwoomUniverseLogger:
                 self.resources = ResourceHistory(
                     self.raw_capture.directory / "resource_history.jsonl", clock=time.monotonic)
                 self.resources.sample(force=True)
+                if self.plan is not None:
+                    # 목록 근거·시장 프로필·구독 원문을 세션에 남긴다. 상태 파일과 달리 덮어쓰지 않는다.
+                    record = self.raw_capture.directory / "subscription_plan.json"
+                    record.write_text(json.dumps(self.plan.describe(), ensure_ascii=False, indent=2),
+                                      encoding="utf-8")
+                    self.log.emit(f"📝 구독 계획 근거: {record}")
             except Exception as exc:
                 self.exit_code = 2
                 self.log.emit(f"❌ raw v2 시작 실패: {exc}")
@@ -266,6 +286,8 @@ class KiwoomUniverseLogger:
 
     def _register_all_universe(self):
         """코스피/코스닥에서 순수 보통주만 선별하여 100개씩 화면번호 분할 등록"""
+        if self.plan is not None:
+            return self._register_plan()
         self.log.emit("🔍 코스피 및 코스닥 전 종목 코드 추출 중...")
         kospi_raw = self.ocx.dynamicCall("GetCodeListByMarket(QString)", "0")
         kosdaq_raw = self.ocx.dynamicCall("GetCodeListByMarket(QString)", "10")
@@ -296,8 +318,8 @@ class KiwoomUniverseLogger:
         if not filtered_codes:
             raise ValueError("empty collection universe")
 
-        # 2. FID 리스트 정의 (27:최우선매도호가, 28:최우선매수호가 추가로 정밀 매수 판정 지원)
-        fids = "20;10;15;14;27;28;21;" + ";".join(str(f) for f in range(41, 81))
+        # 2. FID 리스트 (27:최우선매도호가, 28:최우선매수호가 추가로 정밀 매수 판정 지원)
+        fids = REAL_FIDS
 
         # 3. 100개씩 청크 분할하여 화면번호(1000, 1001, ...) 부여
         chunk_size = 100
@@ -322,6 +344,25 @@ class KiwoomUniverseLogger:
 
         self.log.emit(f"✅ 코스피/코스닥 보통주 ({len(filtered_codes)}개) 실시간 수신 등록 완료!")
         self.log.emit("🔴 실시간 체결/호가 수집 가동 중... (종료하려면 터미널에서 Ctrl + C)")
+
+    def _register_plan(self):
+        """구독 계획의 코드만 등록한다. 조회로 받는 여섯 자리 목록을 NXT 대상으로 쓰지 않는다.
+
+        접미사 코드는 조회 목록에 없으므로 기존 '관측된 보통주에 있는가' 검사를 적용하지 않는다.
+        대신 목록의 출처·확인 시각을 기록에 남겨 근거를 추적 가능하게 둔다.
+        """
+        plan = self.plan
+        self.log.emit(f"📡 구독 계획 등록 — {plan.mode} / {plan.market_profile} / {len(plan.codes)}종목")
+        self.log.emit(f"   목록 출처: {plan.source.origin} (확인 {plan.source.verified_at})")
+        self.log.emit("   NXT 거래 대상 확인: "
+                      + ("확인됨" if plan.source.nxt_eligibility_confirmed else "미확인 — 사용자 입력일 뿐이다"))
+        result = self.ocx.dynamicCall(
+            "SetRealReg(QString, QString, QString, QString)",
+            "1000", ";".join(plan.codes), REAL_FIDS, "0")
+        if str(result).strip() != "0":
+            raise RuntimeError(f"SetRealReg rejected plan codes: {result!r}")
+        self.log.emit(f"✅ 실시간 수신 등록 완료: {', '.join(plan.codes)}")
+        self.log.emit("접미사는 라우팅 근거이며 개별 체결 venue 와 NXT coverage 는 미확인이다.")
 
     def _on_receive_real_data(self, code: str, real_type: str, real_data: str):
         """Capture entry clocks before extracting raw FIDs on the Qt thread."""
@@ -448,7 +489,9 @@ class KiwoomUniverseLogger:
                 if self._subscribed_at is not None and time.monotonic() - self._subscribed_at >= self.duration_seconds:
                     self._shutdown_requested = "제한 수집 시간 종료"
                     break
-            elif now_int >= 153500:
+            elif self.plan is None and now_int >= 153500:
+                # 정규장 전용 종료다. 구독 계획 모드(애프터마켓 포함)에는 적용하지 않는다 —
+                # 15:35 를 20:00 으로 미루는 것으로는 부족하다는 런북 지적에 따른다.
                 self.log.end_status_line()
                 self.log.emit("🔔 [15:35 장 마감 감지] 전 종목 수집을 종료합니다.")
                 self._shutdown_requested = "장 마감 (15:35)"
