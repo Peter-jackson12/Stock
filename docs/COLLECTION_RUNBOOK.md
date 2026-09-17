@@ -133,6 +133,39 @@ KIS `collector/run_daily_daemon.py`는 별도 프로그램으로 같은 날짜 r
 짧은 읽기 전용 관측을 사용할 수 있다. 전체 건수 집계·해시·인덱스 생성·변환은 장외 작업이다.
 하트비트가 최근이라는 이유만으로 무누락·DB 저장 완료·매수 방향 정확성을 인증하지 않는다.
 
+### 2026-09-17 수신 정체와 네이티브 충돌 조사
+
+10:31:20 마지막 수신 이후 저장 대기 0, Qt 상태 갱신과 키움 CommsLog의 주기 송신은
+11:29까지 계속됐다. 이는 저장 큐 적체를 지지하지 않지만, 실제 서버 수신/구독 유효성을 증명하지 않는다.
+11:30:26 PID 18796의 Windows 오류 1000과 1001, 정상 종료 보고 부재를 대조했다.
+사용자가 해당 시각 창을 닫았는지는 확인 중이다. 수신 정체와 종료 중 충돌일 가능성을 구분해야 한다.
+
+로컬 덤프 `python.exe.18796.dmp`(4,167,178바이트)를 보존하고 두 파서로 확인했다.
+예외 c0000005, 정보 [8, 0]은 주소 0 실행 접근 위반이다.
+덤프에는 스레드 14636 하나만 있으며 x86 EIP=0, ESP=0x0629ca0c다.
+ESP의 값 0x074476fb는 AhnLab Safe Transaction `mkd25sdk.dll+0x76fb`이고,
+설치 DLL의 직전 명령(+0x76f5)은 간접 `call [0x10027ac0]`이다.
+재배치된 함수 포인터 0x07467ac0의 덤프 값은 0이었다.
+설치 DLL과 덤프 모듈의 PE timestamp=1783062464, 이미지 크기=184320도 일치한다.
+따라서 보안 모듈 내부 null 함수 호출을 강하게 지지하지만, 심볼 기반 전체 스택 복원이나
+포인터가 0이 된 선행 원인은 확인하지 못했다. 예외 주소 필드와 EIP도 불일치하므로 해석 한계를 남긴다.
+이 증거로 10:31 정체까지 같은 원인이라고 단정하거나 Python/raw-v2 책임을 완전히 배제하지 않는다.
+
+근거는 `operations_state/session_observations/20260917_crash/`에 로컬 보존한다.
+덤프 SHA256: `22b5f9c595bc828b856e7789404ff6f25d769cb005c5957a31cd7288899ec7c3`.
+분석 라이브러리는 `operations_state/diagnostic_libs`에만 설치했으며 운영 가상환경은 변경하지 않았다.
+덤프/보안 로그는 외부 전송하지 않았다. 보안 모듈 제거·무력화·바이너리 패치는 하지 않는다.
+공식 업데이트/재설치 여부는 공급사와 확인하고, 전달이 필요하면 별도 승인 후 최소 근거만 공유한다.
+
+다음 실행부터 `capture_diagnostics.py`가 새 `logs/collector_fault_<UTC>_<PID>.log`를 만든다.
+Windows 예외용 faulthandler와 침묵 구간별 Python 전체 스레드 스택을 기록한다.
+침묵 기록은 동일 구간 한 번, 실행당 최대 세 번이며 콜백마다 파일을 쓰지 않는다.
+기존 `-X faulthandler` 등이 켜져 있으면 해당 충돌 출력 경로를 보존하고 자체 파일에는 침묵 기록만 쓴다.
+진단 보강은 외부 모듈 결함의 수정이나 자동 재시작 기능이 아니다. 현재 실행 프로세스에는 소급 적용되지 않는다.
+
+해석 근거: [Microsoft 실행 접근 위반](https://learn.microsoft.com/en-us/shows/inside/access-violation-c0000005-execute),
+[Python 3.10 faulthandler](https://docs.python.org/3.10/library/faulthandler.html).
+
 ## 일봉 수집과 기준선
 
 `collector/daily_collector.py`는 새 fchart 가격을 `unverified_fchart/`에 격리하고 당일

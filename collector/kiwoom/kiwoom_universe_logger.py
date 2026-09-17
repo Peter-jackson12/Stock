@@ -67,11 +67,13 @@ class KiwoomUniverseLogger:
         codes=None,
         duration_seconds=None,
         managed=None,
+        diagnostics=None,
     ):
         if storage not in ("raw-v1", "raw-v2"):
             raise ValueError("unsupported storage backend")
         self.storage = storage
         self.managed = managed
+        self.diagnostics = diagnostics
         self.code_revision = code_revision or subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, text=True, timeout=3).strip()
         self.codes, self.duration_seconds = codes, duration_seconds
@@ -174,6 +176,8 @@ class KiwoomUniverseLogger:
         self.log.emit("🚀 [키움증권 보통주 전 종목 실시간 틱/호가 수집 데몬]")
         self.log.emit(f"📁 저장 방식: {self.storage}; raw v2는 로그인 확인 후 새 파일 생성")
         self.log.emit(f"📝 로그 파일: {self.log_path}")
+        if self.diagnostics is not None:
+            self.log.emit(f"🧩 충돌/침묵 진단: {self.diagnostics.path}")
         self.log.emit("=" * 65)
         self.log.emit("🔑 키움 OpenAPI+ 서버 접속 시도 중...")
         self.ocx.dynamicCall("CommConnect()")
@@ -389,7 +393,19 @@ class KiwoomUniverseLogger:
 
             # 침묵/적체 판정은 이 주기 루프 안에서만 한다. 이벤트 수신 경로에는
             # 판정도 I/O 도 붙이지 않는다.
-            for notice in (self.monitor.tick(), self.monitor.sample_queue_depth(queue_depth)):
+            silence_notice = self.monitor.tick()
+            if silence_notice and self.diagnostics is not None:
+                # 정체 시점의 Qt/FID 조회/저장 스택을 구간당 한 번, 실행당 최대 세 번 보존한다.
+                # 회복 알림은 진단하지 않고, 진단 실패가 운영 수집을 중단시키지 않게 한다.
+                if "⚠️" in silence_notice:
+                    try:
+                        self.diagnostics.record_stall(self.monitor.last_event_ts, dict(
+                            last_event_ts=self.monitor.last_event_ts, queue_depth=queue_depth,
+                            trades=self.total_trades, quotes=self.total_quotes,
+                            session_id=(self.raw_capture.identity.session_id if self.raw_capture else None)))
+                    except Exception as exc:
+                        self.log.emit(f"⚠️ 침묵 진단 기록 실패: {type(exc).__name__}: {exc}")
+            for notice in (silence_notice, self.monitor.sample_queue_depth(queue_depth)):
                 if notice:
                     self.log.end_status_line()   # 상태줄(\r) 위에 겹쳐 찍히지 않도록
                     self.log.emit(notice)
@@ -513,7 +529,8 @@ if __name__ == "__main__":
     if args.duration_seconds is not None and (codes is None or not 1 <= args.duration_seconds <= 300):
         parser.error("--duration-seconds requires --codes and 1..300 seconds")
     from collector.kiwoom.collector_lease import CollectorLease
-    with CollectorLease(PROJECT_ROOT):
+    from collector.kiwoom.capture_diagnostics import CaptureDiagnostics
+    with CollectorLease(PROJECT_ROOT), CaptureDiagnostics(LOG_DIR) as diagnostics:
         managed = None
         if args.managed_launch:
             if codes or args.duration_seconds is not None or args.storage != "raw-v2":
@@ -528,7 +545,7 @@ if __name__ == "__main__":
                 managed.finish()
                 sys.exit(0)
             logger = KiwoomUniverseLogger(storage=args.storage, codes=codes,
-                duration_seconds=args.duration_seconds, managed=managed)
+                duration_seconds=args.duration_seconds, managed=managed, diagnostics=diagnostics)
             logger.start()
         except KeyboardInterrupt:
             if logger is not None:

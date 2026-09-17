@@ -100,6 +100,35 @@ def test_connection_loss_is_not_clean_finalization(live):
     assert logger.raw_capture.queue.snapshot()["state"] == "interrupted"
 
 
+def test_silence_loop_records_one_stack_per_gap_without_stopping_capture(live, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from collector.kiwoom.capture_diagnostics import CaptureDiagnostics
+    from tests.test_capture_diagnostics import Handler
+    logger, _, _ = live
+    logger._on_login(0)
+    original_monitor = logger.monitor
+    calls = []
+    def tick():
+        calls.append(1)
+        if len(calls) == 3:
+            logger.is_running = False
+        return "⚠️ 수신 없음"
+    handler = Handler()
+    with CaptureDiagnostics(tmp_path / "diagnostics", handler=handler) as diagnostics:
+        logger.diagnostics = diagnostics
+        logger.duration_seconds = 300
+        logger._subscribed_at = None
+        logger.monitor = SimpleNamespace(tick=tick, last_event_ts=1,
+                                         sample_queue_depth=lambda depth: None)
+        logger.log.status = lambda message: None
+        monkeypatch.setattr(logger._poll_control.__globals__["time"], "sleep", lambda _: None)
+        type(logger)._stats_worker(logger)
+        assert handler.dumps == 1
+        assert logger.raw_capture.queue.snapshot()["accepting"]
+    logger.monitor = original_monitor
+    logger.diagnostics = None
+
+
 def test_second_login_does_not_replace_active_session(live):
     logger, _, _ = live
     logger._on_login(0)
