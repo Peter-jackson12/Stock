@@ -1,5 +1,15 @@
 # 현재 인계 — 2026-09-17 / NXT 결손 가드·방향 합성 검증
 
+## 12:32 KST — 실제 재부팅 완료, 안랩 트레이 미표시 지속
+
+- LastBootUpTime=12:27:55.5로 Windows 재부팅을 확인했다. 안랩 서비스와 StSess/StSess32는 새 PID로
+  실행 중이나 사용자가 트레이 미표시 지속을 보고했다. Python 수집기는 실행하지 않았다.
+- 공식 ASK 장애대응 페이지의 EasyGuide4ASTx.exe를 `operations_state/ahnlab_diagnostics/`에 받았다.
+  2,762,128바이트, Authenticode Valid / AhnLab, Inc. 서명을 확인했다. 아직 실행하지 않았다.
+- 이번 접속에는 Computer Use 도구가 있으나 해당 스킬은 보안/안티멀웨어 앱 UI 자동화를 금지한다.
+  사용자에게 도구를 직접 실행하여 시작 버튼을 누르고 결과 코드/문구를 알려 달라고 안내한다.
+  재부팅·재설치를 반복하거나 공유 VC++ 런타임을 추정으로 제거하지 않는다.
+
 ## 12:26 KST — 사용자 승인 Windows 재시작 준비
 
 - 사용자가 에이전트에게 Windows 재시작을 직접 요청했다. 직전 Python 수집 프로세스 부재를 확인했다.
