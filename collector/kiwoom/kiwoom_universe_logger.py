@@ -59,7 +59,7 @@ from collector.kiwoom.resource_log import ResourceHistory  # noqa: E402
 from collector.kiwoom.session_transition import SessionTransition  # noqa: E402
 from collector.kiwoom.subscription_plan import MODE_NXT  # noqa: E402
 from collector.kiwoom.tick_writer import TickWriter  # noqa: E402
-from collector.kiwoom.live_capture import LiveRawCapture  # noqa: E402
+from collector.kiwoom.live_capture import LiveRawCapture, TRADE_FIDS, QUOTE_FIDS  # noqa: E402
 
 
 class KiwoomUniverseLogger:
@@ -77,6 +77,7 @@ class KiwoomUniverseLogger:
         diagnostics=None,
         plan=None,
         aftermarket_plan=None,
+        aftermarket_duration_seconds=None,
     ):
         if storage not in ("raw-v1", "raw-v2"):
             raise ValueError("unsupported storage backend")
@@ -90,6 +91,15 @@ class KiwoomUniverseLogger:
         self.plan = plan
         # 애프터마켓 전환은 **명시적으로 계획을 넘길 때만** 준비된다. 기본은 전환 없음이다.
         self.aftermarket_plan = aftermarket_plan
+        # 전환 후 애프터마켓 구간 자체의 종료 조건. 정규장의 15:35 종료는 계획 모드에
+        # 적용하지 않으므로, 전환 뒤에도 무제한으로 돌지 않도록 별도 상한을 강제한다.
+        # 최초 구현은 실측 전이라 1~300초로만 검증한다 — 20시까지의 장시간 운영은
+        # 이 상한을 없애는 별도 결정 없이는 기본 활성화하지 않는다.
+        self.aftermarket_duration_seconds = aftermarket_duration_seconds
+        self._aftermarket_subscribed_at = None
+        self._regular_subscription_context = None
+        self._pending_aftermarket_codes = None
+        self._transition_record_target = None
         self.transition = None
         if aftermarket_plan is not None:
             if aftermarket_plan.mode != MODE_NXT:
@@ -98,6 +108,8 @@ class KiwoomUniverseLogger:
                 raise ValueError("정규장 계획과 애프터마켓 전환 계획을 함께 줄 수 없다")
             if storage != "raw-v2" or managed is not None:
                 raise ValueError("애프터마켓 전환은 독립 raw-v2 실행만 지원한다")
+            if type(aftermarket_duration_seconds) is not int or not 1 <= aftermarket_duration_seconds <= 300:
+                raise ValueError("애프터마켓 전환 후 구간은 1~300초 제한 시간이 필요하다")
         if plan is not None:
             if codes is not None:
                 raise ValueError("구독 계획과 --codes 를 함께 줄 수 없다")
@@ -124,6 +136,13 @@ class KiwoomUniverseLogger:
         # 회전 파일 로그. 콘솔에 나가는 메시지는 전부 여기에도 남는다.
         # (주기 상태줄만 60초에 한 번 샘플로 남긴다 — SessionLog 참고)
         self.log = SessionLog(self.log_path)
+
+        # 감시기 구성값을 남겨 둔다 — 애프터마켓 전환 때 같은 설정으로 새 감시기를 만들기
+        # 위해서다. 정규장의 수신 시각·침묵 권고·카운터를 새 세션이 잘못 이어받지 않게
+        # 인스턴스 자체를 교체한다(재사용하지 않는다).
+        self._gap_threshold_sec = gap_threshold_sec
+        self._queue_backlog_floor = queue_backlog_floor
+        self._queue_stuck_window_sec = queue_stuck_window_sec
 
         # 수신 침묵 감시기 + 대기큐 적체 감시기(발견 #13). 판정은 _stats_worker 의
         # 기존 1초 루프에서만 돈다.
@@ -373,10 +392,13 @@ class KiwoomUniverseLogger:
             raise ValueError("전환은 한 번만 실행한다")
         regular = self.raw_capture
         plan = self.aftermarket_plan
+        # 전환 중 도착하는 콜백의 활성 구독 문맥. 참고 정보일 뿐 실제 출처를 확정하지 않는다.
+        self._regular_subscription_context = list(self.codes) if self.codes else "전체 관측 보통주"
+        self._pending_aftermarket_codes = list(plan.codes)
 
         def unsubscribe():
             self.accepting_events = False          # 신규 입력 차단이 먼저다
-            self.ocx.dynamicCall("SetRealRemove(QString, QString)", "ALL", "ALL")
+            return self.ocx.dynamicCall("SetRealRemove(QString, QString)", "ALL", "ALL")
 
         def finalize():
             # 닫힘과 마무리 정보를 확인해 돌려준다. 여기서 거짓이면 다음 단계로 가지 않는다.
@@ -394,20 +416,40 @@ class KiwoomUniverseLogger:
             self.writer = self.raw_capture
             self.db_path = self.raw_capture.path
             self.plan = plan                       # 이후 기록은 애프터마켓 계획을 따른다
+            # 새 세션에는 새 감시 상태를 쓴다 — 정규장의 수신 시각·침묵 권고·카운터를
+            # 이어받지 않도록 인스턴스 자체를 교체한다.
+            self.monitor = SessionMonitor(
+                sessions=resolve_profile(plan.market_profile),
+                gap_threshold_sec=self._gap_threshold_sec,
+                queue_backlog_floor=self._queue_backlog_floor,
+                queue_stuck_window_sec=self._queue_stuck_window_sec,
+            )
+            self.monitor.start()
             record = self.raw_capture.directory / "subscription_plan.json"
             record.write_text(json.dumps(plan.describe(), ensure_ascii=False, indent=2),
                               encoding="utf-8")
+            return self.raw_capture.identity.session_id
 
         def subscribe():
-            self._register_plan()
+            result = self._register_plan()
             self.accepting_events = True
             self.monitor.mark_reception_expected()
+            # 애프터마켓 구간 자체의 상한을 여기서부터 잰다 — 정규장 로그인 시각을
+            # 이어받으면 이미 지난 시간으로 곧장 종료될 수 있다.
+            self._aftermarket_subscribed_at = time.monotonic()
+            return result
 
         self.transition = SessionTransition(
             unsubscribe_regular=unsubscribe, finalize_regular=finalize,
             open_aftermarket=open_aftermarket, subscribe_nxt=subscribe,
             clock=time.monotonic)
-        record = self.transition.run(last_event_before=self.monitor.last_event_ts)
+        record = self.transition.run(
+            last_event_before=self.monitor.last_event_ts,
+            prev_session_id=regular.identity.session_id if regular is not None else None,
+            code_revision=self.code_revision,
+            plan_revision=plan.describe())
+        if self.raw_capture is not regular and self.raw_capture is not None:
+            record.next_session_id = self.raw_capture.identity.session_id
         self.log.end_status_line()
         if record.succeeded:
             self.log.emit(f"🔄 애프터마켓 전환 완료 ({record.elapsed_sec:.1f}초) — {self.db_path}")
@@ -415,15 +457,23 @@ class KiwoomUniverseLogger:
             self.exit_code = 2
             self.log.emit(f"❌ 애프터마켓 전환 실패: {record.failed_step} — {record.error}")
             self._shutdown_requested = f"애프터마켓 전환 실패 ({record.failed_step})"
-        if record.callbacks_during:
-            self.log.emit(f"⚠️ 전환 중 콜백 {len(record.callbacks_during)}건 — 저장 파일이 아닌 진단 기록에 보존")
-        target = (self.raw_capture or regular)
-        if target is not None:
-            path = target.directory / "session_transition.json"
-            path.write_text(json.dumps(record.describe(), ensure_ascii=False, indent=2),
-                            encoding="utf-8")
-            self.log.emit(f"📝 전환 기록: {path}")
+        if record.callbacks_during or record.callbacks_dropped:
+            self.log.emit(f"⚠️ 전환 중 콜백 {len(record.callbacks_during)}건 보존"
+                          f"{f', {record.callbacks_dropped}건 한도 초과로 누락' if record.callbacks_dropped else ''}"
+                          " — 저장 파일이 아닌 진단 기록에 남긴다")
+        self._transition_record_target = self.raw_capture or regular
+        self._write_transition_record()
         return record
+
+    def _write_transition_record(self):
+        """전환 기록을 세션 폴더에 남긴다. 첫 애프터마켓 수신 시각이 채워지면 다시 부른다."""
+        target = getattr(self, "_transition_record_target", None)
+        if target is None or self.transition is None or self.transition.record is None:
+            return
+        path = target.directory / "session_transition.json"
+        path.write_text(json.dumps(self.transition.record.describe(), ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+        self.log.emit(f"📝 전환 기록: {path}")
 
     def _register_plan(self):
         """구독 계획의 코드만 등록한다. 조회로 받는 여섯 자리 목록을 NXT 대상으로 쓰지 않는다.
@@ -443,13 +493,25 @@ class KiwoomUniverseLogger:
             raise RuntimeError(f"SetRealReg rejected plan codes: {result!r}")
         self.log.emit(f"✅ 실시간 수신 등록 완료: {', '.join(plan.codes)}")
         self.log.emit("접미사는 라우팅 근거이며 개별 체결 venue 와 NXT coverage 는 미확인이다.")
+        return result
 
     def _on_receive_real_data(self, code: str, real_type: str, real_data: str):
         """Capture entry clocks before extracting raw FIDs on the Qt thread."""
         if not self.accepting_events:
             # 전환 중이면 저장 파일 대신 전환 기록에 보존한다. 조용히 버리지 않는다.
             if self.transition is not None and self.transition.in_progress:
-                self.transition.accept_callback(code=code, real_type=real_type)
+                fids = {}
+                if real_type in ("주식체결", "주식호가잔량"):
+                    try:
+                        for fid in (TRADE_FIDS if real_type == "주식체결" else QUOTE_FIDS):
+                            fids[str(fid)] = self.ocx.dynamicCall("GetCommRealData(QString, int)", code, fid)
+                    except Exception as exc:
+                        fids["_read_error"] = f"{type(exc).__name__}: {exc}"
+                self.transition.accept_callback(
+                    code=code, real_type=real_type, fids=fids,
+                    subscription_context=dict(
+                        regular=self._regular_subscription_context,
+                        aftermarket_plan_codes=self._pending_aftermarket_codes))
             return
         if self.storage == "raw-v2":
             received_ns = time.perf_counter_ns()
@@ -465,6 +527,10 @@ class KiwoomUniverseLogger:
                         self.monitor.on_trade()
                     elif real_type == "주식호가잔량":
                         self.monitor.on_quote()
+                    if self.transition is not None and self.transition.note_first_event_after():
+                        # 전환 뒤 첫 애프터마켓 수신 시각. 무누락을 뜻하지 않는다.
+                        # 이미 써 둔 전환 기록 파일에 공백 값을 반영해 다시 남긴다.
+                        self._write_transition_record()
                 elif real_type in ("주식체결", "주식호가잔량"):
                     self._shutdown_requested = "raw v2 큐 입력 거부"
             except Exception as exc:
@@ -568,7 +634,13 @@ class KiwoomUniverseLogger:
                 self._shutdown_requested = "장중 침묵 한도 초과 (수신 결손)"
                 break
 
-            if self.duration_seconds is not None:
+            if (self._aftermarket_subscribed_at is not None
+                    and time.monotonic() - self._aftermarket_subscribed_at >= self.aftermarket_duration_seconds):
+                # 전환 뒤 애프터마켓 구간 자체의 상한이다. 정규장 15:35 종료는 계획 모드에
+                # 적용하지 않으므로, 이 상한이 없으면 전환 뒤에는 종료 조건이 없어진다.
+                self._shutdown_requested = "애프터마켓 제한 시간 종료"
+                break
+            elif self.duration_seconds is not None:
                 if self._subscribed_at is not None and time.monotonic() - self._subscribed_at >= self.duration_seconds:
                     self._shutdown_requested = "제한 수집 시간 종료"
                     break

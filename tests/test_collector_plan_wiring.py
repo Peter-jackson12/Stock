@@ -299,7 +299,7 @@ def transition_live(collector, monkeypatch, tmp_path):
     monkeypatch.setitem(
         __import__("collector.kiwoom.kiwoom_universe_logger", fromlist=["x"]).__dict__,
         "PROJECT_ROOT", tmp_path)
-    logger = type(old)(code_revision="fixture", aftermarket_plan=_plan())
+    logger = type(old)(code_revision="fixture", aftermarket_plan=_plan(), aftermarket_duration_seconds=60)
     monkeypatch.setattr(logger, "_stats_worker", lambda: None)
     monkeypatch.setattr(logger, "_register_all_universe", lambda: None)
     values = {20: "090000", 10: " -10000 ", 15: "+2", 14: "100000",
@@ -388,3 +388,82 @@ def test_전환_중_도착한_콜백은_진단_기록에_남는다(transition_li
     assert saved["callbacks_during_transition"] == 1
     assert saved["callbacks_preserved"][0]["code"] == "005930"
     assert "무누락을 보장하지 않는다" in saved["note"]
+
+
+def test_전환_중_콜백에_전환_단계와_FID_원문이_남는다(transition_live, monkeypatch):
+    logger, _ = transition_live
+    logger._on_login(0)
+    regular = logger.raw_capture
+    original = regular.finish
+    def finish_with_callback(*a, **k):
+        logger._on_receive_real_data("005930", "주식체결", "")
+        return original(*a, **k)
+    monkeypatch.setattr(regular, "finish", finish_with_callback)
+    record = logger.run_aftermarket_transition()
+    preserved = record.callbacks_during[0]
+    assert preserved["transition_step"] == "finalize_regular"
+    assert preserved["fids"]["15"] == "+2"                      # 등록된 FID 원문
+    assert preserved["subscription_context"]["aftermarket_plan_codes"] == ["005930_NX", "000660_NX"]
+
+
+# ── 7. 전환 기록의 식별자·리비전과 애프터마켓 종료 상한 ─────────────────────
+
+def test_애프터마켓_상한_없이는_전환_계획을_받지_않는다(collector):
+    for bad in (None, 0, -1, 301, True, float("inf")):
+        with pytest.raises(ValueError, match="1~300초 제한 시간"):
+            _logger(collector, aftermarket_plan=_plan(), aftermarket_duration_seconds=bad)
+
+
+def test_전환_기록에_세션_식별자와_코드_리비전이_남는다(transition_live):
+    logger, _ = transition_live
+    logger._on_login(0)
+    regular = logger.raw_capture
+    record = logger.run_aftermarket_transition()
+    assert record.prev_session_id == regular.identity.session_id
+    assert record.next_session_id == logger.raw_capture.identity.session_id
+    assert record.prev_session_id != record.next_session_id
+    assert record.code_revision == "fixture"
+    assert record.plan_revision["codes"] == ["005930_NX", "000660_NX"]
+    saved = json.loads((logger.raw_capture.directory / "session_transition.json")
+                       .read_text(encoding="utf-8"))
+    assert saved["prev_session_id"] == regular.identity.session_id
+    assert saved["next_session_id"] == logger.raw_capture.identity.session_id
+    assert len(saved["step_timing"]) == 4
+
+
+def test_전환_뒤_감시_상태는_새_인스턴스다(transition_live):
+    logger, _ = transition_live
+    logger._on_login(0)
+    logger._on_receive_real_data("005930", "주식체결", "")   # 정규장 수신 — 옛 감시기에 남는다
+    old_monitor = logger.monitor
+    logger.run_aftermarket_transition()
+    assert logger.monitor is not old_monitor
+    assert logger.monitor.last_event_ts is None            # 정규장 수신 이력을 이어받지 않는다
+
+
+def test_애프터마켓_구간도_명시_시간_제한으로_종료를_요청한다(transition_live):
+    import time
+    from types import SimpleNamespace
+    logger, _ = transition_live
+    logger._on_login(0)
+    logger.run_aftermarket_transition()
+    logger.writer = SimpleNamespace(pending=0)
+    logger.monitor = SimpleNamespace(
+        tick=lambda: None, sample_queue_depth=lambda _: None, silence_stop_reason=lambda: None,
+        finish=lambda reason: SimpleNamespace(extra=[], headline="test", lines=lambda: []))
+    logger._aftermarket_subscribed_at = time.monotonic() - (logger.aftermarket_duration_seconds + 1)
+    logger.is_running = True
+    type(logger)._stats_worker(logger)               # 픽스처가 인스턴스 메서드를 대체해 둔 것을 우회
+    assert logger._shutdown_requested == "애프터마켓 제한 시간 종료"
+
+
+def test_전환_뒤_첫_수신_시각과_공백이_기록_파일에_반영된다(transition_live):
+    logger, _ = transition_live
+    logger._on_login(0)
+    logger._on_receive_real_data("005930", "주식체결", "")   # 정규장 마지막 수신
+    logger.run_aftermarket_transition()
+    logger._on_receive_real_data("005930_NX", "주식체결", "")
+    saved = json.loads((logger.raw_capture.directory / "session_transition.json")
+                       .read_text(encoding="utf-8"))
+    assert saved["first_event_after"] is not None
+    assert saved["reception_gap_sec"] is not None

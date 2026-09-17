@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from collector.kiwoom.session_transition import (  # noqa: E402
+    STEP_CALLBACK_CAPACITY,
     STEP_FINALIZE,
     STEP_OPEN,
     STEP_SUBSCRIBE,
@@ -123,7 +124,98 @@ def test_실패해도_경과_시간과_기록은_남는다():
     payload = record.describe()
     assert payload["failed_step"] == STEP_OPEN and payload["succeeded"] is False
     assert payload["elapsed_sec"] is not None
-    assert payload["schema"] == "session_transition_v1"
+    assert payload["schema"] == "session_transition_v2"
+
+
+# ── 식별자·리비전·단계별 시각 ────────────────────────────────────────────────
+
+def test_전환_식별자와_세션_리비전이_기록된다():
+    transition, _ = _transition()
+    record = transition.run(prev_session_id="regular-1", code_revision="deadbeef",
+                            plan_revision={"mode": "nxt"})
+    assert record.transition_id and isinstance(record.transition_id, str)
+    assert record.prev_session_id == "regular-1"
+    assert record.code_revision == "deadbeef"
+    assert record.plan_revision == {"mode": "nxt"}
+    assert record.next_session_id is None            # 호출부가 이후 채운다
+    payload = record.describe()
+    assert payload["transition_id"] == record.transition_id
+
+
+def test_전환_식별자는_매번_다르다():
+    a, _ = _transition()
+    b, _ = _transition()
+    assert a.run().transition_id != b.run().transition_id
+
+
+def test_단계별_시작_완료_시각과_UTC_KST가_남는다():
+    transition, _ = _transition()
+    record = transition.run()
+    assert len(record.step_timing) == len(STEPS)
+    for entry in record.step_timing:
+        assert entry.started_at is not None and entry.completed_at is not None
+        assert entry.started_at_utc and entry.completed_at_utc
+        assert entry.started_at_kst and entry.completed_at_kst
+        assert entry.completed_at >= entry.started_at
+    assert record.started_at_utc and record.started_at_kst
+    assert record.finished_at_utc and record.finished_at_kst
+
+
+def test_실패한_단계의_시각과_오류가_단계별_기록에도_남는다():
+    transition, _ = _transition(fail_at=STEP_OPEN)
+    record = transition.run()
+    timing_by_step = {t.step: t for t in record.step_timing}
+    assert STEP_OPEN in timing_by_step
+    assert timing_by_step[STEP_OPEN].error is not None
+    assert STEP_SUBSCRIBE not in timing_by_step        # 실행되지 않은 단계는 없다
+
+
+def test_성공한_단계의_반환값이_기록된다():
+    transition, _ = _transition(finalize_result=True)
+    record = transition.run()
+    timing_by_step = {t.step: t for t in record.step_timing}
+    assert timing_by_step[STEP_FINALIZE].outcome == repr(True)
+
+
+# ── 전환 중 콜백 진단 보존 한도 ──────────────────────────────────────────────
+
+def test_콜백_보존_한도를_넘으면_전환을_실패로_남긴다():
+    calls = []
+    def finalize():
+        calls.append(STEP_FINALIZE)
+        transition.accept_callback(code="005930")
+        transition.accept_callback(code="000660")     # 한도(1) 초과
+        return True
+    transition = SessionTransition(
+        unsubscribe_regular=lambda: calls.append(STEP_UNSUBSCRIBE),
+        finalize_regular=finalize,
+        open_aftermarket=lambda: calls.append(STEP_OPEN),
+        subscribe_nxt=lambda: calls.append(STEP_SUBSCRIBE),
+        clock=Clock(), max_pending_callbacks=1)
+    record = transition.run()
+    assert STEP_OPEN not in calls and STEP_SUBSCRIBE not in calls   # 한도 초과 뒤 진행하지 않는다
+    assert record.failed_step == STEP_CALLBACK_CAPACITY
+    assert record.callbacks_dropped == 1
+    assert len(record.callbacks_during) == 1                        # 첫 건은 보존됐다
+    assert not record.succeeded
+    payload = record.describe()
+    assert payload["callbacks_dropped"] == 1 and payload["callback_capacity"] == 1
+
+
+def test_콜백에_전환_단계와_구독_문맥이_남는다():
+    calls = []
+    def finalize():
+        transition.accept_callback(code="005930", real_type="주식체결", fids={"10": "70000"},
+                                   subscription_context={"aftermarket_plan_codes": ["005930_NX"]})
+        return True
+    transition = SessionTransition(
+        unsubscribe_regular=lambda: None, finalize_regular=finalize,
+        open_aftermarket=lambda: None, subscribe_nxt=lambda: None, clock=Clock())
+    record = transition.run()
+    preserved = record.describe()["callbacks_preserved"][0]
+    assert preserved["transition_step"] == STEP_FINALIZE
+    assert preserved["subscription_context"] == {"aftermarket_plan_codes": ["005930_NX"]}
+    assert preserved["fids"] == {"10": "70000"}
 
 
 # ── 전환 중 콜백 ────────────────────────────────────────────────────────────
