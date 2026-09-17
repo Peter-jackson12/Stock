@@ -34,6 +34,7 @@ from core.runstore import (
 # strategies/macro_filter.py 에 있다 (임계값 비교는 L3 의 일이다 — §2).
 from strategies.macro_filter import ON_MISSING_REJECT
 from engine.nxt_session import (
+    NXT_COVERAGE_UNCONFIRMED,
     UNVERIFIED as NXT_UNVERIFIED,
     VENUE_UNVERIFIED,
     classify_premarket,
@@ -132,12 +133,16 @@ def get_tick_size(price: float) -> int:
 
 class NextradeTickEngine:
     def __init__(self, date_str: str, target_code: str, runs_root=None,
-                 venue_resolution=VENUE_UNVERIFIED, allow_unverified_nxt=False):
+                 venue_resolution=VENUE_UNVERIFIED,
+                 nxt_coverage=NXT_COVERAGE_UNCONFIRMED, allow_unverified_nxt=False):
         self.date_str = date_str
         self.code = target_code
         # raw-v1 원본에는 거래소가 없고 raw-v2 도 venue="unknown" 으로 보존한다.
         # 확인 경로가 생기기 전까지 기본값은 '미확인' 이다.
         self.venue_resolution = venue_resolution
+        # 거래소를 구분할 수 있다는 것과 그 구간에 NXT 를 받고 있었다는 것은 별개다.
+        # 현재 수집기는 6자리(KRX) 코드만 등록하므로 기본값은 '미확인' 이다.
+        self.nxt_coverage = nxt_coverage
         self.allow_unverified_nxt = allow_unverified_nxt
         self.db_path = RAW_DIR / f"{date_str}_raw.db"
 
@@ -257,6 +262,7 @@ class NextradeTickEngine:
                 gain_threshold=p_nxt["gain_threshold"],
                 volume_threshold=p_nxt["volume_threshold"],
                 venue_resolution=self.venue_resolution,
+                nxt_coverage=self.nxt_coverage,
             ),
             allow_unverified=self.allow_unverified_nxt,
         )
