@@ -48,11 +48,12 @@ def test_operational_default_preserves_raw_and_closes_new_file(live):
     assert logger.exit_code == 0
     with read_raw_v2(logger.db_path) as (meta, rows):
         records = list(rows)
-    assert len(records) == 4  # start + trade + direction-unverified + quote
+    assert len(records) == 3  # start + signed-volume trade + quote
     trade = records[1]
     assert trade["raw_fields"]["fids"]["10"] == " -10000 "
     assert trade["raw_fields"]["fids"]["14"] == "100000"
-    assert trade["event"].is_buy is None and trade["event"].venue == "unknown"
+    assert trade["event"].is_buy is True and trade["event"].venue == "unknown"
+    assert trade["raw_fields"]["direction_policy"] == "signed_volume"
     assert meta["payload_sha256"] == logger.raw_capture.report.finalization.payload_sha256
     page = logger.raw_capture.journal.page(ReplayRequest(logger.raw_capture.identity, 0))
     assert [r.state for r in page.reports] == ["starting", "draining", "closed"]
@@ -73,6 +74,24 @@ def test_bad_fid_keeps_original_and_quality_issue(live):
     assert rows[1]["raw_fields"]["fids"]["41"] == "bad"
     assert rows[1]["event"].ask is None
     assert rows[2]["event"].control_type == "parse_error"
+
+
+@pytest.mark.parametrize("volume,expected", [("-2", False), ("2", None), ("0", None),
+                                             ("+0", None), ("bad", None)])
+def test_live_direction_keeps_unknown_and_unrelated_price_errors(live, volume, expected):
+    logger, values, _ = live
+    values[15], values[10] = volume, "bad-price"
+    logger._on_login(0)
+    logger._on_receive_real_data("005930", "주식체결", "")
+    logger._shutdown("test")
+    with read_raw_v2(logger.db_path) as (_, rows):
+        records = list(rows)
+    trade = records[1]
+    assert trade["event"].is_buy is expected
+    assert trade["event"].price is None
+    assert trade["raw_fields"]["fids"]["15"] == volume
+    assert ("trade_direction_unverified" in trade["raw_fields"]["issues"]) == (expected is None)
+    assert records[2]["event"].control_type == "parse_error"
 
 
 def test_fid_read_exception_preserves_partial_callback_and_interrupts(live):
@@ -198,7 +217,7 @@ def test_status_reader_distinguishes_counts_and_stale_closed(live):
     observed = observe_raw_capture(root)
     assert observed["status"] == "recent" and observed["process_state"] == "unverified"
     assert observed["payload"]["snapshot"]["accepted_callbacks"] == 1
-    assert observed["payload"]["snapshot"]["committed_seq"] == 3
+    assert observed["payload"]["snapshot"]["committed_seq"] == 2
     stale = observe_raw_capture(root, now=datetime.now(timezone.utc) + timedelta(minutes=1))
     assert stale["status"] == "stale" and stale["payload"]["snapshot"]["state"] == "closed"
     path = logger.raw_capture.latest_status_path

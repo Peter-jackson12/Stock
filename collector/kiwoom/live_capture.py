@@ -1,7 +1,7 @@
 """Raw-v2 backend used by the operational Qt collector, with no OCX ownership.
 
-Qt reads raw FIDs; the queue owns normalization/storage. Direction and venue stay
-unknown until independently verified. All output paths are new per-session paths.
+Qt reads raw FIDs; the queue owns normalization/storage. Explicit FID 15 signs
+determine direction; venue remains unknown. Output paths are new per session.
 """
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -49,7 +49,7 @@ class LiveRawCapture:
         self._finished = False
         self.queue = QueuedCapture(self.path, capacity=capacity, batch_size=512,
             source="kiwoom", session_id=session_id, market_date=now.strftime("%Y-%m-%d"),
-            feed_scope=self.identity.feed_scope, price_policy="signed_magnitude", direction_policy="unknown",
+            feed_scope=self.identity.feed_scope, price_policy="signed_magnitude", direction_policy="signed_volume",
             started_ns=time.perf_counter_ns(), started_at_utc=datetime.now(timezone.utc).isoformat()).start()
         try:
             if not self.queue.ready.wait(5) or self.queue.snapshot()["state"] != "running":
