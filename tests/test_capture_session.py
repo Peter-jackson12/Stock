@@ -133,3 +133,29 @@ def test_overflow_signal_is_preserved_as_bad_quality(tmp_path):
         c.finish(20)
     with pytest.raises(ResearchRunFailed):
         replay(path, tmp_path / "results")
+
+
+def test_signed_volume_removes_only_direction_quality_records(tmp_path):
+    errors = {}
+    for policy in ("unknown", "signed_volume"):
+        path = tmp_path / f"{policy}.db"
+        with capture(path, direction_policy=policy) as c:
+            trade(c, ns=1, volume="+30")
+            trade(c, ns=2, volume="-30")
+            c.on_tick(code="005930", venue="unknown", real_type="주식체결",
+                      received_ns=3, received_at_utc=UTC,
+                      fids={"10": "bad", "15": "+30", "20": "bad"})
+            trade(c, ns=4, volume="0")
+            c.finish(20)
+        records = read(path)[1]
+        errors[policy] = [r["event"].details["issues"] for r in records
+                          if isinstance(r["event"], CaptureControl)
+                          and r["event"].control_type == "parse_error"]
+        assert [r["raw_fields"]["fids"]["15"] for r in records
+                if not isinstance(r["event"], CaptureControl)] == ["+30", "-30", "+30", "0"]
+        with pytest.raises(ResearchRunFailed):
+            replay(path, tmp_path / f"results_{policy}")
+    assert len(errors["unknown"]) == 4
+    assert len(errors["signed_volume"]) == 2
+    assert errors["signed_volume"][0] == ["invalid_or_missing_fid_20", "invalid_or_missing_fid_10"]
+    assert errors["signed_volume"][1] == ["out_of_range_fid_15", "trade_direction_unverified"]

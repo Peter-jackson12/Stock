@@ -20,7 +20,8 @@ KRX 장전 시간외종가(08:30~08:40) 체결이 들어오고, 실제로 현재
      이벤트가 어느 거래소 것인지 말할 수 있는가.
      키움 개발가이드: 실시간 종목코드는 조회한 종목코드와 같고, KRX 는 6자리,
      NXT 는 "_NX", 통합(최우선호가)은 "_AL" 접미사를 갖는다. 따라서 거래소는
-     콜백의 종목코드에서 도출된다 (`venue_from_code`).
+     조회 라우팅 범위의 힌트를 종목코드에서 도출한다 (`venue_from_code`).
+     SetRealReg 동작과 개별 체결의 거래소 식별은 별도 실측이 필요하다.
 
   2. NXT 구간 수신 완전성 (nxt_coverage)
      그 구간에 NXT 이벤트가 **올 수 있었는가**. 거래소를 구분할 수 있다는 것과
@@ -63,25 +64,23 @@ NXT = "NXT"
 #: 통합(최우선호가) 시장. 어느 거래소에서 체결됐는지 단정할 수 없어 NXT 귀속에 쓰지 않는다.
 UNIFIED = "AL"
 
-_UNRESOLVED_VENUES = (None, "", "unknown", "UNKNOWN")
-
 
 class NxtUnverifiedError(RuntimeError):
     """거래소 또는 NXT 수신이 확인되지 않은 상태에서 과열 판정을 요구했을 때."""
 
 
 def venue_from_code(code):
-    """종목코드 접미사에서 거래소를 도출한다.
+    """종목코드 접미사에서 조회 라우팅 힌트를 도출한다. 수신 완전성 인증이 아니다.
 
     키움 개발가이드(koa_devguide.xml): KRX 는 기존 6자리, NXT 는 "_NX",
     통합시장은 "_AL" 을 붙이며, 실시간 시세의 종목코드는 조회한 종목코드와 같다.
     """
     if not isinstance(code, str) or not code:
         return None
-    base, _, suffix = code.partition("_")
+    base, separator, suffix = code.partition("_")
     if not (len(base) == 6 and base.isdigit()):
         return None
-    if not suffix:
+    if not separator:
         return KRX
     return {"NX": NXT, "AL": UNIFIED}.get(suffix.upper())
 
@@ -137,7 +136,9 @@ def classify_premarket(events, *, window, gain_threshold, volume_threshold,
             "NXT 구간 수신이 확인되지 않았다. 구간 내 타 거래소 체결은 NXT 수신의 근거가 아니다")
 
     in_window = [e for e in events if start <= e["sec"] < end]
-    unresolved = [e for e in in_window if e.get("venue") in _UNRESOLVED_VENUES]
+    if not in_window:
+        return _unverified("대상 구간에 관측이 없다. 구간 밖 이벤트는 NXT 수신 근거가 아니다")
+    unresolved = [e for e in in_window if e.get("venue") not in (KRX, NXT, UNIFIED)]
     if unresolved:
         return _unverified(
             f"프리마켓 구간 이벤트 {len(in_window)}건 중 {len(unresolved)}건의 거래소가 미확인이다",

@@ -240,14 +240,6 @@ class NextradeTickEngine:
         run_params = dict(PARAMS)
         run_params["execution"] = {"latency_sec": latency_sec, "cooldown_sec": cooldown_sec}
         run_params["universe"] = [self.code]
-        self.run_id = make_run_id(
-            strategy_id=STRATEGY_ID,
-            strategy_version=STRATEGY_VERSION,
-            param_hash=hash_params(run_params),
-            feature_set_version=FEATURE_SET_VERSION,
-            date_range=(self.date_str, self.date_str),
-            git_sha=current_git_sha(),
-        )
 
         # =======================================================
         # 1. NXT(08:00~08:50) 프리마켓 분석 및 과열 여부 판정
@@ -265,6 +257,20 @@ class NextradeTickEngine:
                 nxt_coverage=self.nxt_coverage,
             ),
             allow_unverified=self.allow_unverified_nxt,
+        )
+        # 무거래 결과에도 미검증 허용 여부와 실제 판정을 보존한다.
+        run_params["nxt_guard"] = dict(
+            venue_resolution=self.venue_resolution, nxt_coverage=self.nxt_coverage,
+            allow_unverified=self.allow_unverified_nxt, status=nxt_verdict.status,
+            exhausted=nxt_verdict.exhausted, reason=nxt_verdict.reason,
+        )
+        self.run_id = make_run_id(
+            strategy_id=STRATEGY_ID,
+            strategy_version=STRATEGY_VERSION,
+            param_hash=hash_params(run_params),
+            feature_set_version=FEATURE_SET_VERSION,
+            date_range=(self.date_str, self.date_str),
+            git_sha=current_git_sha(),
         )
         # None 은 '미확인' 이다. False(=확인된 미과열) 와 다르다.
         is_nxt_exhausted = nxt_verdict.exhausted

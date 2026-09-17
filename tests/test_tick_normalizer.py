@@ -21,7 +21,9 @@ def test_turnover_never_determines_direction_and_raw_sign_is_preserved():
     assert result.exchange_ts_raw == "090000" and result.source_time_precision == "second"
 
 
-@pytest.mark.parametrize("volume,direction", [("+30", True), ("-30", False), ("30", None), ("+0", None)])
+@pytest.mark.parametrize("volume,direction", [("+30", True), ("-30", False), ("30", None),
+    ("+0", None), ("-0", None), ("0", None), ("", None), (None, None),
+    ("NaN", None), ("+1.5", None), ("--30", None), ("+1,000", None)])
 def test_signed_volume_requires_opt_in_and_explicit_nonzero_sign(volume, direction):
     result = normalize({"10": "10001", "15": volume, "14": "+9999", "20": "090000"}, direction_policy="signed_volume")
     assert result.event.is_buy is direction

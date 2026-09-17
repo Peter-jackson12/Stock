@@ -145,7 +145,7 @@ def test_구간_밖_NXT_체결은_제외된다():
         _tick(31800, 20000, 100000),            # 08:50:00 — 반열린 구간의 끝, 제외
     ]
     verdict = _classify(events)
-    assert verdict.status == CALM
+    assert verdict.status == UNVERIFIED
     assert verdict.trade_count == 0
 
 
@@ -156,7 +156,7 @@ def test_종목코드_접미사로_거래소를_도출한다():
     assert venue_from_code("039490_NX") == NXT
     assert venue_from_code("039490_AL") == UNIFIED
     assert venue_from_code("039490_nx") == NXT        # 대소문자 무시
-    for bad in ("", None, "39490", "039490_XX", "abcdef", 39490):
+    for bad in ("", None, "39490", "039490_XX", "039490_", "abcdef", 39490):
         assert venue_from_code(bad) is None, bad
 
 
@@ -168,3 +168,16 @@ def test_잘못된_인자는_거부한다():
         except ValueError:
             continue
         raise AssertionError(f"잘못된 인자를 통과시켰다: {kwargs}")
+
+
+def test_unrecognized_venue_cannot_certify_calm():
+    for venue in ("nxt", "KRXX", "unresolved", None, ""):
+        verdict = _classify([_tick(30000, 10000, 1, venue=venue)])
+        assert verdict.status == UNVERIFIED and verdict.exhausted is None
+
+
+def test_per_event_resolution_alone_never_certifies_coverage():
+    for events in ([], [_tick(30000, 10000, 1, KRX)], [_tick(30000, 10000, 1)]):
+        verdict = classify_premarket(events, window=WINDOW, **THRESHOLDS,
+                                     venue_resolution=PER_EVENT_VENUE)
+        assert verdict.status == UNVERIFIED and verdict.exhausted is None
