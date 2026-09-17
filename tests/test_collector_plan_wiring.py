@@ -35,7 +35,34 @@ def _plan(codes="005930_NX,000660_NX", profile="nxt_aftermarket", source=SOURCE)
 
 def _logger(collector, **kwargs):
     old, messages, _ = collector
+    if kwargs.get("plan") is not None:
+        kwargs.setdefault("duration_seconds", 60)
     return type(old)(code_revision="fixture", **kwargs), messages
+
+
+@pytest.mark.parametrize("duration", [None, 0, -1, 301, True, float("inf")])
+def test_unbounded_plan_is_rejected_before_ocx(collector, duration):
+    with pytest.raises(ValueError, match="제한 시간"):
+        _logger(collector, plan=_plan(), duration_seconds=duration)
+
+
+@pytest.mark.parametrize("extra", [dict(storage="raw-v1"), dict(managed=object())])
+def test_plan_requires_isolated_raw_v2(collector, extra):
+    with pytest.raises(ValueError, match="독립 raw-v2"):
+        _logger(collector, plan=_plan(), **extra)
+
+
+def test_plan_duration_requests_shutdown_without_waiting_for_market_close(collector):
+    import time
+    from types import SimpleNamespace
+    logger, _ = _logger(collector, plan=_plan(), duration_seconds=60)
+    logger.writer = SimpleNamespace(pending=0)
+    logger.monitor = SimpleNamespace(tick=lambda: None, sample_queue_depth=lambda _: None,
+                                     silence_stop_reason=lambda: None)
+    logger._subscribed_at = time.monotonic() - 61
+    logger.is_running = True
+    logger._stats_worker()
+    assert logger._shutdown_requested == "제한 수집 시간 종료"
 
 
 def _registrations(ocx):

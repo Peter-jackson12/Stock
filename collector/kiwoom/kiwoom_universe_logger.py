@@ -91,6 +91,10 @@ class KiwoomUniverseLogger:
                 raise ValueError("구독 계획과 --codes 를 함께 줄 수 없다")
             if plan.mode != MODE_NXT:
                 raise ValueError("구독 계획은 명시적 NXT 모드에서만 받는다")
+            if storage != "raw-v2" or managed is not None:
+                raise ValueError("NXT 계획은 독립 raw-v2 검증 실행만 지원한다")
+            if type(duration_seconds) is not int or not 1 <= duration_seconds <= 300:
+                raise ValueError("NXT 계획은 1~300초 제한 시간이 필요하다")
         self._subscribed_at = None
         self.raw_capture = None
         self._login_handled = False
