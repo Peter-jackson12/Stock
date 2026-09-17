@@ -427,6 +427,13 @@ class KiwoomUniverseLogger:
             if stop_reason is not None:
                 self.log.end_status_line()
                 self.log.emit(f"🛑 {stop_reason}")
+                if self.diagnostics is not None:
+                    try:
+                        self.diagnostics.record_stop(dict(reason=stop_reason,
+                            last_event_ts=self.monitor.last_event_ts, queue_depth=queue_depth,
+                            trades=self.total_trades, quotes=self.total_quotes))
+                    except Exception as exc:
+                        self.log.emit(f"⚠️ 종료 직전 진단 실패: {type(exc).__name__}: {exc}")
                 if self.resources is not None:
                     sample = self.resources.sample(force=True)
                     if sample is not None:

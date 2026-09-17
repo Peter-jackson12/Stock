@@ -141,6 +141,27 @@ def test_second_login_does_not_replace_active_session(live):
     assert logger.raw_capture.queue.snapshot()["state"] == "interrupted"
 
 
+@pytest.mark.parametrize("dump_fails", [False, True])
+def test_silence_stop_requests_shutdown_even_if_final_dump_fails(live, monkeypatch, dump_fails):
+    from types import SimpleNamespace
+    logger, _, _ = live
+    logger._on_login(0)
+    calls = []
+    def dump(details):
+        calls.append(details)
+        if dump_fails:
+            raise OSError("diagnostic unavailable")
+    monkeypatch.setattr(logger.monitor, "tick", lambda: None)
+    monkeypatch.setattr(logger.monitor, "silence_stop_reason", lambda: "fixture silence")
+    logger.diagnostics = SimpleNamespace(record_stop=dump)
+    type(logger)._stats_worker(logger)
+    assert len(calls) == 1 and calls[0]["reason"] == "fixture silence"
+    assert logger.exit_code == 2 and logger._shutdown_requested
+    logger._poll_control()
+    assert logger._shutdown_done
+    assert logger.raw_capture.queue.snapshot()["pending_callbacks"] == 0
+
+
 def test_unknown_server_stops_before_creating_raw(live):
     logger, _, _ = live
     logger.ocx.dynamicCall = lambda *args: "unrecognized"

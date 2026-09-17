@@ -56,3 +56,15 @@ def test_existing_fault_handler_is_preserved(tmp_path):
         assert not diagnostics.owns_handler
         assert diagnostics.record_stall(1, {})
     assert handler.enabled
+
+
+def test_stop_dump_has_separate_budget_and_is_written_once(tmp_path):
+    handler = Handler()
+    with CaptureDiagnostics(tmp_path, handler=handler) as diagnostics:
+        for key in range(3):
+            assert diagnostics.record_stall(key, {})
+        assert diagnostics.record_stop({"reason": "silence limit"})
+        assert not diagnostics.record_stop({})
+        assert handler.dumps == 4
+        path = diagnostics.path
+    assert path.read_text(encoding="utf-8").count('"silence_stop"') == 1

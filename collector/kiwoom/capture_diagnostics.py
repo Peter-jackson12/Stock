@@ -15,6 +15,7 @@ class CaptureDiagnostics:
         self.path = None
         self.directory = Path(directory)
         self.keys = set()
+        self.stop_recorded = False
         self.owns_handler = False
 
     def __enter__(self):
@@ -48,3 +49,14 @@ class CaptureDiagnostics:
                 self.handler.disable()
             self.file.close()
             self.file = None
+
+    def record_stop(self, details):
+        """경고 구간 예산과 별도로 종료 요청 직전 스택을 한 번 남긴다."""
+        if self.file is None or self.stop_recorded:
+            return False
+        self.stop_recorded = True
+        self.file.write(json.dumps(dict(observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                                       kind="silence_stop", details=details), ensure_ascii=False) + "\n")
+        self.file.flush()
+        self.handler.dump_traceback(file=self.file, all_threads=True)
+        return True
