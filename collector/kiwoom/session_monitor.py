@@ -240,6 +240,7 @@ class SessionMonitor:
         warn_repeat_sec: float = DEFAULT_WARN_REPEAT_SEC,
         market_open: dtime = MARKET_OPEN,
         market_close: dtime = MARKET_CLOSE,
+        sessions=None,
         queue_backlog_floor: int = DEFAULT_QUEUE_BACKLOG_FLOOR,
         queue_stuck_window_sec: float = DEFAULT_QUEUE_STUCK_WINDOW_SEC,
         silence_stop_sec: float | None = DEFAULT_SILENCE_STOP_SEC,
@@ -249,6 +250,9 @@ class SessionMonitor:
         self.warn_repeat_sec = float(warn_repeat_sec)
         self._market_open = market_open
         self._market_close = market_close
+        # 거래소별 활동 구간. None 이면 기존 단일 창(정규장)을 그대로 쓴다 —
+        # 명시적으로 프로필을 넘겼을 때만 구간별 판정으로 바뀐다.
+        self._sessions = tuple(sessions) if sessions else None
         self.queue_backlog_floor = int(queue_backlog_floor)
         self.queue_stuck_window_sec = float(queue_stuck_window_sec)
         self.silence_stop_sec = None if silence_stop_sec is None else float(silence_stop_sec)
@@ -314,11 +318,20 @@ class SessionMonitor:
         if self._stop_advised_reference is not None:
             return None
         now = self._clock()
-        if not (self._market_open_ts <= now <= self._market_close_ts):
-            return None
-        reference = self.last_event_ts if self.last_event_ts is not None else self._reception_expected_at
-        reference = max(reference, self._market_open_ts, self._reception_expected_at)
-        silence = now - reference
+        if self._sessions is not None:
+            measured = self._session_silence(now)
+            if measured is None:
+                return None
+            silence, _ = measured
+            # 구독 완료 전 시간은 침묵으로 세지 않는다.
+            silence = min(silence, now - self._reception_expected_at)
+            reference = now - silence
+        else:
+            if not (self._market_open_ts <= now <= self._market_close_ts):
+                return None
+            reference = self.last_event_ts if self.last_event_ts is not None else self._reception_expected_at
+            reference = max(reference, self._market_open_ts, self._reception_expected_at)
+            silence = now - reference
         if silence < self.silence_stop_sec:
             return None
         self._stop_advised_reference = reference
@@ -366,16 +379,26 @@ class SessionMonitor:
                 self._stop_advised_reference = None
                 return f"✅ [{format_clock(now)}] 수신 재개 — 침묵 구간 {gap.describe()} 기록"
 
-        # 2) 장중이 아니면 판정하지 않는다. 장 시작 전/장 마감 후 침묵은 정상이다.
-        if not (self._market_open_ts <= now <= self._market_close_ts):
-            return None
-
-        # 3) 침묵 길이는 '장중 구간' 기준으로 잰다. 09:00 이전 시간은 세지 않는다.
-        reference = self.last_event_ts if self.last_event_ts is not None else self.started_at
-        reference = max(reference, self._market_open_ts)
-        silence = now - reference
-        if silence < self.gap_threshold_sec:
-            return None
+        # 2) 구간 프로필이 있으면 구간별로 판정한다. 닫힌 구간을 가로지른 침묵은
+        #    누적하지 않고 다음 구간이 열린 시각부터 다시 잰다.
+        if self._sessions is not None:
+            measured = self._session_silence(now)
+            if measured is None:
+                return None
+            silence, threshold = measured
+            if silence < threshold:
+                return None
+            # 구간 기준으로 잰 침묵의 시작 시각. 아래 구간 기록이 이 값을 쓴다.
+            reference = now - silence
+        else:
+            # 3) 기존 경로 — 단일 정규장 창. 장 시작 전/마감 후 침묵은 정상이다.
+            if not (self._market_open_ts <= now <= self._market_close_ts):
+                return None
+            reference = self.last_event_ts if self.last_event_ts is not None else self.started_at
+            reference = max(reference, self._market_open_ts)
+            silence = now - reference
+            if silence < self.gap_threshold_sec:
+                return None
 
         if self._open_gap_start is None:
             self._open_gap_start = reference
@@ -387,6 +410,20 @@ class SessionMonitor:
             return self._silence_warning(now, silence, first=False)
 
         return None
+
+    def _session_silence(self, now: float):
+        """구간 프로필 기준 (침묵 초, 임계) 또는 판정하지 않으면 None.
+
+        구간 밖 시간은 세지 않는다. 판정 대상이 아닌 구간(체결을 기대하지 않거나 근거가
+        없는 구간)에서는 경고도 정상 판정도 하지 않는다.
+        """
+        from collector.kiwoom.market_sessions import TRADE, silence_seconds
+        moment = datetime.fromtimestamp(now)
+        last = None if self.last_event_ts is None else datetime.fromtimestamp(self.last_event_ts)
+        seconds, session = silence_seconds(self._sessions, last_event_at=last, now=moment, kind=TRADE)
+        if seconds is None or session is None:
+            return None
+        return seconds, float(session.gap_for(TRADE))
 
     def _silence_warning(self, now: float, silence: float, *, first: bool) -> str:
         head = "⚠️" if first else "⚠️ (계속)"
