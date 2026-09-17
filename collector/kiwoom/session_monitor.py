@@ -65,6 +65,13 @@ DEFAULT_QUEUE_BACKLOG_FLOOR = 20_000
 # 이 시간 동안 바닥 이상을 유지하면서 줄지 않으면 "적체가 안 빠진다"고 본다.
 DEFAULT_QUEUE_STUCK_WINDOW_SEC = 300.0
 
+#: 장중 침묵이 이만큼 이어지면 '안전한 종료 시도' 를 권고한다. None 이면 권고하지 않는다.
+#: 2026-09-17 오전에는 10:31 수신 정체 뒤 65분간 경고만 반복하며 수집 잠금을 쥐고 있었고,
+#: 그 사이 프로세스가 네이티브 충돌로 죽어 파일이 닫히지 않았다. 경고만으로는 부족하다.
+#: 이 권고는 종료 '시도' 를 부르는 신호일 뿐, 파일 닫힘을 보장하지 않는다 —
+#: Qt/OCX 가 멈춘 경우에는 기존 종료 경로 자체가 실행되지 않을 수 있다.
+DEFAULT_SILENCE_STOP_SEC = 600.0
+
 
 def format_clock(ts: float | None) -> str:
     """epoch 초를 HH:MM:SS 로. None 이면 '없음'."""
@@ -235,6 +242,7 @@ class SessionMonitor:
         market_close: dtime = MARKET_CLOSE,
         queue_backlog_floor: int = DEFAULT_QUEUE_BACKLOG_FLOOR,
         queue_stuck_window_sec: float = DEFAULT_QUEUE_STUCK_WINDOW_SEC,
+        silence_stop_sec: float | None = DEFAULT_SILENCE_STOP_SEC,
     ) -> None:
         self._clock = clock
         self.gap_threshold_sec = float(gap_threshold_sec)
@@ -243,6 +251,14 @@ class SessionMonitor:
         self._market_close = market_close
         self.queue_backlog_floor = int(queue_backlog_floor)
         self.queue_stuck_window_sec = float(queue_stuck_window_sec)
+        self.silence_stop_sec = None if silence_stop_sec is None else float(silence_stop_sec)
+
+        # 수신이 기대되는 시점 — 구독 등록이 끝난 뒤에만 침묵 종료를 판정한다.
+        # 로그인/등록 전 침묵은 결손이 아니라 정상 대기다.
+        self._reception_expected_at: float | None = None
+        # 권고를 낸 시점의 기준 시각. 이보다 새 이벤트가 들어오면 권고는 스스로 풀린다.
+        # 경고 쪽 구간 기록에 기대지 않는다 — 그 경로를 타지 않아도 회복은 회복이다.
+        self._stop_advised_reference: float | None = None
 
         self.started_at: float | None = None
         self.ended_at: float | None = None
@@ -275,6 +291,41 @@ class SessionMonitor:
         session_day = datetime.fromtimestamp(self.started_at).date()
         self._market_open_ts = datetime.combine(session_day, self._market_open).timestamp()
         self._market_close_ts = datetime.combine(session_day, self._market_close).timestamp()
+
+    def mark_reception_expected(self) -> None:
+        """구독 등록이 끝나 수신이 기대되는 시점을 알린다. 이 뒤부터 침묵 종료를 판정한다."""
+        if self._reception_expected_at is None:
+            self._reception_expected_at = self._clock()
+
+    def silence_stop_reason(self) -> str | None:
+        """장중 침묵이 한도를 넘었으면 종료 사유 한 줄을, 아니면 None.
+
+        한 세션에서 한 번만 돌려준다. 수신이 회복되면 다시 판정할 수 있게 풀린다.
+        이 값은 '종료를 시도하라' 는 권고이며, 저장 완료나 파일 닫힘을 뜻하지 않는다.
+        """
+        if self.silence_stop_sec is None:
+            return None
+        if self.started_at is None or self._reception_expected_at is None:
+            return None
+        # 권고 이후 새 이벤트가 들어왔다면 회복된 것이므로 권고를 푼다.
+        if (self._stop_advised_reference is not None and self.last_event_ts is not None
+                and self.last_event_ts > self._stop_advised_reference):
+            self._stop_advised_reference = None
+        if self._stop_advised_reference is not None:
+            return None
+        now = self._clock()
+        if not (self._market_open_ts <= now <= self._market_close_ts):
+            return None
+        reference = self.last_event_ts if self.last_event_ts is not None else self._reception_expected_at
+        reference = max(reference, self._market_open_ts, self._reception_expected_at)
+        silence = now - reference
+        if silence < self.silence_stop_sec:
+            return None
+        self._stop_advised_reference = reference
+        last = ("수신 이력 없음" if self.last_event_ts is None
+                else f"마지막 수신 {format_clock(self.last_event_ts)}")
+        return (f"장중 침묵 {format_duration(silence)} — 한도 {format_duration(self.silence_stop_sec)} 초과 "
+                f"({last}). 수신 결손 상태로 종료를 시도한다")
 
     # ── 핫패스 (이벤트 1건당 호출) ────────────────────────────────────────
 
@@ -312,6 +363,7 @@ class SessionMonitor:
                 self._gaps.append(gap)
                 self._open_gap_start = None
                 self._last_warn_ts = None
+                self._stop_advised_reference = None
                 return f"✅ [{format_clock(now)}] 수신 재개 — 침묵 구간 {gap.describe()} 기록"
 
         # 2) 장중이 아니면 판정하지 않는다. 장 시작 전/장 마감 후 침묵은 정상이다.

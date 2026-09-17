@@ -119,7 +119,10 @@ def test_silence_loop_records_one_stack_per_gap_without_stopping_capture(live, m
         logger.duration_seconds = 300
         logger._subscribed_at = None
         logger.monitor = SimpleNamespace(tick=tick, last_event_ts=1,
-                                         sample_queue_depth=lambda depth: None)
+                                         sample_queue_depth=lambda depth: None,
+                                         # 침묵 한도 종료는 이 시나리오의 대상이 아니다.
+                                         # 여기서 검사하는 것은 '구간당 스택 1회 + 수집 유지' 다.
+                                         silence_stop_reason=lambda: None)
         logger.log.status = lambda message: None
         monkeypatch.setattr(logger._poll_control.__globals__["time"], "sleep", lambda _: None)
         type(logger)._stats_worker(logger)

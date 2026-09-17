@@ -51,6 +51,7 @@ from collector.kiwoom.session_monitor import (                         # noqa: E
 )
 
 
+from collector.kiwoom.resource_log import ResourceHistory  # noqa: E402
 from collector.kiwoom.tick_writer import TickWriter  # noqa: E402
 from collector.kiwoom.live_capture import LiveRawCapture  # noqa: E402
 
@@ -102,6 +103,9 @@ class KiwoomUniverseLogger:
             queue_backlog_floor=queue_backlog_floor,
             queue_stuck_window_sec=queue_stuck_window_sec,
         )
+        # 메모리 추이 기록. 상태 파일은 덮어쓰이므로 별도 이력을 남긴다.
+        # raw v2 세션 폴더가 로그인 뒤에야 정해지므로 여기서는 자리만 잡는다.
+        self.resources: ResourceHistory | None = None
         self._shutdown_lock = threading.Lock()
         self._shutdown_done = False
         self._shutdown_requested = None
@@ -230,6 +234,9 @@ class KiwoomUniverseLogger:
                 self.db_path = self.raw_capture.path
                 self.log.emit(f"📁 raw v2 저장 파일: {self.db_path}")
                 self.log.emit(f"📝 세션 상태: {self.raw_capture.directory / 'status.json'}")
+                self.resources = ResourceHistory(
+                    self.raw_capture.directory / "resource_history.jsonl", clock=time.monotonic)
+                self.resources.sample(force=True)
             except Exception as exc:
                 self.exit_code = 2
                 self.log.emit(f"❌ raw v2 시작 실패: {exc}")
@@ -249,6 +256,7 @@ class KiwoomUniverseLogger:
         try:
             self._register_all_universe()
             self._subscribed_at = time.monotonic()
+            self.monitor.mark_reception_expected()
         except Exception as exc:
             self.log.emit(f"❌ 실시간 등록 실패: {exc}")
             if self.raw_capture is not None:
@@ -410,6 +418,25 @@ class KiwoomUniverseLogger:
                     self.log.end_status_line()   # 상태줄(\r) 위에 겹쳐 찍히지 않도록
                     self.log.emit(notice)
 
+            if self.resources is not None:
+                self.resources.sample()
+
+            # 장중 침묵이 한도를 넘으면 종료를 '시도' 한다. 파일 닫힘을 보장하지는 않는다 —
+            # Qt/OCX 가 멈춘 경우 기존 종료 경로 자체가 돌지 않을 수 있다.
+            stop_reason = self.monitor.silence_stop_reason()
+            if stop_reason is not None:
+                self.log.end_status_line()
+                self.log.emit(f"🛑 {stop_reason}")
+                if self.resources is not None:
+                    sample = self.resources.sample(force=True)
+                    if sample is not None:
+                        self.log.emit(
+                            f"   종료 직전 메모리: 커밋 {sample.commit/1048576:,.0f} MiB "
+                            f"(최대 {sample.peak_commit/1048576:,.0f} MiB) — 단서일 뿐 원인 판정이 아님")
+                self.exit_code = 2          # 수신 결손 상태의 종료는 정상 종료가 아니다
+                self._shutdown_requested = "장중 침묵 한도 초과 (수신 결손)"
+                break
+
             if self.duration_seconds is not None:
                 if self._subscribed_at is not None and time.monotonic() - self._subscribed_at >= self.duration_seconds:
                     self._shutdown_requested = "제한 수집 시간 종료"
@@ -453,6 +480,13 @@ class KiwoomUniverseLogger:
             stats.join()
         # Freeze reception end before disk drain; drain time is not a feed gap.
         report = self.monitor.finish(reason)
+        if self.resources is not None:
+            summary = self.resources.snapshot()
+            if summary is not None:
+                report.extra.append((
+                    "메모리(커밋)  ",
+                    f"마지막 {summary['commit']/1048576:,.0f} MiB / 최대 {summary['peak_commit']/1048576:,.0f} MiB "
+                    f"— 이력 {summary['history_path']}"))
         self.log.emit("💾 수신을 멈추고 남은 체결/호가의 DB 커밋을 기다립니다.")
         if self.storage == "raw-v2":
             command = self.managed.stop[1] if self.managed is not None and self.managed.stop else None
