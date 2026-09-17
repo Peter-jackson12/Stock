@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from collector.kiwoom.subscription_plan import (  # noqa: E402
     MAX_CODES,
+    plan_from_cli,
     MODE_KRX_REGULAR,
     MODE_NXT,
     SubscriptionPlan,
@@ -160,3 +161,46 @@ def test_콜백_코드가_다르면_그_사실이_남는다():
 def test_알_수_없는_모드를_거부한다():
     _rejects(lambda: build_plan("야간", "005930", source=SOURCE, market_profile="krx_regular"),
              "지원하지 않는 구독 모드")
+
+
+# ── 명령줄 입력 ─────────────────────────────────────────────────────────────
+
+CLI_OK = dict(nxt_codes="005930_NX", list_origin="사용자 입력",
+              list_verified_at="2026-09-17T16:30:00+09:00",
+              market_profile="nxt_aftermarket", duration_seconds=60)
+
+
+def test_명령줄에서_계획을_만든다():
+    plan = plan_from_cli(**CLI_OK)
+    assert plan.codes == ("005930_NX",)
+    assert plan.source.origin == "사용자 입력"
+    assert plan.market_profile == "nxt_aftermarket"
+
+
+def test_목록_근거_없이는_명령줄에서도_거부한다():
+    for missing in ("list_origin", "list_verified_at"):
+        kwargs = dict(CLI_OK); kwargs[missing] = ""
+        _rejects(lambda k=kwargs: plan_from_cli(**k), "목록 근거가 필요하다")
+
+
+def test_확인_여부는_직접_밝힐_때만_참이다():
+    assert plan_from_cli(**CLI_OK).source.nxt_eligibility_confirmed is False
+    confirmed = plan_from_cli(**CLI_OK, nxt_eligibility_confirmed=True)
+    assert confirmed.source.nxt_eligibility_confirmed is True
+
+
+def test_명령줄도_제한_시간_범위를_먼저_확인한다():
+    for bad in (0, 301, 3600, "60"):
+        kwargs = dict(CLI_OK); kwargs["duration_seconds"] = bad
+        _rejects(lambda k=kwargs: plan_from_cli(**k), "1~300초")
+
+
+def test_명령줄에서도_접미사와_중복_규칙이_같다():
+    for bad in ("005930", "005930_AL", "005930_NX,005930_NX"):
+        kwargs = dict(CLI_OK); kwargs["nxt_codes"] = bad
+        _rejects(lambda k=kwargs: plan_from_cli(**k))
+
+
+def test_코드가_비면_거부한다():
+    kwargs = dict(CLI_OK); kwargs["nxt_codes"] = "  "
+    _rejects(lambda: plan_from_cli(**kwargs), "--nxt-codes 가 필요하다")

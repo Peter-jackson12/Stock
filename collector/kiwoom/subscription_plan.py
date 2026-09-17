@@ -134,3 +134,33 @@ def record_callback(plan, *, subscription_code, callback_code, real_type):
                 suffix_matches=(subscription_code == callback_code),
                 venue="unknown", venue_resolution=plan.venue_resolution,
                 nxt_coverage=plan.nxt_coverage)
+
+
+def plan_from_cli(*, nxt_codes, list_origin, list_verified_at, market_profile,
+                  nxt_eligibility_confirmed=False, note="", duration_seconds=None):
+    """명령줄 입력에서 구독 계획을 만든다. 어긋나면 ValueError 하나로 모은다.
+
+    목록 근거는 선택 항목이 아니다 — 출처와 확인 시각이 없으면 계획을 만들 수 없다.
+    `nxt_eligibility_confirmed` 는 사용자가 공식 수단으로 NXT 거래 대상임을 확인했다고
+    **직접 밝힐 때만** 참이다. 입력했다는 사실이 확인했다는 뜻이 되지 않게 기본값은 거짓이다.
+
+    제한 시간은 운영 수집기가 요구하는 1~300초와 같은 범위를 미리 확인한다. 계획 모드는
+    독립 검증 실행이며 무제한으로 돌지 않는다.
+    """
+    if not str(nxt_codes or "").strip():
+        raise ValueError("--nxt-codes 가 필요하다 (예: 005930_NX)")
+    missing = [name for name, value in (("--list-origin", list_origin),
+                                        ("--list-verified-at", list_verified_at))
+               if not str(value or "").strip()]
+    if missing:
+        raise ValueError(
+            f"목록 근거가 필요하다: {', '.join(missing)}. "
+            "어떤 종목이 NXT 거래 대상인지는 조회 목록에 없으므로 출처를 남겨야 한다")
+    if duration_seconds is not None and (
+            type(duration_seconds) is not int or not 1 <= duration_seconds <= 300):
+        raise ValueError("NXT 계획은 1~300초 제한 시간이 필요하다")
+    source = SymbolListSource(origin=str(list_origin).strip(),
+                              verified_at=str(list_verified_at).strip(),
+                              nxt_eligibility_confirmed=bool(nxt_eligibility_confirmed),
+                              note=str(note or ""))
+    return build_plan(MODE_NXT, nxt_codes, source=source, market_profile=market_profile)

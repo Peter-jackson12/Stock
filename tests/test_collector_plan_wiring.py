@@ -199,3 +199,87 @@ def test_계획이_없으면_기존_전_종목_경로_그대로다(collector):
     logger._register_all_universe()
     assert any(m.startswith("GetCodeListByMarket") for m in seen)   # 조회 목록을 다시 쓴다
     assert "구독 계획 등록" not in "\n".join(messages)
+
+
+# ── 5. 계획 파일·콜백 저장 통합 (가짜 OCX, 로그인부터 저장까지) ─────────────
+
+@pytest.fixture
+def plan_live(collector, monkeypatch, tmp_path):
+    """계획 모드로 로그인~저장 경로를 태운다. 실제 OCX·로그인은 없다."""
+    from collector.kiwoom.live_capture import LiveRawCapture
+    from control_tower.windows_process import ProcessFacts
+    old, messages, _ = collector
+    facts = ProcessFacts(123, "2026-09-17T00:00:00Z", "C:/fixture/python.exe", 32)
+    monkeypatch.setitem(old._on_login.__globals__, "LiveRawCapture",
+                        lambda root, **kw: LiveRawCapture(tmp_path, facts=facts, **kw))
+    logger = type(old)(code_revision="fixture", plan=_plan(), duration_seconds=60)
+    monkeypatch.setattr(logger, "_stats_worker", lambda: None)
+    values = {20: "090000", 10: " -10000 ", 15: "+2", 14: "100000",
+              27: "10001", 28: "10000", 21: "090001"}
+    values.update({i: "10001" for i in range(41, 51)})
+    values.update({i: "10000" for i in range(51, 61)})
+    values.update({i: "3" for i in range(61, 81)})
+    def call(method, *args):
+        if method.startswith("GetCommRealData"):
+            return values[args[1]]
+        if method.startswith("GetConnectState"):
+            return 1
+        return "0"
+    logger.ocx.dynamicCall = call
+    yield logger, messages
+    if not logger._shutdown_done:
+        logger._shutdown("test cleanup")
+
+
+def test_계획_파일이_세션_폴더에_실제로_쓰인다(plan_live):
+    logger, _ = plan_live
+    logger._on_login(0)
+    record = logger.raw_capture.directory / "subscription_plan.json"
+    assert record.is_file()
+    saved = json.loads(record.read_text(encoding="utf-8"))
+    assert saved["mode"] == "nxt"
+    assert saved["codes"] == ["005930_NX", "000660_NX"]          # 구독 원문
+    assert saved["market_profile"] == "nxt_aftermarket"
+    assert saved["source"]["origin"] == "사용자 입력"
+    assert saved["source"]["verified_at"] == "2026-09-17T16:30:00+09:00"
+    assert saved["source"]["nxt_eligibility_confirmed"] is False  # 입력과 확인은 다르다
+    assert saved["venue_resolution"] == "unverified"
+    assert saved["nxt_coverage"] == "unconfirmed"
+
+
+def test_콜백_코드의_접미사가_저장까지_보존된다(plan_live):
+    from collector.raw_v2 import read_raw_v2
+    logger, _ = plan_live
+    logger._on_login(0)
+    logger._on_receive_real_data("005930_NX", "주식체결", "")
+    logger._on_receive_real_data("000660_NX", "주식호가잔량", "")
+    logger._shutdown("test stop")
+    with read_raw_v2(logger.db_path) as (_, rows):
+        records = list(rows)
+    trade = records[1]
+    assert trade["event"].code == "005930_NX"       # 접미사가 원문 그대로 남는다
+    assert trade["event"].venue == "unknown"        # 접미사가 붙어도 거래소는 확정하지 않는다
+    quote = records[2]
+    assert quote["event"].code == "000660_NX" and quote["event"].venue == "unknown"
+
+
+def test_계획_모드도_저장을_정상_종료한다(plan_live):
+    logger, _ = plan_live
+    logger._on_login(0)
+    logger._on_receive_real_data("005930_NX", "주식체결", "")
+    logger._shutdown("test stop")
+    assert logger.exit_code == 0
+    assert logger.raw_capture.queue.snapshot()["state"] == "closed"
+
+
+def test_계획_모드에서_구독하지_않은_코드가_와도_원문을_남긴다(plan_live):
+    # 예상 밖 코드를 조용히 버리지 않는다. 대조는 기록을 보고 사람이 한다.
+    from collector.raw_v2 import read_raw_v2
+    logger, _ = plan_live
+    logger._on_login(0)
+    logger._on_receive_real_data("005930", "주식체결", "")     # 접미사 없는 코드가 도착
+    logger._shutdown("test stop")
+    with read_raw_v2(logger.db_path) as (_, rows):
+        records = list(rows)
+    assert records[1]["event"].code == "005930"
+    assert records[1]["event"].venue == "unknown"

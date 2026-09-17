@@ -605,6 +605,17 @@ if __name__ == "__main__":
     parser.add_argument("--duration-seconds", type=int)
     parser.add_argument("--preflight", action="store_true", help="read-only environment check; no OCX instance/login")
     parser.add_argument("--managed-launch", help=argparse.SUPPRESS)
+    nxt = parser.add_argument_group(
+        "NXT 구독 계획", "명시적 NXT 모드. 독립 raw-v2 검증 실행이며 제한 시간이 필요하다")
+    nxt.add_argument("--nxt-codes", help="쉼표로 구분한 _NX 종목코드 (예: 005930_NX)")
+    nxt.add_argument("--list-origin", help="이 목록이 어디서 왔는가 (예: 사용자 입력)")
+    nxt.add_argument("--list-verified-at", help="목록을 확인한 시각 (예: 2026-09-17T16:30:00+09:00)")
+    nxt.add_argument("--nxt-eligibility-confirmed", action="store_true",
+                     help="공식 수단으로 NXT 거래 대상임을 확인했을 때만 지정한다. "
+                          "입력했다는 사실과 확인했다는 사실은 다르다")
+    nxt.add_argument("--list-note", default="", help="목록 근거에 남길 메모")
+    nxt.add_argument("--market-profile", default="nxt_aftermarket",
+                     help="시장 구간 프로필 (기본: nxt_aftermarket)")
     args = parser.parse_args()
     if args.preflight:
         from collector.kiwoom.preflight import inspect_environment
@@ -614,7 +625,23 @@ if __name__ == "__main__":
     codes = None if not args.codes else list(dict.fromkeys(args.codes.split(",")))
     if codes is not None and (not 1 <= len(codes) <= 10 or any(len(c) != 6 or not c.isdigit() for c in codes)):
         parser.error("--codes requires 1..10 six-digit codes")
-    if args.duration_seconds is not None and (codes is None or not 1 <= args.duration_seconds <= 300):
+    plan = None
+    if args.nxt_codes:
+        if codes is not None:
+            parser.error("--nxt-codes 와 --codes 는 함께 쓸 수 없다")
+        from collector.kiwoom.subscription_plan import plan_from_cli
+        try:
+            plan = plan_from_cli(
+                nxt_codes=args.nxt_codes, list_origin=args.list_origin,
+                list_verified_at=args.list_verified_at, market_profile=args.market_profile,
+                nxt_eligibility_confirmed=args.nxt_eligibility_confirmed,
+                note=args.list_note, duration_seconds=args.duration_seconds)
+        except ValueError as exc:
+            parser.error(str(exc))
+    elif any((args.list_origin, args.list_verified_at, args.nxt_eligibility_confirmed)):
+        parser.error("목록 근거 인자는 --nxt-codes 와 함께 써야 한다")
+    if args.duration_seconds is not None and plan is None and (
+            codes is None or not 1 <= args.duration_seconds <= 300):
         parser.error("--duration-seconds requires --codes and 1..300 seconds")
     from collector.kiwoom.collector_lease import CollectorLease
     from collector.kiwoom.capture_diagnostics import CaptureDiagnostics
@@ -632,7 +659,7 @@ if __name__ == "__main__":
             if managed is not None and managed.poll():
                 managed.finish()
                 sys.exit(0)
-            logger = KiwoomUniverseLogger(storage=args.storage, codes=codes,
+            logger = KiwoomUniverseLogger(storage=args.storage, codes=codes, plan=plan,
                 duration_seconds=args.duration_seconds, managed=managed, diagnostics=diagnostics)
             logger.start()
         except KeyboardInterrupt:
