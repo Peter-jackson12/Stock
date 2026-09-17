@@ -33,6 +33,12 @@ from core.runstore import (
 # 🆕 §3.6.1 — 거시 피처 null 정책. 값 자체는 아래 PARAMS 에 있고, 의미와 판정 로직은
 # strategies/macro_filter.py 에 있다 (임계값 비교는 L3 의 일이다 — §2).
 from strategies.macro_filter import ON_MISSING_REJECT
+from engine.nxt_session import (
+    UNVERIFIED as NXT_UNVERIFIED,
+    VENUE_UNVERIFIED,
+    classify_premarket,
+    require_verdict,
+)
 
 RAW_DIR = DATA_DIR / "raw_ticks"
 
@@ -125,9 +131,14 @@ def get_tick_size(price: float) -> int:
 
 
 class NextradeTickEngine:
-    def __init__(self, date_str: str, target_code: str, runs_root=None):
+    def __init__(self, date_str: str, target_code: str, runs_root=None,
+                 venue_resolution=VENUE_UNVERIFIED, allow_unverified_nxt=False):
         self.date_str = date_str
         self.code = target_code
+        # raw-v1 원본에는 거래소가 없고 raw-v2 도 venue="unknown" 으로 보존한다.
+        # 확인 경로가 생기기 전까지 기본값은 '미확인' 이다.
+        self.venue_resolution = venue_resolution
+        self.allow_unverified_nxt = allow_unverified_nxt
         self.db_path = RAW_DIR / f"{date_str}_raw.db"
 
         if not self.db_path.exists():
@@ -236,20 +247,25 @@ class NextradeTickEngine:
         # =======================================================
         # 1. NXT(08:00~08:50) 프리마켓 분석 및 과열 여부 판정
         # =======================================================
-        nxt_from, nxt_to = p_nxt["window"]
-        nxt_trades = [e for e in events if nxt_from <= e["sec"] < nxt_to]  # 08:00 ~ 08:50
-        is_nxt_exhausted = False
-        nxt_open = nxt_trades[0]["price"] if nxt_trades else 0.0
-
-        if nxt_trades:
-            nxt_close = nxt_trades[-1]["price"]
-            nxt_vol = sum(e["vol"] for e in nxt_trades)
-            nxt_gain = (nxt_close - nxt_open) / nxt_open if nxt_open > 0 else 0.0
-
-            # NXT에서 이미 +5% 이상 폭등하고 거래량이 폭발한 경우 -> 9시 정규장 매수 금지!
-            if nxt_gain >= p_nxt["gain_threshold"] and nxt_vol >= p_nxt["volume_threshold"]:
-                is_nxt_exhausted = True
-                print(f"🚨 [NXT 과열 감지] 프리마켓 급등(+{nxt_gain*100:.2f}%)으로 09:00 개장 직후 상투 위험 -> 정규장 매수 제한 발동!")
+        # 시간대는 거래소를 확정하지 못한다. 08:00~08:50 안에는 KRX 장전
+        # 시간외종가(08:30~08:40) 체결 등 NXT 가 아닌 이벤트가 섞일 수 있다.
+        # 판정은 engine/nxt_session.py 가 하고, 미확인이면 계산하지 않는다.
+        nxt_verdict = require_verdict(
+            classify_premarket(
+                events,
+                window=tuple(p_nxt["window"]),
+                gain_threshold=p_nxt["gain_threshold"],
+                volume_threshold=p_nxt["volume_threshold"],
+                venue_resolution=self.venue_resolution,
+            ),
+            allow_unverified=self.allow_unverified_nxt,
+        )
+        # None 은 '미확인' 이다. False(=확인된 미과열) 와 다르다.
+        is_nxt_exhausted = nxt_verdict.exhausted
+        if nxt_verdict.status == NXT_UNVERIFIED:
+            print(f"⚠️ [NXT 미검증] {nxt_verdict.reason} — 과열 필터를 적용하지 않은 결과다")
+        elif is_nxt_exhausted:
+            print(f"🚨 [NXT 과열 감지] {nxt_verdict.reason} -> 정규장 돌파 매수 제한 발동!")
 
         # 09:00 정규장 시가 기준선 설정
         krx_trades = [e for e in events if e["sec"] >= p_entry["session_start_sec"]]  # 09:00:00 이후
@@ -375,7 +391,7 @@ class NextradeTickEngine:
             all_idle = all(rules[k]["pos"] == 0 for k in rules)
             if all_idle and not pending_buy and cur_sec >= cooldown_until_sec:
                 # NXT 과열 필터에 걸린 종목은 09:00 정규장 돌파 진입 금지!
-                if is_nxt_exhausted and cur_sec >= p_entry["session_start_sec"]:
+                if is_nxt_exhausted is True and cur_sec >= p_entry["session_start_sec"]:
                     continue
 
                 # 1) 호가 스프레드 검증 (1틱 초과 시 진입 금지)
@@ -413,6 +429,8 @@ class NextradeTickEngine:
                         "micro_high_60s": micro_high_60s,
                         "krx_open": krx_open,
                         "nxt_exhausted": is_nxt_exhausted,
+                        "nxt_status": nxt_verdict.status,
+                        "nxt_reason": nxt_verdict.reason,
                     }
 
         # =======================================================
@@ -547,10 +565,15 @@ def _parse_cli_args() -> argparse.Namespace:
     )
     parser.add_argument("--latency-sec", type=int, default=1, help="지연 체결 초 (기본: 1)")
     parser.add_argument("--cooldown-sec", type=int, default=10, help="청산 후 재진입 대기 초 (기본: 10)")
+    parser.add_argument(
+        "--allow-unverified-nxt", action="store_true",
+        help="거래소 미확인 상태에서도 실행한다. NXT 과열 필터는 적용되지 않으며 결과에 미검증으로 남는다",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_cli_args()
-    engine = NextradeTickEngine(date_str=args.date, target_code=args.code)
+    engine = NextradeTickEngine(date_str=args.date, target_code=args.code,
+                                allow_unverified_nxt=args.allow_unverified_nxt)
     engine.run_strategy(latency_sec=args.latency_sec, cooldown_sec=args.cooldown_sec)
