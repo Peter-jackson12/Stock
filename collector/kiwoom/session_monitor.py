@@ -271,6 +271,10 @@ class SessionMonitor:
         # 읽는 쪽(1초 주기 루프)은 최신값을 놓쳐도 1초 뒤에 다시 본다.
         self.first_event_ts: float | None = None
         self.last_event_ts: float | None = None
+        # 종류별 마지막 수신. 체결 침묵을 호가 수신이 초기화하면 체결 중단을 놓친다 —
+        # 정책만 갈라놓고 시계를 공유하면 판정이 무의미해진다.
+        self.last_trade_ts: float | None = None
+        self.last_quote_ts: float | None = None
         self.trade_count: int = 0
         self.quote_count: int = 0
 
@@ -345,6 +349,7 @@ class SessionMonitor:
     def on_trade(self) -> None:
         ts = self._clock()
         self.trade_count += 1
+        self.last_trade_ts = ts
         self.last_event_ts = ts
         if self.first_event_ts is None:
             self.first_event_ts = ts
@@ -352,6 +357,7 @@ class SessionMonitor:
     def on_quote(self) -> None:
         ts = self._clock()
         self.quote_count += 1
+        self.last_quote_ts = ts
         self.last_event_ts = ts
         if self.first_event_ts is None:
             self.first_event_ts = ts
@@ -411,19 +417,23 @@ class SessionMonitor:
 
         return None
 
-    def _session_silence(self, now: float):
+    def _session_silence(self, now: float, kind=None):
         """구간 프로필 기준 (침묵 초, 임계) 또는 판정하지 않으면 None.
 
         구간 밖 시간은 세지 않는다. 판정 대상이 아닌 구간(체결을 기대하지 않거나 근거가
         없는 구간)에서는 경고도 정상 판정도 하지 않는다.
         """
-        from collector.kiwoom.market_sessions import TRADE, silence_seconds
+        from collector.kiwoom.market_sessions import QUOTE, TRADE, silence_seconds
+        kind = TRADE if kind is None else kind
+        assert kind in (TRADE, QUOTE)
         moment = datetime.fromtimestamp(now)
-        last = None if self.last_event_ts is None else datetime.fromtimestamp(self.last_event_ts)
-        seconds, session = silence_seconds(self._sessions, last_event_at=last, now=moment, kind=TRADE)
+        # 종류별 시계를 쓴다. 체결 침묵은 체결 수신만으로 초기화된다.
+        last_ts = self.last_trade_ts if kind == TRADE else self.last_quote_ts
+        last = None if last_ts is None else datetime.fromtimestamp(last_ts)
+        seconds, session = silence_seconds(self._sessions, last_event_at=last, now=moment, kind=kind)
         if seconds is None or session is None:
             return None
-        return seconds, float(session.gap_for(TRADE))
+        return seconds, float(session.gap_for(kind))
 
     def _silence_warning(self, now: float, silence: float, *, first: bool) -> str:
         head = "⚠️" if first else "⚠️ (계속)"

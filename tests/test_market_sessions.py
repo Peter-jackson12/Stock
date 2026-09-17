@@ -223,3 +223,31 @@ def test_전환_구간에서는_경고하지_않는다():
     clock.advance(900)                          # 15분 침묵
     assert m.tick() is None
     assert m.silence_stop_reason() is None
+
+
+def test_호가_수신이_체결_침묵을_초기화하지_않는다():
+    """정책만 갈라놓고 마지막 수신 시각을 공유하면 체결 중단을 영영 못 잡는다.
+
+    호가는 계속 들어오는데 체결만 끊긴 상황이 실제 결손의 한 형태다. 고치기 전에는
+    호가 한 건이 체결 침묵 시계를 되돌려 경고가 나오지 않았다.
+    """
+    clock = _Clock(_today(16, 0))
+    m = _monitor(clock, sessions=PROFILE_NXT_AFTERMARKET)
+    m.on_trade()                       # 마지막 체결
+    for _ in range(12):                # 이후 50초마다 호가만 계속 들어온다
+        clock.advance(50)
+        m.on_quote()
+    assert clock.now - m.last_trade_ts >= 600      # 체결은 10분째 없음
+    warning = m.tick()
+    assert warning is not None and "결손 의심" in warning
+
+
+def test_체결_수신은_체결_침묵을_초기화한다():
+    clock = _Clock(_today(16, 0))
+    m = _monitor(clock, sessions=PROFILE_NXT_AFTERMARKET)
+    m.on_trade()
+    clock.advance(500)
+    assert m.tick() is None
+    m.on_trade()                       # 체결 재개
+    clock.advance(500)
+    assert m.tick() is None            # 다시 처음부터 잰다
