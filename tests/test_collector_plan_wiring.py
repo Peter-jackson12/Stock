@@ -283,3 +283,108 @@ def test_계획_모드에서_구독하지_않은_코드가_와도_원문을_남�
         records = list(rows)
     assert records[1]["event"].code == "005930"
     assert records[1]["event"].venue == "unknown"
+
+
+# ── 6. 애프터마켓 전환 (수집기 수준, 가짜 OCX) ─────────────────────────────
+
+@pytest.fixture
+def transition_live(collector, monkeypatch, tmp_path):
+    """정규장으로 시작해 애프터마켓 전환 계획을 들고 있는 수집기."""
+    from collector.kiwoom.live_capture import LiveRawCapture
+    from control_tower.windows_process import ProcessFacts
+    old, messages, _ = collector
+    facts = ProcessFacts(123, "2026-09-17T00:00:00Z", "C:/fixture/python.exe", 32)
+    monkeypatch.setitem(old._on_login.__globals__, "LiveRawCapture",
+                        lambda root, **kw: LiveRawCapture(tmp_path, facts=facts, **kw))
+    monkeypatch.setitem(
+        __import__("collector.kiwoom.kiwoom_universe_logger", fromlist=["x"]).__dict__,
+        "PROJECT_ROOT", tmp_path)
+    logger = type(old)(code_revision="fixture", aftermarket_plan=_plan())
+    monkeypatch.setattr(logger, "_stats_worker", lambda: None)
+    monkeypatch.setattr(logger, "_register_all_universe", lambda: None)
+    values = {20: "090000", 10: " -10000 ", 15: "+2", 14: "100000",
+              27: "10001", 28: "10000", 21: "090001"}
+    values.update({i: "10001" for i in range(41, 51)})
+    values.update({i: "10000" for i in range(51, 61)})
+    values.update({i: "3" for i in range(61, 81)})
+    logger.ocx.dynamicCall = lambda method, *a: (
+        values[a[1]] if method.startswith("GetCommRealData")
+        else 1 if method.startswith("GetConnectState") else "0")
+    yield logger, messages
+    if not logger._shutdown_done:
+        logger._shutdown("test cleanup")
+
+
+def test_전환_계획은_명시할_때만_준비된다(collector):
+    plain, _ = _logger(collector)
+    assert plain.aftermarket_plan is None and plain.transition is None
+    with pytest.raises(ValueError, match="함께 줄 수 없다"):
+        _logger(collector, plan=_plan(), aftermarket_plan=_plan())
+
+
+def test_정규장_저장을_닫은_뒤에_새_파일을_연다(transition_live):
+    logger, messages = transition_live
+    logger._on_login(0)
+    logger._on_receive_real_data("005930", "주식체결", "")
+    regular = logger.raw_capture
+    regular_path = regular.path
+    record = logger.run_aftermarket_transition()
+    assert record.succeeded, record.error
+    # 정규장 저장은 닫혔고 마무리 정보가 있다
+    snapshot = regular.queue.snapshot()
+    assert snapshot["state"] == "closed" and snapshot["finalization"]
+    # 새 파일은 다른 경로다 — 닫힌 파일을 다시 열지 않는다
+    assert logger.raw_capture is not regular and logger.db_path != regular_path
+    assert (logger.raw_capture.directory / "subscription_plan.json").is_file()
+    assert (logger.raw_capture.directory / "session_transition.json").is_file()
+    assert "애프터마켓 전환 완료" in "\n".join(messages)
+
+
+def test_전환_뒤_수신은_새_파일에_쌓인다(transition_live):
+    from collector.raw_v2 import read_raw_v2
+    logger, _ = transition_live
+    logger._on_login(0)
+    logger._on_receive_real_data("005930", "주식체결", "")
+    regular_path = logger.raw_capture.path
+    logger.run_aftermarket_transition()
+    logger._on_receive_real_data("005930_NX", "주식체결", "")
+    after_path = logger.raw_capture.path
+    logger._shutdown("test stop")
+    with read_raw_v2(regular_path) as (_, rows):
+        before = [r for r in rows if r["event"].__class__.__name__ == "OrderedTick"]
+    with read_raw_v2(after_path) as (_, rows):
+        after = [r for r in rows if getattr(r["event"], "code", None)]
+    assert [r["event"].code for r in before] == ["005930"]
+    assert [r["event"].code for r in after] == ["005930_NX"]
+
+
+def test_마무리가_확인되지_않으면_새_파일을_열지_않는다(transition_live, monkeypatch):
+    logger, messages = transition_live
+    logger._on_login(0)
+    regular = logger.raw_capture
+    monkeypatch.setattr(regular, "finish", lambda *a, **k: False)   # 마무리 미확인
+    record = logger.run_aftermarket_transition()
+    assert not record.succeeded
+    assert record.failed_step == "finalize_regular"
+    assert logger.raw_capture is regular          # 새 세션을 열지 않았다
+    assert logger.exit_code == 2
+    assert "애프터마켓 전환 실패" in "\n".join(messages)
+
+
+def test_전환_중_도착한_콜백은_진단_기록에_남는다(transition_live, monkeypatch):
+    logger, _ = transition_live
+    logger._on_login(0)
+    regular = logger.raw_capture
+    original = regular.finish
+    def finish_with_callback(*a, **k):
+        logger._on_receive_real_data("005930", "주식체결", "")   # 전환 도중 도착
+        return original(*a, **k)
+    monkeypatch.setattr(regular, "finish", finish_with_callback)
+    record = logger.run_aftermarket_transition()
+    assert len(record.callbacks_during) == 1
+    assert record.callbacks_during[0]["code"] == "005930"
+    saved = json.loads((logger.raw_capture.directory / "session_transition.json")
+                       .read_text(encoding="utf-8"))
+    assert saved["callbacks_during_transition"] == 1
+    assert saved["callbacks_preserved"][0]["code"] == "005930"
+    assert "무누락을 보장하지 않는다" in saved["note"]

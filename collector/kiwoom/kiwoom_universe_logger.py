@@ -56,6 +56,7 @@ from collector.kiwoom.session_monitor import (                         # noqa: E
 
 from collector.kiwoom.market_sessions import resolve_profile  # noqa: E402
 from collector.kiwoom.resource_log import ResourceHistory  # noqa: E402
+from collector.kiwoom.session_transition import SessionTransition  # noqa: E402
 from collector.kiwoom.subscription_plan import MODE_NXT  # noqa: E402
 from collector.kiwoom.tick_writer import TickWriter  # noqa: E402
 from collector.kiwoom.live_capture import LiveRawCapture  # noqa: E402
@@ -75,6 +76,7 @@ class KiwoomUniverseLogger:
         managed=None,
         diagnostics=None,
         plan=None,
+        aftermarket_plan=None,
     ):
         if storage not in ("raw-v1", "raw-v2"):
             raise ValueError("unsupported storage backend")
@@ -86,6 +88,16 @@ class KiwoomUniverseLogger:
         self.codes, self.duration_seconds = codes, duration_seconds
         # 구독 계획. None 이면 기존 정규장 경로 그대로다 — 접미사 허용은 계획이 있을 때만이다.
         self.plan = plan
+        # 애프터마켓 전환은 **명시적으로 계획을 넘길 때만** 준비된다. 기본은 전환 없음이다.
+        self.aftermarket_plan = aftermarket_plan
+        self.transition = None
+        if aftermarket_plan is not None:
+            if aftermarket_plan.mode != MODE_NXT:
+                raise ValueError("애프터마켓 전환 계획은 NXT 모드여야 한다")
+            if plan is not None:
+                raise ValueError("정규장 계획과 애프터마켓 전환 계획을 함께 줄 수 없다")
+            if storage != "raw-v2" or managed is not None:
+                raise ValueError("애프터마켓 전환은 독립 raw-v2 실행만 지원한다")
         if plan is not None:
             if codes is not None:
                 raise ValueError("구독 계획과 --codes 를 함께 줄 수 없다")
@@ -349,6 +361,70 @@ class KiwoomUniverseLogger:
         self.log.emit(f"✅ 코스피/코스닥 보통주 ({len(filtered_codes)}개) 실시간 수신 등록 완료!")
         self.log.emit("🔴 실시간 체결/호가 수집 가동 중... (종료하려면 터미널에서 Ctrl + C)")
 
+    def run_aftermarket_transition(self):
+        """정규장 저장을 마치고 애프터마켓 저장으로 넘긴다. 명시적 모드에서만 부른다.
+
+        정규장 저장이 닫혔다고 확인된 뒤에만 다음 세션을 연다. 어느 단계든 실패하면
+        다음으로 넘어가지 않고 실패 위치를 기록에 남긴다. 닫힌 정규장 파일은 다시 열지 않는다.
+        """
+        if self.aftermarket_plan is None:
+            raise ValueError("애프터마켓 전환 계획이 없다")
+        if self.transition is not None:
+            raise ValueError("전환은 한 번만 실행한다")
+        regular = self.raw_capture
+        plan = self.aftermarket_plan
+
+        def unsubscribe():
+            self.accepting_events = False          # 신규 입력 차단이 먼저다
+            self.ocx.dynamicCall("SetRealRemove(QString, QString)", "ALL", "ALL")
+
+        def finalize():
+            # 닫힘과 마무리 정보를 확인해 돌려준다. 여기서 거짓이면 다음 단계로 가지 않는다.
+            if regular is None:
+                return False
+            clean = regular.finish("애프터마켓 전환")
+            snapshot = regular.queue.snapshot()
+            return bool(clean and snapshot["state"] == "closed" and snapshot["finalization"])
+
+        def open_aftermarket():
+            # 모듈 수준 참조를 그대로 쓴다. 함수 안에서 다시 import 하면 로그인 경로와
+            # 생성 지점이 갈리고, 대역을 끼워 넣을 수도 없다.
+            self.raw_capture = LiveRawCapture(
+                PROJECT_ROOT, server=regular.identity.server, code_revision=self.code_revision)
+            self.writer = self.raw_capture
+            self.db_path = self.raw_capture.path
+            self.plan = plan                       # 이후 기록은 애프터마켓 계획을 따른다
+            record = self.raw_capture.directory / "subscription_plan.json"
+            record.write_text(json.dumps(plan.describe(), ensure_ascii=False, indent=2),
+                              encoding="utf-8")
+
+        def subscribe():
+            self._register_plan()
+            self.accepting_events = True
+            self.monitor.mark_reception_expected()
+
+        self.transition = SessionTransition(
+            unsubscribe_regular=unsubscribe, finalize_regular=finalize,
+            open_aftermarket=open_aftermarket, subscribe_nxt=subscribe,
+            clock=time.monotonic)
+        record = self.transition.run(last_event_before=self.monitor.last_event_ts)
+        self.log.end_status_line()
+        if record.succeeded:
+            self.log.emit(f"🔄 애프터마켓 전환 완료 ({record.elapsed_sec:.1f}초) — {self.db_path}")
+        else:
+            self.exit_code = 2
+            self.log.emit(f"❌ 애프터마켓 전환 실패: {record.failed_step} — {record.error}")
+            self._shutdown_requested = f"애프터마켓 전환 실패 ({record.failed_step})"
+        if record.callbacks_during:
+            self.log.emit(f"⚠️ 전환 중 콜백 {len(record.callbacks_during)}건 — 저장 파일이 아닌 진단 기록에 보존")
+        target = (self.raw_capture or regular)
+        if target is not None:
+            path = target.directory / "session_transition.json"
+            path.write_text(json.dumps(record.describe(), ensure_ascii=False, indent=2),
+                            encoding="utf-8")
+            self.log.emit(f"📝 전환 기록: {path}")
+        return record
+
     def _register_plan(self):
         """구독 계획의 코드만 등록한다. 조회로 받는 여섯 자리 목록을 NXT 대상으로 쓰지 않는다.
 
@@ -371,6 +447,9 @@ class KiwoomUniverseLogger:
     def _on_receive_real_data(self, code: str, real_type: str, real_data: str):
         """Capture entry clocks before extracting raw FIDs on the Qt thread."""
         if not self.accepting_events:
+            # 전환 중이면 저장 파일 대신 전환 기록에 보존한다. 조용히 버리지 않는다.
+            if self.transition is not None and self.transition.in_progress:
+                self.transition.accept_callback(code=code, real_type=real_type)
             return
         if self.storage == "raw-v2":
             received_ns = time.perf_counter_ns()
