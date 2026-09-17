@@ -2,6 +2,21 @@
 
 ## 현재 상태 (11:22 KST 읽기 전용 관측)
 
+### 후속 정정 — 11:33 KST 충돌 확인
+
+- 11:32:55 조회에서 PID 18796/18816 모두 부재. 상태 파일은 11:30:17 running에서 멈췄고
+  closed/finalization 및 정상 종료 로그가 없다. 정상 저장 종료로 판정하지 않는다.
+- Windows Application Error 1000: **11:30:26 python.exe / PID 0x496C(18796) / 예외 0xc0000005**,
+  모듈 unknown. 11:30:30 WER 1001 BEX도 대조했다. 원문은
+  `operations_state/session_observations/20260917_crash/`에 보존했다.
+- 10:31 수신 정체와 11:30 프로세스 충돌은 서로 다른 시점이다. 공통 원인인지 미확인이다.
+  Python/네이티브 구성요소 어느 쪽 결함인지 로그만으로 특정하지 않는다.
+- e36fc83..현재 collector 차이는 운영에서 호출하지 않는 nxt_probe.py 추가뿐이다.
+  이번 NXT 가드 변경의 직접 영향 근거는 없다. 어제 정규장 v1과 오늘 v2는 경로가 달라
+  어제 성공만으로 오늘 raw-v2 장시간 안정성을 보증하지 못한다.
+- 사용자는 재시작의 타당성을 문의했다. 이 작업에서 중단·재로그인·재실행하지 않았다.
+  재개 시 기존 DB를 유지하고 새 세션으로 수신/저장 증가를 확인해야 하며 원인 해결과 구분한다.
+
 - 세션 `1b120bb4b5874db8a6271c1c47edca77`, PID 18796(32비트 본체)/18816(실행기),
   07:26:39 시작을 상태 파일과 Get-Process로 대조했다. mock/raw-v2, 실행 코드 e36fc83이다.
   최신 상태 시각 11:22:10, running/accepting, writer_closed=false/finalization=null이다.
