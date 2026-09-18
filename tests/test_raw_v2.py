@@ -189,6 +189,8 @@ def test_commit_failure_never_leaves_a_closed_replayable_file(tmp_path, operatio
         with pytest.raises(sqlite3.OperationalError):
             w.commit() if operation == "commit" else w.finish(close_ns=20)
         assert w.failed and not w.finished
+        with pytest.raises(ValueError, match="failed"):
+            w.commit()
         with pytest.raises(ValueError):
             w.finish(close_ns=20)
     with pytest.raises(ValueError, match="incomplete"):
@@ -203,3 +205,66 @@ def test_original_prototype_one_files_remain_readable(tmp_path):
         meta["schema"] = "raw_v2_prototype_1"
         c.execute("UPDATE metadata SET value=?", (json.dumps(meta),))
     assert len(read(path)[1]) == 2
+
+
+def test_failed_finish_cannot_be_committed_by_a_later_retry(tmp_path):
+    path = tmp_path / "failed-finish.db"
+    with writer(path) as w:
+        append(w, event())
+        w.commit()  # A previously committed batch must survive the failure.
+        original = w.conn
+
+        class FailOnce:
+            attempts = 0
+
+            def execute(self, *args):
+                return original.execute(*args)
+
+            def commit(self):
+                self.attempts += 1
+                if self.attempts == 1:
+                    raise sqlite3.OperationalError("synthetic finish commit failure")
+                original.commit()
+
+            def close(self):
+                original.close()
+
+        w.conn = FailOnce()
+        with pytest.raises(sqlite3.OperationalError):
+            w.finish(close_ns=20)
+        with pytest.raises(ValueError, match="failed"):
+            w.commit()
+        assert w.conn.attempts == 1
+    with sqlite3.connect(path) as conn:
+        assert json.loads(conn.execute("SELECT value FROM metadata").fetchone()[0])["state"] == "incomplete"
+        assert conn.execute("SELECT seq FROM events").fetchall() == [(1,)]
+    with pytest.raises(ValueError, match="incomplete"):
+        read(path)
+
+
+def test_failed_append_cannot_commit_pending_batch(tmp_path):
+    path = tmp_path / "failed-append.db"
+    with writer(path) as w:
+        append(w, event())
+        w.commit()
+        append(w, event(2, received_ns=1))
+        with pytest.raises(ValueError):
+            append(w, event(4, received_ns=2))
+        with pytest.raises(ValueError, match="failed"):
+            w.commit()
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT seq FROM events").fetchall() == [(1,)]
+    with pytest.raises(ValueError, match="incomplete"):
+        read(path)
+
+
+def test_finished_writer_rejects_commit_and_preserves_closed_file(tmp_path):
+    path = tmp_path / "closed.db"
+    with writer(path) as w:
+        append(w, event())
+        w.finish(close_ns=20)
+        with pytest.raises(ValueError, match="finished"):
+            w.commit()
+    meta, records = read(path)
+    assert meta["state"] == "closed"
+    assert len(records) == 1

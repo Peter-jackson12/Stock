@@ -133,6 +133,8 @@ class RawV2Writer:
         self.failed = False
 
     def commit(self):
+        if self.finished or self.failed:
+            raise ValueError("session already finished or failed")
         try:
             self.conn.commit()
         except BaseException:
