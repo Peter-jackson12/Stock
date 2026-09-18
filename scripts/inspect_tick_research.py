@@ -26,6 +26,15 @@ def inspect(path):
     status = result.get("status")
     if status not in STATUSES:
         raise ValueError("unknown status")
+    if status.startswith("completed_"):
+        # These fields are emitted by the v1 writer. A completion label alone
+        # cannot override partial input, diagnostic-only output or an error.
+        if result.get("input_complete") is not True:
+            raise ValueError("completed status requires input_complete=true")
+        if result.get("diagnostics_only") is not False:
+            raise ValueError("completed status requires diagnostics_only=false")
+        if "error" not in result or result["error"] is not None:
+            raise ValueError("completed status requires error=null")
     summary = dict(status=status, diagnostics_only=status in ("failed", "running"))
     if status != "running":
         for name in ("event_count", "open_quantity"):

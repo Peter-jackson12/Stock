@@ -7,7 +7,8 @@ from scripts import inspect_tick_research as reader
 
 def save(tmp_path, **changes):
     result = dict(schema="tick_research_result_v1", status="completed_with_open_position",
-                  event_count=2, open_quantity=1, final_cash="100", orders=[{}], fills=[{}], signals=[{}])
+                  event_count=2, open_quantity=1, final_cash="100", orders=[{}], fills=[{}], signals=[{}],
+                  input_complete=True, diagnostics_only=False, error=None)
     path = tmp_path / "result.json"
     path.write_text(json.dumps(result | changes), encoding="utf-8")
     return path
@@ -45,3 +46,33 @@ def test_missing_file_is_not_created(tmp_path):
 @pytest.mark.parametrize("status", ["completed_flat", "completed_empty_input", "completed_no_fills"])
 def test_contradictory_completion_status_rejected(tmp_path, status):
     assert reader.main([str(save(tmp_path, status=status))]) == 3
+
+
+@pytest.mark.parametrize("field,value", [
+    ("input_complete", False), ("input_complete", None), ("input_complete", 1),
+    ("diagnostics_only", True), ("diagnostics_only", None), ("diagnostics_only", 0),
+    ("error", "checksum mismatch"), ("error", ""), ("error", False),
+])
+def test_completion_requires_explicit_success_evidence(tmp_path, field, value):
+    assert reader.main([str(save(tmp_path, **{field: value}))]) == 3
+
+
+@pytest.mark.parametrize("field", ["input_complete", "diagnostics_only", "error"])
+def test_completion_missing_evidence_is_invalid(tmp_path, field):
+    path = save(tmp_path)
+    data = json.loads(path.read_bytes())
+    del data[field]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert reader.main([str(path)]) == 3
+
+
+@pytest.mark.parametrize("status,counts", [
+    ("completed_empty_input", dict(event_count=0, open_quantity=0, fills=[])),
+    ("completed_no_selected_events", dict(event_count=0, open_quantity=0, fills=[])),
+    ("completed_no_fills", dict(open_quantity=0, fills=[])),
+    ("completed_with_open_position", {}),
+    ("completed_flat", dict(open_quantity=0)),
+])
+def test_all_completion_outcomes_require_success_evidence(tmp_path, status, counts):
+    assert reader.main([str(save(tmp_path, status=status, **counts))]) == 0
+    assert reader.main([str(save(tmp_path, status=status, input_complete=False, **counts))]) == 3

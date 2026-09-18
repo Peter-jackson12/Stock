@@ -5,6 +5,7 @@ import pytest
 
 from engine.tick_ordering import OrderedTick
 from engine.tick_research_run import run_research, ResearchRunFailed
+from scripts.inspect_tick_research import inspect
 
 
 def events():
@@ -36,6 +37,7 @@ def test_save_open_position_fills_and_explicit_cost_settings(tmp_path):
     assert len(saved["code_sha256"]) == 6
     assert saved["processed_event_counts"] == {"quote": 1, "trade": 1}
     assert saved["quote_checks"] == {"eligible": 2}
+    assert inspect(path)["diagnostics_only"] is False
 
 
 def test_reruns_preserve_previous_files_and_have_same_reproducibility_key(tmp_path):
@@ -65,13 +67,16 @@ def test_partial_failure_is_saved_as_diagnostics_and_raised(tmp_path):
     assert saved["status"] == "failed" and saved["diagnostics_only"]
     assert not saved["input_complete"]
     assert "TickOrderError" in saved["error"]
+    assert inspect(caught.value.path)["diagnostics_only"] is True
 
 
 @pytest.mark.parametrize("stream,status", [([], "completed_empty_input"),
                                           (events()[:1], "completed_no_fills")])
 def test_empty_and_no_fill_outcomes_are_distinct(tmp_path, stream, status):
-    saved = json.loads(run(tmp_path, stream).read_bytes())
+    path = run(tmp_path, stream)
+    saved = json.loads(path.read_bytes())
     assert saved["status"] == status
+    assert inspect(path)["status"] == status
 
 
 def test_close_boundary_violation_is_failed_not_silently_truncated(tmp_path):

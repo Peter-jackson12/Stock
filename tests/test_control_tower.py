@@ -30,7 +30,8 @@ def result_file(root, **changes):
     path = root / "research_runs/example/result.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     value = dict(schema="tick_research_result_v1", status="completed_with_open_position",
-                 event_count=2, open_quantity=1, final_cash="100", orders=[{}], fills=[{}], signals=[{}])
+                 event_count=2, open_quantity=1, final_cash="100", orders=[{}], fills=[{}], signals=[{}],
+                 input_complete=True, diagnostics_only=False, error=None)
     path.write_text(json.dumps(value | changes), encoding="utf-8")
     return path
 
@@ -142,6 +143,20 @@ def test_worker_preserves_research_outcome(tmp_path, research_status):
     assert path.read_bytes() == before
 
 
+@pytest.mark.parametrize("changes", [
+    {"input_complete": False}, {"diagnostics_only": True}, {"error": "checksum mismatch"},
+])
+def test_worker_rejects_contradictory_completed_result(tmp_path, changes):
+    path = result_file(tmp_path, **changes)
+    before = path.read_bytes()
+    job_id = service.queue_inspection(tmp_path, path)
+    assert service.run_one_inspection(tmp_path) == job_id
+    job, = JobStore(tmp_path).recent()
+    assert job["status"] == "failed"
+    assert "ValueError" in job["error"]
+    assert path.read_bytes() == before
+
+
 @pytest.mark.parametrize("bad_payload", [{"path": "../outside/result.json"}, {"command": "anything"}])
 def test_worker_revalidates_persisted_payload(tmp_path, bad_payload):
     store = JobStore(tmp_path)
@@ -151,7 +166,8 @@ def test_worker_revalidates_persisted_payload(tmp_path, bad_payload):
 
 
 def test_worker_missing_or_large_result_records_failure(tmp_path):
-    path = result_file(tmp_path, error="x" * MAX_JSON_BYTES)
+    path = result_file(tmp_path, status="failed", input_complete=False,
+                       diagnostics_only=True, error="x" * MAX_JSON_BYTES)
     service.queue_inspection(tmp_path, path)
     service.run_one_inspection(tmp_path)
     assert JobStore(tmp_path).recent()[0]["status"] == "failed"
