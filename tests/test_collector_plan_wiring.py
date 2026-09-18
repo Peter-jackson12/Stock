@@ -57,6 +57,7 @@ def _run_stats_worker_once_at(logger, monkeypatch, hh, mm, ss):
         def now(cls):
             return cls(2026, 9, 18, hh, mm, ss)
     monkeypatch.setitem(type(logger)._stats_worker.__globals__, "datetime", FixedNow)
+    monkeypatch.setattr(logger, "_kst_now", lambda: FixedNow.now())
     monkeypatch.setitem(type(logger)._stats_worker.__globals__, "time",
                         SimpleNamespace(monotonic=time.monotonic,
                                        sleep=lambda _: setattr(logger, "is_running", False)))
@@ -177,7 +178,7 @@ def test_전환_계획_없이_트리거만_주면_거부한다(collector):
         _logger(collector, aftermarket_transition_at=154000)
 
 
-@pytest.mark.parametrize("bad", [-1, 235960, "154000", True, 1.0])
+@pytest.mark.parametrize("bad", [-1, 235960, "154000", True, 1.0, 156000, 154060])
 def test_잘못된_전환_시각을_거부한다(collector, bad):
     with pytest.raises(ValueError, match="HHMMSS"):
         _logger(collector, aftermarket_plan=_plan(), aftermarket_duration_seconds=60,
@@ -199,6 +200,116 @@ def test_트리거_없이도_수동_호출은_그대로_된다(transition_live):
     logger._on_login(0)
     record = logger.run_aftermarket_transition()
     assert record.succeeded
+
+
+def test_자동_전환과_정규장_duration_충돌을_Qt_전에_거부한다(collector):
+    with pytest.raises(ValueError, match="정규장.*제한"):
+        _logger(collector, codes=["005930"], duration_seconds=10,
+                aftermarket_plan=_plan(), aftermarket_duration_seconds=60,
+                aftermarket_transition_after_seconds=30)
+
+
+def test_등록_완료_전에는_시각_트리거를_세우지_않는다(transition_live, monkeypatch):
+    logger, _ = transition_live
+    logger._on_login(0)
+    logger._subscribed_at = None
+    logger._aftermarket_transition_at = 154000
+    logger.log.status = lambda _: None
+    _run_stats_worker_once_at(logger, monkeypatch, 15, 40, 0)
+    assert not logger._aftermarket_transition_due
+
+
+def test_등록_완료_전에는_Qt도_전환을_시작하지_않는다(transition_live):
+    logger, _ = transition_live
+    logger._on_login(0)
+    logger._subscribed_at = None
+    logger._aftermarket_transition_due = True
+    logger._poll_control()
+    assert logger.transition is None
+
+
+@pytest.mark.parametrize("kind", ["orphan", "profile"])
+def test_고립된_인자와_잘못된_독립_계획은_Qt_전에_거부한다(collector, monkeypatch, kind):
+    extra = (dict(aftermarket_duration_seconds=60) if kind == "orphan" else
+             dict(plan=_plan(profile="typo"), duration_seconds=60))
+    old, _, _ = collector
+    calls = []
+    monkeypatch.setitem(old.__init__.__globals__, "QApplication", lambda _: calls.append("Qt"))
+    with pytest.raises(ValueError):
+        _logger(collector, **extra)
+    assert calls == []
+
+
+AFTER_CLI = ["--aftermarket-nxt-codes", "005930_NX", "--aftermarket-list-origin", "fixture",
+             "--aftermarket-list-verified-at", "2026-09-18T15:00:00+09:00",
+             "--aftermarket-duration-seconds", "60", "--aftermarket-transition-at", "15:40:00"]
+
+
+@pytest.mark.parametrize("argv", [
+    ["--codes", ""],
+    ["--aftermarket-list-origin", ""],
+    AFTER_CLI + ["--aftermarket-market-profile", ""],
+    ["--aftermarket-market-profile", "nxt_aftermarket"],
+    ["--aftermarket-transition-at", ""],
+    ["--aftermarket-nxt-codes", ""],
+    ["--market-profile", "typo"],
+    AFTER_CLI + ["--codes", "005930", "--duration-seconds", "10"],
+    AFTER_CLI + ["--aftermarket-market-profile", "typo"],
+    AFTER_CLI + ["--storage", "raw-v1"],
+    AFTER_CLI + ["--managed-launch", "fixture"],
+    AFTER_CLI + ["--aftermarket-transition-after-seconds", "30"],
+    AFTER_CLI + ["--aftermarket-transition-at", "15:60:00"],
+    ["--nxt-codes", "005930_NX", "--list-origin", "fixture", "--list-verified-at", "today"],
+])
+def test_CLI_오류는_운영_객체_없이_거부한다(collector, monkeypatch, argv):
+    logger, _, _ = collector
+    def forbidden(*a, **kw):
+        pytest.fail("인자 검증 중 Qt/OCX 생성 금지")
+    namespace = logger.__init__.__globals__
+    monkeypatch.setitem(namespace, "QApplication", forbidden)
+    monkeypatch.setitem(namespace, "QAxWidget", forbidden)
+    with pytest.raises(SystemExit) as error:
+        namespace["parse_collector_args"](argv)
+    assert error.value.code == 2
+
+
+def test_CLI_기본과_독립_NXT와_전환_계획을_분리한다(collector):
+    logger, _, _ = collector
+    parse = logger.__init__.__globals__["parse_collector_args"]
+    assert parse([])[1:] == (None, None, None, None, None, None)
+    args, codes, plan, after, duration, at, elapsed = parse(AFTER_CLI + ["--codes", "005930"])
+    assert codes == ["005930"] and plan is None and args.duration_seconds is None
+    assert after.codes == ("005930_NX",) and (duration, at, elapsed) == (60, 154000, None)
+    assert after.venue_resolution == "unverified" and after.nxt_coverage == "unconfirmed"
+    args, codes, plan, after, *_ = parse([
+        "--nxt-codes", "005930_NX", "--list-origin", "fixture",
+        "--list-verified-at", "today", "--duration-seconds", "60"])
+    assert args.duration_seconds == 60 and codes is None and after is None
+    assert plan.codes == ("005930_NX",)
+
+
+def test_시각_트리거는_OS_로컬_시계가_아닌_KST를_쓴다(transition_live, monkeypatch):
+    from datetime import timezone
+    logger, _ = transition_live
+    logger._on_login(0)
+    logger._aftermarket_transition_at = 154000
+    logger.resources = None
+    logger.log.status = lambda _: None
+    requested_zones = []
+    class UTCComputer(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            instant = cls(2026, 9, 18, 6, 40, tzinfo=timezone.utc)
+            requested_zones.append(tz)
+            return instant.replace(tzinfo=None) if tz is None else instant.astimezone(tz)
+    namespace = type(logger)._stats_worker.__globals__
+    monkeypatch.setitem(namespace, "datetime", UTCComputer)
+    monkeypatch.setitem(namespace, "time", SimpleNamespace(
+        monotonic=time.monotonic, sleep=lambda _: setattr(logger, "is_running", False)))
+    type(logger)._stats_worker(logger)
+    assert logger._aftermarket_transition_due
+    assert requested_zones[-1].utcoffset(None).total_seconds() == 9 * 3600
+    assert logger.transition is None
 
 
 def _plan(codes="005930_NX,000660_NX", profile="nxt_aftermarket", source=SOURCE):

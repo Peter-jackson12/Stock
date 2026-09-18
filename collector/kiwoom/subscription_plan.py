@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, field
+from collector.kiwoom.market_sessions import resolve_profile
 
 #: 기존 정규장 수집. 여섯 자리 코드만 받는다.
 MODE_KRX_REGULAR = "krx_regular"
@@ -148,6 +149,7 @@ def plan_from_cli(*, nxt_codes, list_origin, list_verified_at, market_profile,
     제한 시간은 운영 수집기가 요구하는 1~300초와 같은 범위를 미리 확인한다. 계획 모드는
     독립 검증 실행이며 무제한으로 돌지 않는다.
     """
+    resolve_profile(market_profile)
     if not str(nxt_codes or "").strip():
         raise ValueError("--nxt-codes 가 필요하다 (예: 005930_NX)")
     missing = [name for name, value in (("--list-origin", list_origin),
@@ -187,6 +189,7 @@ def aftermarket_plan_from_cli(*, nxt_codes, list_origin, list_verified_at, marke
     전환 전용 플래그 이름으로 오류를 낸다. 전환 후 구간의 1~300초 상한은 별도로 확인한다
     (`resolve_aftermarket_transition_cli` 참고) — 여기서는 다루지 않는다.
     """
+    resolve_profile(market_profile)
     if not str(nxt_codes or "").strip():
         raise ValueError("--aftermarket-nxt-codes 가 필요하다 (예: 005930_NX)")
     missing = [name for name, value in (("--aftermarket-list-origin", list_origin),

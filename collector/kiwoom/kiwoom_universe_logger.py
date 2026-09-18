@@ -56,8 +56,8 @@ from collector.kiwoom.session_monitor import (                         # noqa: E
 
 from collector.kiwoom.market_sessions import resolve_profile  # noqa: E402
 from collector.kiwoom.resource_log import ResourceHistory  # noqa: E402
-from collector.kiwoom.session_transition import SessionTransition, write_transition_record  # noqa: E402
-from collector.kiwoom.subscription_plan import MODE_NXT  # noqa: E402
+from collector.kiwoom.session_transition import SessionTransition, write_transition_record, KST  # noqa: E402
+from collector.kiwoom.subscription_plan import MODE_NXT, build_plan  # noqa: E402
 from collector.kiwoom.tick_writer import TickWriter  # noqa: E402
 from collector.kiwoom.live_capture import LiveRawCapture, TRADE_FIDS, QUOTE_FIDS  # noqa: E402
 
@@ -104,6 +104,7 @@ class KiwoomUniverseLogger:
         self._transition_record_path = None
         self._transition_active = False
         self._monotonic = time.monotonic
+        self._kst_now = lambda: datetime.now(KST)
         self._last_received_monotonic = None
         self._last_received_utc = None
         self.transition = None
@@ -125,17 +126,23 @@ class KiwoomUniverseLogger:
             if aftermarket_transition_at is not None and aftermarket_transition_after_seconds is not None:
                 raise ValueError("전환 시각과 경과 시간 트리거를 함께 줄 수 없다")
             if aftermarket_transition_at is not None and (
-                    type(aftermarket_transition_at) is not int or not 0 <= aftermarket_transition_at <= 235959):
+                    type(aftermarket_transition_at) is not int or not 0 <= aftermarket_transition_at <= 235959
+                    or aftermarket_transition_at % 100 >= 60 or aftermarket_transition_at // 100 % 100 >= 60):
                 raise ValueError("전환 시각은 HHMMSS 형식의 정수(0~235959)여야 한다")
             if aftermarket_transition_after_seconds is not None and (
                     type(aftermarket_transition_after_seconds) is not int
                     or aftermarket_transition_after_seconds <= 0):
                 raise ValueError("경과 시간 트리거는 양의 정수(초)여야 한다")
+            if (duration_seconds is not None and (aftermarket_transition_at is not None
+                    or aftermarket_transition_after_seconds is not None)):
+                raise ValueError("자동 전환과 정규장 제한 시간을 함께 줄 수 없다")
             # 시장 구간 프로필이 잘못됐으면 여기서 바로 거부한다 — Qt/OCX 를 만들고
             # 로그인까지 간 뒤 전환 단계(open_aftermarket)에서야 실패하지 않기 위해서다.
             resolve_profile(aftermarket_plan.market_profile)
         elif aftermarket_transition_at is not None or aftermarket_transition_after_seconds is not None:
             raise ValueError("애프터마켓 전환 계획 없이 트리거를 줄 수 없다")
+        elif aftermarket_duration_seconds is not None:
+            raise ValueError("애프터마켓 전환 계획 없이 제한 시간을 줄 수 없다")
         if plan is not None:
             if codes is not None:
                 raise ValueError("구독 계획과 --codes 를 함께 줄 수 없다")
@@ -145,6 +152,11 @@ class KiwoomUniverseLogger:
                 raise ValueError("NXT 계획은 독립 raw-v2 검증 실행만 지원한다")
             if type(duration_seconds) is not int or not 1 <= duration_seconds <= 300:
                 raise ValueError("NXT 계획은 1~300초 제한 시간이 필요하다")
+        for candidate in (plan, aftermarket_plan):
+            if candidate is not None:
+                resolve_profile(candidate.market_profile)
+                build_plan(candidate.mode, candidate.codes, source=candidate.source,
+                           market_profile=candidate.market_profile)
         self._subscribed_at = None
         self.raw_capture = None
         self._login_handled = False
@@ -252,6 +264,7 @@ class KiwoomUniverseLogger:
         # 확인해 이 플래그를 세우고, 실제 OCX 호출은 여기서만 한다. 이번 tick에
         # 종료 사유가 이미 잡혔으면 전환을 새로 시작하지 않는다.
         if (self._aftermarket_transition_due and self.transition is None
+                and self._subscribed_at is not None and self.raw_capture is not None
                 and not self._shutdown_requested):
             self._aftermarket_transition_due = False
             self.run_aftermarket_transition()
@@ -349,7 +362,7 @@ class KiwoomUniverseLogger:
         # 3. 보통주 선별 및 26개 화면 분할 등록
         try:
             self._register_all_universe()
-            self._subscribed_at = time.monotonic()
+            self._subscribed_at = self._monotonic()
             self.monitor.mark_reception_expected()
         except Exception as exc:
             self.log.emit(f"❌ 실시간 등록 실패: {exc}")
@@ -735,12 +748,14 @@ class KiwoomUniverseLogger:
             # self.transition is None 가드가 한 번만 세우는 것을 보장한다: 전환이
             # 시작되면(성공이든 실패든) 바로 채워지고, 트리거는 다시 세워지지 않는다.
             if (self.aftermarket_plan is not None and self.transition is None
+                    and self._subscribed_at is not None
                     and not self._aftermarket_transition_due):
-                if self._aftermarket_transition_at is not None and now_int >= self._aftermarket_transition_at:
+                if (self._aftermarket_transition_at is not None
+                        and int(self._kst_now().strftime("%H%M%S")) >= self._aftermarket_transition_at):
                     self._aftermarket_transition_due = True
                 elif (self._aftermarket_transition_after_seconds is not None
                       and self._subscribed_at is not None
-                      and time.monotonic() - self._subscribed_at >= self._aftermarket_transition_after_seconds):
+                      and self._monotonic() - self._subscribed_at >= self._aftermarket_transition_after_seconds):
                     self._aftermarket_transition_due = True
 
             if self._aftermarket_subscribed_at is not None:
@@ -863,7 +878,8 @@ class KiwoomUniverseLogger:
         signal.signal(signal.SIGINT, _handler)
 
 
-if __name__ == "__main__":
+def parse_collector_args(argv=None):
+    """운영 잠금·Qt·로그인 없이 CLI 조합을 끝까지 검증한다."""
     parser = argparse.ArgumentParser(description="Kiwoom collector; default raw-v2, no orders")
     parser.add_argument("--storage", choices=("raw-v2", "raw-v1"), default="raw-v2")
     parser.add_argument("--codes", help="explicit comma-separated common-stock codes for a small run")
@@ -878,8 +894,8 @@ if __name__ == "__main__":
     nxt.add_argument("--nxt-eligibility-confirmed", action="store_true",
                      help="공식 수단으로 NXT 거래 대상임을 확인했을 때만 지정한다. "
                           "입력했다는 사실과 확인했다는 사실은 다르다")
-    nxt.add_argument("--list-note", default="", help="목록 근거에 남길 메모")
-    nxt.add_argument("--market-profile", default="nxt_aftermarket",
+    nxt.add_argument("--list-note", help="목록 근거에 남길 메모")
+    nxt.add_argument("--market-profile",
                      help="시장 구간 프로필 (기본: nxt_aftermarket)")
     after = parser.add_argument_group(
         "애프터마켓 전환 (단일 로그인)",
@@ -890,8 +906,8 @@ if __name__ == "__main__":
     after.add_argument("--aftermarket-list-verified-at", help="전환 후 목록을 확인한 시각")
     after.add_argument("--aftermarket-nxt-eligibility-confirmed", action="store_true",
                        help="공식 수단으로 NXT 거래 대상임을 확인했을 때만 지정한다")
-    after.add_argument("--aftermarket-list-note", default="", help="전환 후 목록 근거에 남길 메모")
-    after.add_argument("--aftermarket-market-profile", default="nxt_aftermarket",
+    after.add_argument("--aftermarket-list-note", help="전환 후 목록 근거에 남길 메모")
+    after.add_argument("--aftermarket-market-profile",
                        help="전환 후 시장 구간 프로필 (기본: nxt_aftermarket)")
     after.add_argument("--aftermarket-duration-seconds", type=int,
                        help="전환 후 애프터마켓 구간 자체의 종료 상한 (1~300초, 전환 모드 필수)")
@@ -899,29 +915,28 @@ if __name__ == "__main__":
                        help="전환을 실행할 KST 시각 HH:MM:SS (경과 시간 트리거와 함께 줄 수 없다)")
     after.add_argument("--aftermarket-transition-after-seconds", type=int,
                        help="정규장 구독 등록 완료 후 몇 초 뒤 전환할지 (전환 시각 트리거와 함께 줄 수 없다)")
-    args = parser.parse_args()
-    if args.preflight:
-        from collector.kiwoom.preflight import inspect_environment
-        result = inspect_environment()
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        sys.exit(0 if result["ready"] else 2)
-    codes = None if not args.codes else list(dict.fromkeys(args.codes.split(",")))
+    args = parser.parse_args(argv)
+    codes = None if args.codes is None else list(dict.fromkeys(args.codes.split(",")))
     if codes is not None and (not 1 <= len(codes) <= 10 or any(len(c) != 6 or not c.isdigit() for c in codes)):
         parser.error("--codes requires 1..10 six-digit codes")
     plan = None
-    if args.nxt_codes:
+    if args.nxt_codes is not None:
         if codes is not None:
             parser.error("--nxt-codes 와 --codes 는 함께 쓸 수 없다")
         from collector.kiwoom.subscription_plan import plan_from_cli
         try:
             plan = plan_from_cli(
                 nxt_codes=args.nxt_codes, list_origin=args.list_origin,
-                list_verified_at=args.list_verified_at, market_profile=args.market_profile,
+                list_verified_at=args.list_verified_at,
+                market_profile="nxt_aftermarket" if args.market_profile is None else args.market_profile,
                 nxt_eligibility_confirmed=args.nxt_eligibility_confirmed,
                 note=args.list_note, duration_seconds=args.duration_seconds)
         except ValueError as exc:
             parser.error(str(exc))
-    elif any((args.list_origin, args.list_verified_at, args.nxt_eligibility_confirmed)):
+        if args.storage != "raw-v2" or args.managed_launch or args.duration_seconds is None:
+            parser.error("NXT 계획은 독립 raw-v2 및 1~300초 제한 시간이 필요하다")
+    elif any((args.list_origin is not None, args.list_verified_at is not None, args.nxt_eligibility_confirmed,
+              args.list_note is not None, args.market_profile is not None)):
         parser.error("목록 근거 인자는 --nxt-codes 와 함께 써야 한다")
     if args.duration_seconds is not None and plan is None and (
             codes is None or not 1 <= args.duration_seconds <= 300):
@@ -931,10 +946,12 @@ if __name__ == "__main__":
     aftermarket_transition_at = None
     aftermarket_transition_after_seconds = None
     aftermarket_given = any((
-        args.aftermarket_nxt_codes, args.aftermarket_list_origin, args.aftermarket_list_verified_at,
-        args.aftermarket_duration_seconds is not None, args.aftermarket_transition_at,
+        args.aftermarket_nxt_codes is not None, args.aftermarket_list_origin is not None,
+        args.aftermarket_list_verified_at is not None,
+        args.aftermarket_duration_seconds is not None, args.aftermarket_transition_at is not None,
         args.aftermarket_transition_after_seconds is not None,
-        args.aftermarket_nxt_eligibility_confirmed, args.aftermarket_list_note))
+        args.aftermarket_nxt_eligibility_confirmed, args.aftermarket_list_note is not None,
+        args.aftermarket_market_profile is not None))
     if aftermarket_given:
         # 상충 인자는 OCX(QApplication/OCX 컨트롤) 를 만들기 전에 거부한다.
         if plan is not None:
@@ -943,13 +960,16 @@ if __name__ == "__main__":
             parser.error("애프터마켓 전환은 독립 raw-v2 실행만 지원한다")
         if args.managed_launch:
             parser.error("애프터마켓 전환은 관리 실행과 함께 쓸 수 없다")
+        if args.duration_seconds is not None:
+            parser.error("자동 전환과 정규장 제한 시간을 함께 줄 수 없다")
         from collector.kiwoom.subscription_plan import resolve_aftermarket_transition_cli
         try:
             (aftermarket_plan, aftermarket_duration_seconds, aftermarket_transition_at,
              aftermarket_transition_after_seconds) = resolve_aftermarket_transition_cli(
                 nxt_codes=args.aftermarket_nxt_codes, list_origin=args.aftermarket_list_origin,
                 list_verified_at=args.aftermarket_list_verified_at,
-                market_profile=args.aftermarket_market_profile,
+                market_profile=("nxt_aftermarket" if args.aftermarket_market_profile is None
+                                else args.aftermarket_market_profile),
                 duration_seconds=args.aftermarket_duration_seconds,
                 transition_at=args.aftermarket_transition_at,
                 transition_after_seconds=args.aftermarket_transition_after_seconds,
@@ -957,13 +977,25 @@ if __name__ == "__main__":
                 note=args.aftermarket_list_note)
         except ValueError as exc:
             parser.error(str(exc))
+    if args.managed_launch and (codes or args.duration_seconds is not None or args.storage != "raw-v2"):
+        parser.error("managed launch uses its stored plan only")
+    return (args, codes, plan, aftermarket_plan, aftermarket_duration_seconds,
+            aftermarket_transition_at, aftermarket_transition_after_seconds)
+
+
+if __name__ == "__main__":
+    (args, codes, plan, aftermarket_plan, aftermarket_duration_seconds,
+     aftermarket_transition_at, aftermarket_transition_after_seconds) = parse_collector_args()
+    if args.preflight:
+        from collector.kiwoom.preflight import inspect_environment
+        result = inspect_environment()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        sys.exit(0 if result["ready"] else 2)
     from collector.kiwoom.collector_lease import CollectorLease
     from collector.kiwoom.capture_diagnostics import CaptureDiagnostics
     with CollectorLease(PROJECT_ROOT), CaptureDiagnostics(LOG_DIR) as diagnostics:
         managed = None
         if args.managed_launch:
-            if codes or args.duration_seconds is not None or args.storage != "raw-v2":
-                parser.error("managed launch uses its stored plan only")
             from control_tower.managed_capture import ManagedCapturePeer, TOKEN_ENV
             managed = ManagedCapturePeer(PROJECT_ROOT, args.managed_launch, os.environ.pop(TOKEN_ENV, ""))
             codes, args.duration_seconds = managed.plan["codes"], managed.plan["duration"]
