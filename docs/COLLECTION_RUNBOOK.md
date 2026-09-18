@@ -236,6 +236,75 @@ shares·시가총액·유통비율을 수신한다. 현재 자동 실행/운영 
 - 변경된 종료 처리는 다음 실행부터 적용된다. 변경 전부터 실행 중인 프로세스에는
   자동 반영되지 않으므로, 운영 적용 전에 변경분을 커밋한다.
 
+### 닫힌 raw v2 압축 보관·복원 시제품
+
+`collector/raw_archive.py`와 `scripts/archive_raw_v2.py`는 **Windows에서 32 MiB 이하의
+작은 파일만 처리하는 시제품**이다. 실제 대용량 raw 적용은 미실행이며 상한 해제 옵션도 없다.
+raw v1, DB 정리/VACUUM, 자동 원본 삭제, 원문 보정, LOB/초봉 변환은 범위 밖이다.
+
+**형식과 처리 상한.** 현재 Python 환경의 표준 `gzip.GzipFile`(DEFLATE, level 6)을 사용한다.
+별도 패키지나 `uv.lock` 변경 없이 일반 gzip 도구로도 복원할 수 있다. 전체 버퍼 압축 대신
+1 MiB씩 읽고 쓰며 압축 파일은 최대 33 MiB, 복원 바이트는 기록된 원본 크기를 상한으로 검사한다.
+기존 raw 읽기의 JSON 메모리도 제한하기 위해 복원본에서 최대 100,000레코드·payload당 64 KiB를
+먼저 확인한다. SQLite 페이지 캐시는 약 2 MiB 설정이며 전체 프로세스 RSS의 하드 제한은 아니다.
+원문 바이트는 그대로이며 압축률·속도는 측정 전 확정하지 않는다. 합성 결과를 실제 압축률로 일반화하지 않는다.
+근거: [Python gzip](https://docs.python.org/3/library/gzip.html),
+[SQLite 읽기 전용/immutable URI](https://www.sqlite.org/uri.html).
+
+**닫힘 계약.** 운영 적용 전 운영자가 같은 session_id의 입력 중단·drain·writer_closed·마지막
+보고·로그·OS 프로세스 부재를 대조해야 한다. `--closure-note`에는 확인 시각과 그 근거 위치를 남긴다.
+이는 운영자 진술이며 도구가 근거 내용을 자동 인증하는 기능은 아니다. `closed` 헤더만으로 승인하지 않는다.
+도구는 기존 `CollectorLease`를 전체 보관 작업 동안 유지하고, Windows 파일 핸들의 공유 모드를
+읽기만 허용해 이미 열린 쓰기 핸들 및 이후 쓰기·삭제를 거부한다. 원본은 SQLite로 열지 않는다.
+WAL/SHM/rollback journal이 하나라도 있으면 크기 0이어도 거부한다. 이를 삭제하거나 체크포인트해서
+통과시키지 않는다. 잔여 sidecar의 복구·완결 확인은 별도 운영 작업이다. OS 잠금이 실패하는 환경을
+우회하지 않는다. 장중 예약·수집 종료 기능은 없으며 운영 실행은 별도로 승인된 장외 작업이다.
+
+**완료 게시와 실패.** 원본과 다른 부모의 새 보관 디렉터리만 허용한다. `raw.db.gz.partial`에
+스트리밍 압축·SHA256 계산 → fsync → `verification.db.partial`로 복원·크기/바이트 SHA256 대조
+→ 기존 `read_raw_v2` 전체 소진(순번·payload 체크섬·닫힘 계약) → 복원본 재해시 순서다.
+검증용 복원본만 삭제하고 gzip을 게시한 뒤 `archive.json.partial`을 fsync해 `archive.json`으로 게시한다.
+게시에는 같은 디렉터리 내 hard link 생성 후 임시 이름 해제를 사용해 기존 대상을 덮어쓰지 않는다.
+해당 기능을 지원하는 로컬 파일시스템이 필요하며 실패 시 다른 방식으로 자동 우회하지 않는다.
+
+`archive.json`이 유일한 보관 완료 표식이다. 원본 절대 경로·크기·mtime·바이트 SHA256,
+raw manifest, 종료 근거 진술, gzip 형식/레벨·Python/zlib 버전·압축본 크기/해시와 검증 결과를 기록한다.
+압축본만 있거나 `.partial`만 있는 디렉터리는 미완료다. 실패·중단·ENOSPC 시 잔여물은 진단용으로
+남기고 자동 재개/삭제하지 않는다. 새 목적지 이름으로 재시도하며 잔여물 제거는 별도로 검토한다.
+완료 표식도 복원 시 압축본 해시·gzip EOF/CRC·복원 크기/해시·raw 계약을 다시 확인한다.
+해시는 우발 손상 대조이며 manifest와 데이터의 동시 악의적 변조를 막는 서명은 아니다.
+파일 fsync/이름 게시는 OS 전원 장애·스토리지 고장 내구성의 실측 인증이 아니다.
+
+**복원과 품질의 분리.** 복원도 존재하지 않는 별도 디렉터리만 받는다. `raw.db.partial`을 검증한 뒤에만
+`raw.db`로 게시한다. 원본 경로로 덮어쓰지 않으며 `parse_error`, 방향 null, 원문 FID를 그대로 보존한다.
+검증 결과 `research_quality=not_certified`는 연구 합격을 의미하지 않는다. parse_error 등 제어 기록
+건수는 기록하지만 이를 제거하거나 연구 입력 거부 정책을 완화하지 않는다. 기존 실제 세션의 방향 미확인
+8건에 대한 차단은 그대로다. raw 읽기 성공은 시장 데이터 무누락·venue·전략 정확성 인증이 아니다.
+
+**재현(작은 합성 데이터만).** 아래 이름은 새 경로로 선택한다. 첫 명령은 빈 closed 합성 raw를 만든다.
+방향 null·parse_error 보존과 연구 거부까지 포함하는 재현은 아래 pytest 묶음을 사용한다.
+
+```powershell
+.\.venv\Scripts\python.exe -c "from collector.raw_v2 import RawV2Writer; w=RawV2Writer('operations_state/archive_demo/source/s.db', source='synthetic', session_id='demo', market_date='2026-09-19', feed_scope='fixture'); w.finish(close_ns=1); w.__exit__(None,None,None)"
+.\.venv\Scripts\python.exe scripts/archive_raw_v2.py archive operations_state/archive_demo/source/s.db operations_state/archive_demo/bundle --session-id demo --closure-note "합성 demo: 직접 finish 후 연결 종료; 운영 수집 없음"
+.\.venv\Scripts\python.exe scripts/archive_raw_v2.py restore operations_state/archive_demo/bundle operations_state/archive_demo/restored
+.\.venv\Scripts\python.exe -m pytest tests/test_raw_archive.py tests/test_raw_v2.py tests/test_capture_session.py -q -p no:cacheprovider
+```
+
+**향후 대용량 적용 계획(미실행).** 먼저 종료 근거·수집 잠금·쓰기가 차단된 원본·sidecar 부재를 확인하고,
+파일시스템 hard link/동기화 지원과 장외 I/O 시간을 확보한다. 작은 대표 파일을 별도 승인하여 실제 압축률·속도를
+측정한 뒤 상한과 raw 검증 예산을 재설계한다. 시제품 상수를 바꾸는 것만으로 운영 승인된 도구가 되지 않는다.
+원본 크기 S, 압축 크기 C라면 검증 중 보관 위치에는 C+S가 동시에 필요하다. 사전 검사는 압축률을 가정하지 않고
+3S+256 MiB 여유를 요구한다. 별도 복원에는 S+256 MiB가 필요하다. 여유 검사는 공간 예약이 아니므로
+실행 중 ENOSPC 처리도 필요하다. 원본은 계속 S를 차지하므로 이 작업만으로 원본 디스크 공간이 반환되지는 않는다.
+
+보관 I/O는 원본 S 읽기, C 쓰기, C 읽기+S 복원 쓰기, 복원본 SQL 사전 제한 검사/전체 raw 읽기/재해시,
+압축본 C 재해시다. 별도 복원은 압축본 해시 C 읽기+압축 해제 C 읽기, S 쓰기와 같은 raw/재해시 읽기가 추가된다.
+SQLite 페이지·캐시 접근에 따라 실제 읽기량은 달라지므로 처리 시간을 추정치로 확정하지 않는다.
+운영 순서는 새 보관본 생성 → 별도 위치 실제 복원 → 바이트 대조/raw 계약 → 근거 보존이다.
+원본 삭제 정책은 별도 결정이며 이 도구에는 넣지 않는다. 실제 대용량 압축·전체 해시·복사·복원·부하 측정,
+디스크/전원 장애 내구성과 네트워크 파일시스템 동작은 아직 확인하지 않았다.
+
 ### 종료 후 raw v1 저장 대조
 
 종료 로그·프로세스 부재·짧은 DB 관측을 먼저 대조한다. 수집 종료를 확인한 뒤에만
