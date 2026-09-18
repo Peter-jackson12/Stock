@@ -79,6 +79,31 @@ def test_parse_failure_preserves_raw_trade_then_quality_event(tmp_path):
     assert records[2]["event"].control_type == "parse_error"
 
 
+@pytest.mark.parametrize("selected_code", ["005930", "000660"])
+def test_unsigned_volume_stays_unknown_and_blocks_research(tmp_path, selected_code):
+    # Shape observed in a bounded 2026-09-18 sample; synthetic capture only.
+    path = tmp_path / "unsigned.db"
+    with capture(path) as c:
+        trade(c, ns=1, volume=" 52244")
+        c.finish(20)
+    records = read(path)[1]
+    tick, error = records[1], records[2]["event"]
+    assert tick["raw_fields"]["fids"]["15"] == " 52244"
+    assert tick["event"].volume == 52244 and tick["event"].is_buy is None
+    assert error.control_type == "parse_error"
+    assert error.details["issues"] == ["trade_direction_unverified"]
+    config = dict(source="fixture", session_id="s", code=selected_code, venue="unknown", cash=100000,
+                  max_quote_age_ns=100, buy_latency_ns=5, sell_latency_ns=5, cancel_latency_ns=2, fee_rate="0.001")
+    with pytest.raises(ResearchRunFailed) as caught:
+        run_raw_v2(path, output_root=tmp_path / "results", simulator_config=config, quantity=2)
+    result = json.loads(caught.value.path.read_bytes())
+    assert result["status"] == "failed" and result["diagnostics_only"] is True
+    assert result["input_complete"] is False
+    if selected_code == "000660":
+        assert result["event_count"] == 0
+        assert "dataset quality event parse_error" in result["error"]
+
+
 def test_unsupported_callback_is_recorded_and_interrupts(tmp_path):
     path = tmp_path / "capture.db"
     with capture(path) as c:
