@@ -1,4 +1,59 @@
-# 현재 인계 — 2026-09-18 / 정규장 저장 종료 대조 완료
+# 현재 인계 — 2026-09-18 / 애프터마켓 전환 CLI·자동 트리거 오프라인 구현 완료
+
+## 명시적 단일 로그인 전환 모드의 CLI·자동 트리거 (가짜 OCX 검증, 운영 미적용)
+
+- 시작 HEAD `fb57633`, 작업 트리는 깨끗했다. 기존 전환 함수(`SessionTransition`/
+  `run_aftermarket_transition`)는 고치지 않았다 — 이미 검증된 네 단계 순서·기록 계약·
+  종료 조건·세 결함 수정은 그대로 두고, 그 함수를 사람 대신 불러 줄 CLI/트리거만 새로 놓았다.
+- `kiwoom_universe_logger.py` 의 `__main__` 에 "애프터마켓 전환(단일 로그인)" 인자 그룹을
+  추가했다: `--aftermarket-nxt-codes/-list-origin/-list-verified-at/-nxt-eligibility-confirmed/
+  -list-note/-market-profile/-duration-seconds`, 그리고 `--aftermarket-transition-at HH:MM:SS`
+  (KST 시각) 또는 `--aftermarket-transition-after-seconds N`(정규장 구독 등록 완료 후 경과초)
+  중 **정확히 하나**. 아무 인자도 없으면 지금까지와 동일하게 전환 없음이다.
+- 상충 인자는 OCX(QApplication) 생성 전에 거부한다: 정규장 `--nxt-codes` 계획과 동시 지정,
+  `--storage raw-v1`, `--managed-launch`, 트리거 두 개 동시 지정, 트리거 없이 계획만 지정,
+  계획 없이 트리거만 지정, 시각 형식/범위 오류, 상한·경과초 범위 오류, 잘못된 시장 프로필
+  (`resolve_profile` 실패도 Qt 생성 전에 거부하도록 새로 추가했다).
+- **트리거는 정확히 한 번만 실행한다.** 배경 스레드(`_stats_worker`)는 조건만 확인해
+  `_aftermarket_transition_due` 플래그를 세우고, 실제 `run_aftermarket_transition()` 호출은
+  Qt 스레드의 `_poll_control`(200ms 타이머)만 한다 — OCX/ActiveX 는 만든 스레드에서만 안전
+  하므로 `run_aftermarket_transition()` 자체도 다른 스레드에서 부르면 `RuntimeError` 로
+  거부하는 가드를 추가했다. 같은 tick에 다른 종료 사유가 이미 잡혔거나 전환이 이미 시작됐으면
+  다시 부르지 않는다 — 실패 뒤 재시도·재로그인은 하지 않는다.
+- 트리거가 있는 실행은 15:35 정규장 자동 종료 분기를 건너뛴다(전환 자체가 정규장 저장
+  마무리 절차를 가지고 있다). 트리거 없는 기존 정규장 경로와 독립 NXT 제한 실행(`--nxt-codes`
+  + `--duration-seconds`)의 동작은 손대지 않았다.
+- `collector/kiwoom/subscription_plan.py`에 `aftermarket_plan_from_cli`와
+  `resolve_aftermarket_transition_cli`(순수 함수, PyQt5 불필요)를 추가해 CLI 조합 검증을
+  OCX 생성과 분리했다 — `plan_from_cli` 와 같은 패턴이다.
+- 검증: `tests/test_subscription_plan.py` 전체 28개(신규 CLI 조합 검증 6개 포함),
+  `tests/test_collector_plan_wiring.py` 전체 83개(신규 트리거 경계·중복 방지·다른 스레드
+  거부·같은 tick 종료 우선·15:35 비적용·저장 분리·잘못된 프로필 거부 관련 약 15개 포함),
+  `tests/` 전체 1106개 통과(회귀 0, 약 53초). `.venv32`로 `--help`와 CLI 거부 조합 여섯
+  가지를 직접 실행해 `parser.error` 메시지를 눈으로 확인했다(수동 스모크 테스트이며
+  자동화된 회귀 테스트는 아니다).
+- 상세 계약은 [수집 안내의 CLI/자동 트리거 절](docs/COLLECTION_RUNBOOK.md)에 추가했다.
+- **실행 중 다른 세션(peer)이 같은 파일에 다른 설계(datetime 기반 `aftermarket_at`/`_wall_now`)의
+  테스트 4개를 커밋되지 않은 채 추가해 둔 것을 발견했다.** 원 작성자는 특정하지 못했고
+  (질의한 두 peer 세션 모두 본인 것이 아니라고 확인), 사용자 승인을 받아 이 세션의 정수
+  HHMMSS 기반 설계로 통일하고 그 4개 테스트를 이 설계에 맞게 다시 작성했다.
+
+### 미확인 (실제 OCX 필요)
+
+- CLI/트리거 경로 자체의 실제 OCX 로그인 실측이 전혀 없다. 트리거가 실제로 지정 시각/경과초에
+  발동하는지, `run_aftermarket_transition()` 내부 네 단계의 실제 반환값·소요 시간·수신 공백은
+  여전히 가짜 OCX 합성 검증뿐이다(이 부분은 오늘 새로 만든 게 아니라 기존 미확인 항목이다).
+  실제 NXT 대상 목록의 출처·확인 시각은 별도로 확보해야 하며 이번 작업에서 임의로 정하지 않았다.
+- 20시까지 장시간 애프터마켓 운영, 그 상한을 없애는 결정은 별도이며 이번에 다루지 않았다.
+- 실행 중 수집기 변경, 추가 로그인, 원본 raw/Daily_baseline/old_data 수정, 운영 DB 대량
+  조회는 하지 않았다. 실제 로그인·실행은 별도 사용자 승인 이후다.
+
+### 다음 작업
+
+1. 사용자 승인 아래 소수 `_NX` 종목·1~300초 상한으로 CLI를 통한 실제 첫 실측(경과 시간
+   트리거 권장 — 시각 트리거보다 재현이 쉽다). [실측 조건과 관측 항목](docs/COLLECTION_RUNBOOK.md)을 따른다.
+2. 실측에서 트리거 발동 시각/경과초의 정확도, 15:35 비적용, 단계별 실제 반환값을 관측하고
+   기록한다.
 
 ## 15:40 예약 실행 결과 — 저장 종료 확인, 품질 인증과 구분
 

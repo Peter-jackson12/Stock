@@ -414,14 +414,54 @@ FID(`GetCommRealData`로 읽을 수 있는 것만, 서버 전체 제공 필드�
 실패·각 단계 취소/시간 초과/예외, raw와 session_id 분리 및 닫힌 합성 raw 바이트 보존을 검사했다.
 대상은 임시 디렉터리와 가짜 Qt/OCX뿐이며 운영 적용·실제 전환·무누락 검증은 아니다.
 
+**2026-09-18 CLI/자동 트리거 추가 (가짜 OCX 검증, 운영 미적용).**
+
+`kiwoom_universe_logger.py` 의 `__main__` 에 명시적 전환 모드 인자 그룹("애프터마켓 전환
+(단일 로그인)")을 추가했다. 아무 `--aftermarket-*` 인자도 주지 않으면 지금까지와 동일하게
+전환 없음이다 — 명시적으로 켤 때만 동작이 달라진다.
+
+- `--aftermarket-nxt-codes`, `--aftermarket-list-origin`, `--aftermarket-list-verified-at`,
+  `--aftermarket-nxt-eligibility-confirmed`, `--aftermarket-list-note`,
+  `--aftermarket-market-profile`(기본 `nxt_aftermarket`) — 전환 후 구독할 애프터마켓 계획.
+  목록 근거 필수 규칙은 `--nxt-codes` 계열과 같다(`aftermarket_plan_from_cli`).
+- `--aftermarket-duration-seconds` — 전환 후 구간 자체의 종료 상한, 1~300초 필수.
+- `--aftermarket-transition-at HH:MM:SS`(KST) 또는 `--aftermarket-transition-after-seconds N`
+  — 전환을 실행할 시각 또는 정규장 구독 등록 완료 시각부터의 경과 초. **정확히 하나만** 받는다.
+  (`resolve_aftermarket_transition_cli`, `collector/kiwoom/subscription_plan.py`)
+- 상충 인자는 OCX(QApplication) 를 만들기 전에 `parser.error` 로 거부한다: 정규장 `--nxt-codes`
+  계획과의 동시 지정, `--storage raw-v1`, `--managed-launch`, 트리거 두 개 동시 지정, 트리거
+  없이 계획만 지정, 계획 없이 트리거만 지정, 시각 형식 오류, 상한/경과초 범위 오류.
+- **트리거는 정확히 한 번만 실행한다.** 배경 스레드(`_stats_worker`, 1초 루프)는 시각/경과초
+  조건을 확인해 `_aftermarket_transition_due` 플래그만 세운다 — OCX 호출은 절대 이 스레드에서
+  하지 않는다. 실제 `run_aftermarket_transition()` 호출은 Qt 스레드의 `_poll_control`
+  (200ms 타이머)이 그 플래그를 보고 한 번 부른 뒤 즉시 내린다. 이번 tick에 다른 종료 사유
+  (`_shutdown_requested`)가 이미 잡혔거나 전환이 이미 시작됐으면(`self.transition is not None`)
+  다시 부르지 않는다 — 실패 뒤 재시도·재로그인은 하지 않는다는 기존 계약을 그대로 지킨다.
+  `run_aftermarket_transition()` 은 그 자체로도 생성 스레드가 아니면 `RuntimeError` 로 거부한다
+  (OCX/ActiveX 는 만든 스레드에서만 안전하다).
+- 트리거가 있는 실행은 15:35 정규장 자동 종료를 적용하지 않는다(`아ftermarket_plan is not None`
+  이면 그 분기를 건너뛴다) — 전환 자체가 정규장 저장을 마무리하는 절차를 이미 가지고 있다.
+  경과 시간 트리거의 기준점은 정규장 구독 등록 완료 시각(`_subscribed_at`)이다.
+- 애프터마켓 시장 구간 프로필이 잘못됐으면(`resolve_profile` 이 모르는 이름) 생성자에서
+  Qt/OCX 를 만들기 전에 바로 거부한다 — 로그인까지 간 뒤 전환 단계에서야 실패하지 않는다.
+- 기존 전환 함수(`SessionTransition`/`run_aftermarket_transition`) 자체는 고치지 않았다 —
+  네 단계 순서·기록 계약·종료 조건은 위 절 그대로다. 이번 변경은 그 함수를 부르는 트리거만 새로 놓았다.
+- 검증: `tests/test_subscription_plan.py` 전체 28개(CLI 조합 검증 신규 6개 포함),
+  `tests/test_collector_plan_wiring.py` 전체 83개(트리거 경계·중복 방지·다른 스레드 거부·
+  같은 tick 종료 우선·15:35 비적용·저장 분리·잘못된 프로필 거부 신규 약 15개 포함),
+  모두 가짜 Qt/OCX + 주입 시계다. `.venv32` 로 `--help`/여섯 가지 CLI 거부 조합을 직접
+  실행해 `parser.error` 메시지도 확인했다(자동화 테스트는 아니고 수동 스모크 테스트다).
+  `tests/` 전체 1106 통과, 실패 0.
+
 **아직 구현하지 않은 것.**
-- CLI 에서 이 모드를 선택하는 인자가 없다 — 지금은 `KiwoomUniverseLogger(aftermarket_plan=...,
-  aftermarket_duration_seconds=...)` 를 직접 생성해야 돈다. 정규장 종료(15:35)나 임의의 경과
-  시간에 자동으로 `run_aftermarket_transition()` 을 호출하는 시계 트리거도 없다.
-- 실제 OCX 로그인에서의 전환 실측. 전환 소요 시간·실제 수신 공백 길이·`SetRealRemove`/
-  `SetRealReg` 의 실제 반환값은 가짜 OCX 합성 검증으로만 확인했다.
+- 실제 OCX 로그인에서의 CLI/트리거 실측. 전환 소요 시간·실제 수신 공백 길이·`SetRealRemove`/
+  `SetRealReg` 의 실제 반환값·트리거가 실제로 정확한 시각/경과초에 발동하는지는 가짜 OCX와
+  주입 시계로만 확인했다. 실제 NXT 대상 목록의 출처·확인 시각도 별도로 확보해야 한다(임의로
+  확정하지 않는다).
+- 20시까지의 장시간 애프터마켓 운영, 그리고 이 상한을 없애는 결정은 별도다.
 - 별개 프로세스 재로그인은 전환 실패 시 사용자가 선택하는 수동 복구 수단으로 남아 있다.
-  자동 재시도·자동 재로그인은 구현하지 않았다(요구하지도 않는다).
+  자동 재시도·자동 재로그인은 구현하지 않았다(요구하지도 않는다) — 트리거도 실패 후 다시
+  시도하지 않는다.
 
 ### 다음 소규모 실측의 조건과 관측 항목 (2026-09-18 정리, 실행 전 준비만)
 
@@ -436,9 +476,11 @@ FID(`GetCommRealData`로 읽을 수 있는 것만, 서버 전체 제공 필드�
 - 대상 세션이 `server: mock`이거나 애프터마켓 계획 없이 시작됐다면 그 프로세스를 그대로
   이어 전환 실측에 쓸 수 없다 — 전환 실측은 처음부터 `aftermarket_plan`을 넘겨 새로
   생성한 별도 프로세스로 한다.
-- CLI 스위치가 아직 없으므로 임시 스크립트에서 `KiwoomUniverseLogger(aftermarket_plan=...,
-  aftermarket_duration_seconds=1..300)`를 직접 생성해 호출한다. 이 준비 범위에서 CLI 인자나
-  시계 기반 자동 발동은 추가하지 않는다.
+- CLI 스위치(`--aftermarket-nxt-codes` 등, 위 § CLI/자동 트리거 절 참고)가 이제 있다 —
+  `.venv32\Scripts\python -m collector.kiwoom.kiwoom_universe_logger --aftermarket-nxt-codes ...
+  --aftermarket-transition-at HH:MM:SS --aftermarket-duration-seconds 60` 형태로 직접 실행
+  가능하다. CLI 조합 검증은 가짜 OCX로 확인했을 뿐 실제 로그인 실측은 아직이다 — 이 실측에서
+  처음으로 CLI 경로 자체(트리거 발동 포함)를 실제 OCX로 확인하게 된다.
 - 출처·확인 시각이 명시된 소수 NXT 대상 목록, 독립 raw-v2 경로, 단일 OCX 로그인 유지,
   애프터 제한 1~300초를 쓴다. 추가 로그인이나 기존 수집기 중단·재시작은 하지 않는다.
 
@@ -459,6 +501,9 @@ FID(`GetCommRealData`로 읽을 수 있는 것만, 서버 전체 제공 필드�
   카운터를 이어받지 않는지.
 - 종료 후 애프터마켓 writer 정상 닫힘, 정규장 원본 파일 무변경(닫힌 파일만 대조, 전체
   DB 스캔 금지).
+- 트리거가 지정한 시각/경과초에 정확히 한 번만 발동하는지(로그의 "🔄 애프터마켓 전환 완료"
+  는 한 번만 찍혀야 한다), 그 전에는 15:35 자동 종료가 걸리지 않는지, 실패 후 같은 실행에서
+  트리거가 다시 발동하거나 재로그인을 시도하지 않는지.
 
 **금지(준비와 실측 모두).** 실행 중 수집기 변경, 추가 로그인, 원본 raw/Daily_baseline/
 old_data 수정, 운영 DB 전체 처리, CLI 자동 전환 확장. 실제 로그인·실행은 이 정리와

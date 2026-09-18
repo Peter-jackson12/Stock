@@ -20,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from collector.kiwoom.subscription_plan import (  # noqa: E402
     MAX_CODES,
     plan_from_cli,
+    aftermarket_plan_from_cli,
+    resolve_aftermarket_transition_cli,
     MODE_KRX_REGULAR,
     MODE_NXT,
     SubscriptionPlan,
@@ -204,3 +206,66 @@ def test_명령줄에서도_접미사와_중복_규칙이_같다():
 def test_코드가_비면_거부한다():
     kwargs = dict(CLI_OK); kwargs["nxt_codes"] = "  "
     _rejects(lambda: plan_from_cli(**kwargs), "--nxt-codes 가 필요하다")
+
+
+# ── 애프터마켓 전환 CLI (단일 로그인) ────────────────────────────────────────
+
+AFTER_PLAN_OK = dict(nxt_codes="005930_NX", list_origin="사용자 입력",
+                     list_verified_at="2026-09-17T16:30:00+09:00",
+                     market_profile="nxt_aftermarket")
+
+AFTER_OK = dict(AFTER_PLAN_OK, duration_seconds=60, transition_at="15:40:00",
+               transition_after_seconds=None)
+
+
+def test_애프터마켓_계획도_명령줄_근거를_요구한다():
+    plan = aftermarket_plan_from_cli(**AFTER_PLAN_OK)
+    assert plan.codes == ("005930_NX",)
+    assert plan.source.origin == "사용자 입력"
+    for missing in ("list_origin", "list_verified_at"):
+        kwargs = dict(AFTER_PLAN_OK); kwargs[missing] = ""
+        _rejects(lambda k=kwargs: aftermarket_plan_from_cli(**k), "애프터마켓 목록 근거가 필요하다")
+    empty = dict(AFTER_PLAN_OK); empty["nxt_codes"] = ""
+    _rejects(lambda: aftermarket_plan_from_cli(**empty), "--aftermarket-nxt-codes 가 필요하다")
+
+
+def test_전환_CLI는_계획과_상한과_트리거를_만든다():
+    plan, duration, at, after = resolve_aftermarket_transition_cli(**AFTER_OK)
+    assert plan.codes == ("005930_NX",)
+    assert duration == 60
+    assert at == 154000 and after is None
+
+
+def test_전환_CLI도_1_300초_상한을_확인한다():
+    for bad in (0, 301, "60", None):
+        kwargs = dict(AFTER_OK); kwargs["duration_seconds"] = bad
+        _rejects(lambda k=kwargs: resolve_aftermarket_transition_cli(**k), "1~300초")
+
+
+def test_전환_시각과_경과_시간은_정확히_하나만_받는다():
+    both = dict(AFTER_OK); both["transition_after_seconds"] = 30
+    _rejects(lambda: resolve_aftermarket_transition_cli(**both), "함께 줄 수 없다")
+    neither = dict(AFTER_OK); neither["transition_at"] = None
+    _rejects(lambda: resolve_aftermarket_transition_cli(**neither), "트리거가 하나 필요하다")
+
+
+def test_전환_시각_형식을_검증한다():
+    for bad in ("15:40", "25:00:00", "15:60:00", "154000"):
+        kwargs = dict(AFTER_OK); kwargs["transition_at"] = bad
+        _rejects(lambda k=kwargs: resolve_aftermarket_transition_cli(**k), "HH:MM:SS")
+    ok = dict(AFTER_OK); ok["transition_at"] = "09:00:30"
+    _, _, at, _ = resolve_aftermarket_transition_cli(**ok)
+    assert at == 90030
+    stripped = dict(AFTER_OK); stripped["transition_at"] = " 15:40:00 "
+    _, _, at2, _ = resolve_aftermarket_transition_cli(**stripped)
+    assert at2 == 154000                            # 앞뒤 공백은 허용한다
+
+
+def test_경과_시간_트리거는_양의_정수만_받는다():
+    for bad in (0, -1, "30", 1.5, True):
+        kwargs = dict(AFTER_OK); kwargs["transition_at"] = None
+        kwargs["transition_after_seconds"] = bad
+        _rejects(lambda k=kwargs: resolve_aftermarket_transition_cli(**k), "양의 정수")
+    kwargs = dict(AFTER_OK); kwargs["transition_at"] = None; kwargs["transition_after_seconds"] = 30
+    _, _, at, after = resolve_aftermarket_transition_cli(**kwargs)
+    assert at is None and after == 30

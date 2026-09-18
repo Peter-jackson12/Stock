@@ -14,7 +14,9 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import date, datetime, time as dtime
+from types import SimpleNamespace
 
 import pytest
 
@@ -27,6 +29,176 @@ from collector.kiwoom.subscription_plan import (
 from tests.test_tick_collector_shutdown import collector  # 오프라인 Qt/OCX 대역
 
 SOURCE = SymbolListSource(origin="사용자 입력", verified_at="2026-09-17T16:30:00+09:00")
+
+
+def test_전환을_다른_스레드에서_직접_호출하면_거부한다(transition_live):
+    import threading
+    logger, _ = transition_live
+    logger._on_login(0)
+    calls, errors = [], []
+    logger.ocx.dynamicCall = lambda *a: calls.append(a)
+    def run():
+        try:
+            logger.run_aftermarket_transition()
+        except Exception as exc:
+            errors.append(exc)
+    worker = threading.Thread(target=run)
+    worker.start()
+    worker.join(5)
+    assert not worker.is_alive()
+    assert len(errors) == 1 and isinstance(errors[0], RuntimeError)
+    assert calls == [] and logger.transition is None
+
+
+def _run_stats_worker_once_at(logger, monkeypatch, hh, mm, ss):
+    """`_stats_worker` 를 주어진 KST 시각으로 정확히 한 이터레이션만 돌린다."""
+    class FixedNow(datetime):
+        @classmethod
+        def now(cls):
+            return cls(2026, 9, 18, hh, mm, ss)
+    monkeypatch.setitem(type(logger)._stats_worker.__globals__, "datetime", FixedNow)
+    monkeypatch.setitem(type(logger)._stats_worker.__globals__, "time",
+                        SimpleNamespace(monotonic=time.monotonic,
+                                       sleep=lambda _: setattr(logger, "is_running", False)))
+    logger.is_running = True
+    type(logger)._stats_worker(logger)
+
+
+def test_전환_시각_트리거는_경계를_넘을_때만_플래그를_세운다(transition_live, monkeypatch):
+    logger, _ = transition_live
+    logger._aftermarket_transition_at = 154000          # 15:40:00 KST
+    logger._on_login(0)
+    logger.writer = SimpleNamespace(pending=0, error=None)
+    logger.monitor = SimpleNamespace(
+        tick=lambda: None, sample_queue_depth=lambda _: None, silence_stop_reason=lambda: None,
+        finish=lambda reason: SimpleNamespace(extra=[], headline="test", lines=lambda: []))
+    logger.resources = None
+    logger.log.status = lambda _: None
+
+    _run_stats_worker_once_at(logger, monkeypatch, 15, 39, 59)
+    assert logger._aftermarket_transition_due is False
+    assert logger.transition is None                    # _stats_worker 는 플래그만 세운다
+
+    _run_stats_worker_once_at(logger, monkeypatch, 15, 40, 0)
+    assert logger._aftermarket_transition_due is True
+    assert logger.transition is None                    # 실제 OCX 호출은 _poll_control 이 한다
+
+
+def test_경과_시간_트리거는_구독_등록_시각부터_잰다(transition_live, monkeypatch):
+    logger, _ = transition_live
+    logger._aftermarket_transition_after_seconds = 30
+    logger._on_login(0)
+    logger.writer = SimpleNamespace(pending=0, error=None)
+    logger.monitor = SimpleNamespace(
+        tick=lambda: None, sample_queue_depth=lambda _: None, silence_stop_reason=lambda: None,
+        finish=lambda reason: SimpleNamespace(extra=[], headline="test", lines=lambda: []))
+    logger.resources = None
+    logger.log.status = lambda _: None
+    logger._subscribed_at = time.monotonic() - 29
+    _run_stats_worker_once_at(logger, monkeypatch, 12, 0, 0)
+    assert logger._aftermarket_transition_due is False
+    logger._subscribed_at = time.monotonic() - 31
+    _run_stats_worker_once_at(logger, monkeypatch, 12, 0, 1)
+    assert logger._aftermarket_transition_due is True
+
+
+def test_poll_control이_한_번만_전환을_디스패치한다(transition_live, monkeypatch):
+    logger, _ = transition_live
+    logger._aftermarket_transition_at = 154000
+    logger._on_login(0)
+    regular = logger.raw_capture
+    logger.writer = SimpleNamespace(pending=0, error=None)
+    logger._aftermarket_transition_due = True
+    calls = []
+    original = logger.run_aftermarket_transition
+    def spy():
+        calls.append(1)
+        return original()
+    monkeypatch.setattr(logger, "run_aftermarket_transition", spy)
+    logger._poll_control()
+    assert calls == [1]
+    assert logger.transition is not None and logger.transition.record.succeeded
+    assert regular.queue.snapshot()["writer_closed"]
+    assert logger._aftermarket_transition_due is False   # 한 번 쓰고 나면 다시 세우지 않는다
+
+    after = logger.raw_capture
+    logger._aftermarket_transition_due = True            # 무언가 다시 세워도
+    logger._poll_control()
+    assert calls == [1] and logger.raw_capture is after  # transition이 이미 있어 다시 부르지 않는다
+
+
+def test_같은_틱에_종료_사유가_생기면_전환을_새로_시작하지_않는다(transition_live):
+    logger, _ = transition_live
+    logger._on_login(0)
+    logger.writer = SimpleNamespace(pending=0, error="DB 저장 오류")   # 이번 tick에 종료 사유 발생
+    logger._aftermarket_transition_due = True
+    calls = []
+    monkeypatch_run = logger.run_aftermarket_transition
+    logger.run_aftermarket_transition = lambda: calls.append(1)
+    logger._poll_control()
+    assert calls == []                                    # 종료가 우선이다
+    assert logger._shutdown_requested == "DB 저장 오류"
+    logger.run_aftermarket_transition = monkeypatch_run
+
+
+def test_전환_트리거_전에는_1535_정규장_종료를_적용하지_않는다(transition_live, monkeypatch):
+    logger, _ = transition_live
+    logger._aftermarket_transition_at = 154000           # 아직 안 됐다
+    logger._on_login(0)
+    logger.writer = SimpleNamespace(pending=0, error=None)
+    logger.monitor = SimpleNamespace(
+        tick=lambda: None, sample_queue_depth=lambda _: None, silence_stop_reason=lambda: None,
+        finish=lambda reason: SimpleNamespace(extra=[], headline="test", lines=lambda: []))
+    logger.resources = None
+    logger.log.status = lambda _: None
+    _run_stats_worker_once_at(logger, monkeypatch, 15, 35, 1)
+    assert logger._shutdown_requested is None
+    assert logger.transition is None and logger._aftermarket_transition_due is False
+    assert not logger.raw_capture.queue.snapshot()["writer_closed"]
+
+
+def test_잘못된_애프터_프로필은_Qt_생성_전에_거부한다(collector, monkeypatch):
+    old, _, _ = collector
+    calls = []
+    monkeypatch.setitem(old.__init__.__globals__, "QApplication", lambda _: calls.append("Qt"))
+    with pytest.raises(ValueError):
+        _logger(collector, aftermarket_plan=_plan(profile="typo"), aftermarket_duration_seconds=60)
+    assert calls == []
+
+
+def test_트리거_상충_인자는_OCX_전에_거부한다(collector):
+    with pytest.raises(ValueError, match="함께 줄 수 없다"):
+        _logger(collector, aftermarket_plan=_plan(), aftermarket_duration_seconds=60,
+               aftermarket_transition_at=154000, aftermarket_transition_after_seconds=30)
+
+
+def test_전환_계획_없이_트리거만_주면_거부한다(collector):
+    with pytest.raises(ValueError, match="계획 없이"):
+        _logger(collector, aftermarket_transition_at=154000)
+
+
+@pytest.mark.parametrize("bad", [-1, 235960, "154000", True, 1.0])
+def test_잘못된_전환_시각을_거부한다(collector, bad):
+    with pytest.raises(ValueError, match="HHMMSS"):
+        _logger(collector, aftermarket_plan=_plan(), aftermarket_duration_seconds=60,
+               aftermarket_transition_at=bad)
+
+
+@pytest.mark.parametrize("bad", [0, -1, True, 1.5])
+def test_잘못된_경과_시간_트리거를_거부한다(collector, bad):
+    with pytest.raises(ValueError, match="양의 정수"):
+        _logger(collector, aftermarket_plan=_plan(), aftermarket_duration_seconds=60,
+               aftermarket_transition_after_seconds=bad)
+
+
+def test_트리거_없이도_수동_호출은_그대로_된다(transition_live):
+    # 기존 경로(사람이 run_aftermarket_transition() 을 직접 부른다) 보존 확인.
+    logger, _ = transition_live
+    assert logger._aftermarket_transition_at is None
+    assert logger._aftermarket_transition_after_seconds is None
+    logger._on_login(0)
+    record = logger.run_aftermarket_transition()
+    assert record.succeeded
 
 
 def _plan(codes="005930_NX,000660_NX", profile="nxt_aftermarket", source=SOURCE):

@@ -78,6 +78,8 @@ class KiwoomUniverseLogger:
         plan=None,
         aftermarket_plan=None,
         aftermarket_duration_seconds=None,
+        aftermarket_transition_at=None,
+        aftermarket_transition_after_seconds=None,
     ):
         if storage not in ("raw-v1", "raw-v2"):
             raise ValueError("unsupported storage backend")
@@ -105,6 +107,12 @@ class KiwoomUniverseLogger:
         self._last_received_monotonic = None
         self._last_received_utc = None
         self.transition = None
+        # 전환을 자동으로 시켜 볼 트리거 — 둘 다 선택 항목이다. CLI 는 정확히 하나를
+        # 요구하지만(사람이 직접 run_aftermarket_transition() 을 부를 수 없으므로),
+        # 이 생성자를 직접 쓰는 기존 경로(수동 호출)는 트리거 없이도 그대로 돈다.
+        self._aftermarket_transition_at = aftermarket_transition_at
+        self._aftermarket_transition_after_seconds = aftermarket_transition_after_seconds
+        self._aftermarket_transition_due = False
         if aftermarket_plan is not None:
             if aftermarket_plan.mode != MODE_NXT:
                 raise ValueError("애프터마켓 전환 계획은 NXT 모드여야 한다")
@@ -114,6 +122,20 @@ class KiwoomUniverseLogger:
                 raise ValueError("애프터마켓 전환은 독립 raw-v2 실행만 지원한다")
             if type(aftermarket_duration_seconds) is not int or not 1 <= aftermarket_duration_seconds <= 300:
                 raise ValueError("애프터마켓 전환 후 구간은 1~300초 제한 시간이 필요하다")
+            if aftermarket_transition_at is not None and aftermarket_transition_after_seconds is not None:
+                raise ValueError("전환 시각과 경과 시간 트리거를 함께 줄 수 없다")
+            if aftermarket_transition_at is not None and (
+                    type(aftermarket_transition_at) is not int or not 0 <= aftermarket_transition_at <= 235959):
+                raise ValueError("전환 시각은 HHMMSS 형식의 정수(0~235959)여야 한다")
+            if aftermarket_transition_after_seconds is not None and (
+                    type(aftermarket_transition_after_seconds) is not int
+                    or aftermarket_transition_after_seconds <= 0):
+                raise ValueError("경과 시간 트리거는 양의 정수(초)여야 한다")
+            # 시장 구간 프로필이 잘못됐으면 여기서 바로 거부한다 — Qt/OCX 를 만들고
+            # 로그인까지 간 뒤 전환 단계(open_aftermarket)에서야 실패하지 않기 위해서다.
+            resolve_profile(aftermarket_plan.market_profile)
+        elif aftermarket_transition_at is not None or aftermarket_transition_after_seconds is not None:
+            raise ValueError("애프터마켓 전환 계획 없이 트리거를 줄 수 없다")
         if plan is not None:
             if codes is not None:
                 raise ValueError("구독 계획과 --codes 를 함께 줄 수 없다")
@@ -126,6 +148,9 @@ class KiwoomUniverseLogger:
         self._subscribed_at = None
         self.raw_capture = None
         self._login_handled = False
+        # OCX(ActiveX) 는 이 스레드에 묶인다 — run_aftermarket_transition() 이 다른
+        # 스레드에서 불리면 OCX 호출 전에 거부한다(_stats_worker 는 플래그만 세운다).
+        self._main_thread_ident = threading.get_ident()
         self.app = QApplication(sys.argv)
 
         # 파이썬 인터프리터가 Ctrl+C를 감지할 수 있도록 0.2초 주기 타이머 가동
@@ -223,6 +248,14 @@ class KiwoomUniverseLogger:
             except Exception as exc:
                 self.raw_capture.queue.abort(f"control polling failed: {exc}")
                 self._shutdown_requested = "수집 상태 확인 오류"
+        # 전환은 Qt 스레드에서 한 번만 부른다 — _stats_worker(별도 스레드)는 조건만
+        # 확인해 이 플래그를 세우고, 실제 OCX 호출은 여기서만 한다. 이번 tick에
+        # 종료 사유가 이미 잡혔으면 전환을 새로 시작하지 않는다.
+        if (self._aftermarket_transition_due and self.transition is None
+                and not self._shutdown_requested):
+            self._aftermarket_transition_due = False
+            self.run_aftermarket_transition()
+            return
         if self._shutdown_requested:
             self._shutdown(self._shutdown_requested)
 
@@ -392,6 +425,10 @@ class KiwoomUniverseLogger:
         정규장 저장이 닫혔다고 확인된 뒤에만 다음 세션을 연다. 어느 단계든 실패하면
         다음으로 넘어가지 않고 실패 위치를 기록에 남긴다. 닫힌 정규장 파일은 다시 열지 않는다.
         """
+        if threading.get_ident() != self._main_thread_ident:
+            # OCX(ActiveX) 는 그것을 만든 스레드에서만 안전하다. _stats_worker(백그라운드
+            # 스레드)는 트리거 플래그만 세우고, 실제 호출은 Qt 스레드의 _poll_control 이 한다.
+            raise RuntimeError("애프터마켓 전환은 OCX 를 만든 스레드에서만 부를 수 있다")
         if self.aftermarket_plan is None:
             raise ValueError("애프터마켓 전환 계획이 없다")
         if self.transition is not None:
@@ -693,6 +730,19 @@ class KiwoomUniverseLogger:
                 self._shutdown_requested = "장중 침묵 한도 초과 (수신 결손)"
                 break
 
+            # 명시적 전환 트리거 감지. 실제 OCX 호출(run_aftermarket_transition)은
+            # Qt 스레드의 _poll_control 에서만 한다 — 여기서는 조건만 세운다.
+            # self.transition is None 가드가 한 번만 세우는 것을 보장한다: 전환이
+            # 시작되면(성공이든 실패든) 바로 채워지고, 트리거는 다시 세워지지 않는다.
+            if (self.aftermarket_plan is not None and self.transition is None
+                    and not self._aftermarket_transition_due):
+                if self._aftermarket_transition_at is not None and now_int >= self._aftermarket_transition_at:
+                    self._aftermarket_transition_due = True
+                elif (self._aftermarket_transition_after_seconds is not None
+                      and self._subscribed_at is not None
+                      and time.monotonic() - self._subscribed_at >= self._aftermarket_transition_after_seconds):
+                    self._aftermarket_transition_due = True
+
             if self._aftermarket_subscribed_at is not None:
                 # 전환 뒤 애프터마켓 구간 자체의 상한이다. 정규장 15:35 종료는 계획 모드에
                 # 적용하지 않으므로, 이 상한이 없으면 전환 뒤에는 종료 조건이 없어진다.
@@ -703,9 +753,11 @@ class KiwoomUniverseLogger:
                 if self._subscribed_at is not None and time.monotonic() - self._subscribed_at >= self.duration_seconds:
                     self._shutdown_requested = "제한 수집 시간 종료"
                     break
-            elif self.plan is None and now_int >= 153500:
+            elif self.plan is None and self.aftermarket_plan is None and now_int >= 153500:
                 # 정규장 전용 종료다. 구독 계획 모드(애프터마켓 포함)에는 적용하지 않는다 —
                 # 15:35 를 20:00 으로 미루는 것으로는 부족하다는 런북 지적에 따른다.
+                # 명시적 전환 트리거가 있는 실행도 여기서 멈추지 않는다 — 트리거가 스스로
+                # 정규장 저장을 마무리하는 절차를 가지고 있다.
                 self.log.end_status_line()
                 self.log.emit("🔔 [15:35 장 마감 감지] 전 종목 수집을 종료합니다.")
                 self._shutdown_requested = "장 마감 (15:35)"
@@ -829,6 +881,24 @@ if __name__ == "__main__":
     nxt.add_argument("--list-note", default="", help="목록 근거에 남길 메모")
     nxt.add_argument("--market-profile", default="nxt_aftermarket",
                      help="시장 구간 프로필 (기본: nxt_aftermarket)")
+    after = parser.add_argument_group(
+        "애프터마켓 전환 (단일 로그인)",
+        "명시적 모드. 같은 로그인 안에서 정규장 저장을 마치고 애프터마켓 저장으로 넘긴다. "
+        "전환 시각 또는 경과 시간 트리거 중 하나가 필요하며, 독립 raw-v2/비관리 실행에서만 쓴다")
+    after.add_argument("--aftermarket-nxt-codes", help="전환 후 구독할 쉼표구분 _NX 종목코드 (예: 005930_NX)")
+    after.add_argument("--aftermarket-list-origin", help="전환 후 목록이 어디서 왔는가 (예: 사용자 입력)")
+    after.add_argument("--aftermarket-list-verified-at", help="전환 후 목록을 확인한 시각")
+    after.add_argument("--aftermarket-nxt-eligibility-confirmed", action="store_true",
+                       help="공식 수단으로 NXT 거래 대상임을 확인했을 때만 지정한다")
+    after.add_argument("--aftermarket-list-note", default="", help="전환 후 목록 근거에 남길 메모")
+    after.add_argument("--aftermarket-market-profile", default="nxt_aftermarket",
+                       help="전환 후 시장 구간 프로필 (기본: nxt_aftermarket)")
+    after.add_argument("--aftermarket-duration-seconds", type=int,
+                       help="전환 후 애프터마켓 구간 자체의 종료 상한 (1~300초, 전환 모드 필수)")
+    after.add_argument("--aftermarket-transition-at",
+                       help="전환을 실행할 KST 시각 HH:MM:SS (경과 시간 트리거와 함께 줄 수 없다)")
+    after.add_argument("--aftermarket-transition-after-seconds", type=int,
+                       help="정규장 구독 등록 완료 후 몇 초 뒤 전환할지 (전환 시각 트리거와 함께 줄 수 없다)")
     args = parser.parse_args()
     if args.preflight:
         from collector.kiwoom.preflight import inspect_environment
@@ -856,6 +926,37 @@ if __name__ == "__main__":
     if args.duration_seconds is not None and plan is None and (
             codes is None or not 1 <= args.duration_seconds <= 300):
         parser.error("--duration-seconds requires --codes and 1..300 seconds")
+    aftermarket_plan = None
+    aftermarket_duration_seconds = None
+    aftermarket_transition_at = None
+    aftermarket_transition_after_seconds = None
+    aftermarket_given = any((
+        args.aftermarket_nxt_codes, args.aftermarket_list_origin, args.aftermarket_list_verified_at,
+        args.aftermarket_duration_seconds is not None, args.aftermarket_transition_at,
+        args.aftermarket_transition_after_seconds is not None,
+        args.aftermarket_nxt_eligibility_confirmed, args.aftermarket_list_note))
+    if aftermarket_given:
+        # 상충 인자는 OCX(QApplication/OCX 컨트롤) 를 만들기 전에 거부한다.
+        if plan is not None:
+            parser.error("--nxt-codes 계획과 애프터마켓 전환을 함께 줄 수 없다")
+        if args.storage != "raw-v2":
+            parser.error("애프터마켓 전환은 독립 raw-v2 실행만 지원한다")
+        if args.managed_launch:
+            parser.error("애프터마켓 전환은 관리 실행과 함께 쓸 수 없다")
+        from collector.kiwoom.subscription_plan import resolve_aftermarket_transition_cli
+        try:
+            (aftermarket_plan, aftermarket_duration_seconds, aftermarket_transition_at,
+             aftermarket_transition_after_seconds) = resolve_aftermarket_transition_cli(
+                nxt_codes=args.aftermarket_nxt_codes, list_origin=args.aftermarket_list_origin,
+                list_verified_at=args.aftermarket_list_verified_at,
+                market_profile=args.aftermarket_market_profile,
+                duration_seconds=args.aftermarket_duration_seconds,
+                transition_at=args.aftermarket_transition_at,
+                transition_after_seconds=args.aftermarket_transition_after_seconds,
+                nxt_eligibility_confirmed=args.aftermarket_nxt_eligibility_confirmed,
+                note=args.aftermarket_list_note)
+        except ValueError as exc:
+            parser.error(str(exc))
     from collector.kiwoom.collector_lease import CollectorLease
     from collector.kiwoom.capture_diagnostics import CaptureDiagnostics
     with CollectorLease(PROJECT_ROOT), CaptureDiagnostics(LOG_DIR) as diagnostics:
@@ -873,7 +974,10 @@ if __name__ == "__main__":
                 managed.finish()
                 sys.exit(0)
             logger = KiwoomUniverseLogger(storage=args.storage, codes=codes, plan=plan,
-                duration_seconds=args.duration_seconds, managed=managed, diagnostics=diagnostics)
+                duration_seconds=args.duration_seconds, managed=managed, diagnostics=diagnostics,
+                aftermarket_plan=aftermarket_plan, aftermarket_duration_seconds=aftermarket_duration_seconds,
+                aftermarket_transition_at=aftermarket_transition_at,
+                aftermarket_transition_after_seconds=aftermarket_transition_after_seconds)
             logger.start()
         except KeyboardInterrupt:
             if logger is not None:
