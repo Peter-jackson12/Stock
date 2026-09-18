@@ -296,9 +296,7 @@ def transition_live(collector, monkeypatch, tmp_path):
     facts = ProcessFacts(123, "2026-09-17T00:00:00Z", "C:/fixture/python.exe", 32)
     monkeypatch.setitem(old._on_login.__globals__, "LiveRawCapture",
                         lambda root, **kw: LiveRawCapture(tmp_path, facts=facts, **kw))
-    monkeypatch.setitem(
-        __import__("collector.kiwoom.kiwoom_universe_logger", fromlist=["x"]).__dict__,
-        "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(old._on_login.__globals__, "PROJECT_ROOT", tmp_path)
     logger = type(old)(code_revision="fixture", aftermarket_plan=_plan(), aftermarket_duration_seconds=60)
     monkeypatch.setattr(logger, "_stats_worker", lambda: None)
     monkeypatch.setattr(logger, "_register_all_universe", lambda: None)
@@ -336,7 +334,7 @@ def test_정규장_저장을_닫은_뒤에_새_파일을_연다(transition_live)
     # 새 파일은 다른 경로다 — 닫힌 파일을 다시 열지 않는다
     assert logger.raw_capture is not regular and logger.db_path != regular_path
     assert (logger.raw_capture.directory / "subscription_plan.json").is_file()
-    assert (logger.raw_capture.directory / "session_transition.json").is_file()
+    assert logger._transition_record_path.is_file()
     assert "애프터마켓 전환 완료" in "\n".join(messages)
 
 
@@ -383,7 +381,7 @@ def test_전환_중_도착한_콜백은_진단_기록에_남는다(transition_li
     record = logger.run_aftermarket_transition()
     assert len(record.callbacks_during) == 1
     assert record.callbacks_during[0]["code"] == "005930"
-    saved = json.loads((logger.raw_capture.directory / "session_transition.json")
+    saved = json.loads(logger._transition_record_path
                        .read_text(encoding="utf-8"))
     assert saved["callbacks_during_transition"] == 1
     assert saved["callbacks_preserved"][0]["code"] == "005930"
@@ -424,7 +422,7 @@ def test_전환_기록에_세션_식별자와_코드_리비전이_남는다(tran
     assert record.prev_session_id != record.next_session_id
     assert record.code_revision == "fixture"
     assert record.plan_revision["codes"] == ["005930_NX", "000660_NX"]
-    saved = json.loads((logger.raw_capture.directory / "session_transition.json")
+    saved = json.loads(logger._transition_record_path
                        .read_text(encoding="utf-8"))
     assert saved["prev_session_id"] == regular.identity.session_id
     assert saved["next_session_id"] == logger.raw_capture.identity.session_id
@@ -463,7 +461,216 @@ def test_전환_뒤_첫_수신_시각과_공백이_기록_파일에_반영된다
     logger._on_receive_real_data("005930", "주식체결", "")   # 정규장 마지막 수신
     logger.run_aftermarket_transition()
     logger._on_receive_real_data("005930_NX", "주식체결", "")
-    saved = json.loads((logger.raw_capture.directory / "session_transition.json")
+    saved = json.loads(logger._transition_record_path
                        .read_text(encoding="utf-8"))
     assert saved["first_event_after"] is not None
     assert saved["reception_gap_sec"] is not None
+
+
+def test_수신_공백은_콜백_진입의_단조_시계로_정확히_계산한다(transition_live, monkeypatch):
+    logger, _ = transition_live
+    now = [100.0]
+    logger._monotonic = lambda: now[0]
+    logger._on_login(0)
+    call = logger.ocx.dynamicCall
+    def slow_fid(method, *args):
+        if method.startswith("GetCommRealData"):
+            now[0] += 0.1  # 추출이 늦어져도 콜백 진입 시각을 사용해야 한다.
+        return call(method, *args)
+    monkeypatch.setattr(logger.ocx, "dynamicCall", slow_fid)
+    logger._on_receive_real_data("005930", "주식체결", "")
+    now[0] = 102.0
+    record = logger.run_aftermarket_transition()
+    assert record.reception_gap_sec is None
+    now[0] = 107.25
+    logger._on_receive_real_data("005930_NX", "주식체결", "")
+    assert record.reception_gap_sec == 7.25
+    assert record.reception_gap_sec >= 0
+    saved = json.loads(logger._transition_record_path.read_text(encoding="utf-8"))
+    assert saved["reception_gap_sec"] == 7.25 and saved["reception_clock"] == "monotonic"
+    assert saved["last_event_before_utc"] and saved["first_event_after_kst"]
+
+
+def test_정규장_만료가_애프터_타이머를_조기_종료하지_않는다(transition_live, monkeypatch):
+    from types import SimpleNamespace
+    import time
+    logger, _ = transition_live
+    logger._on_login(0)
+    logger.run_aftermarket_transition()
+    now = [1000.0]
+    logger._monotonic = lambda: now[0]
+    logger.duration_seconds, logger._subscribed_at = 1, 0
+    logger._aftermarket_subscribed_at = now[0]
+    logger.resources = None
+    logger.log.status = lambda _: None
+    original_monitor = logger.monitor
+    logger.monitor = SimpleNamespace(tick=lambda: None, sample_queue_depth=lambda _: None,
+                                     silence_stop_reason=lambda: None)
+    sleeps = []
+    def advance(_):
+        assert logger._shutdown_requested is None
+        sleeps.append(now[0])
+        now[0] += 30
+        assert len(sleeps) <= 2
+    fake_time = SimpleNamespace(monotonic=lambda: now[0], sleep=advance)
+    monkeypatch.setitem(type(logger)._stats_worker.__globals__, "time", fake_time)
+    try:
+        type(logger)._stats_worker(logger)
+        assert sleeps == [1000.0, 1030.0]
+        assert logger._shutdown_requested == "애프터마켓 제한 시간 종료"
+    finally:
+        logger.monitor = original_monitor
+        monkeypatch.setitem(type(logger)._stats_worker.__globals__, "time", time)
+
+
+def test_필수_진단_기록_실패_전에_새_세션을_열지_않는다(transition_live, monkeypatch):
+    logger, _ = transition_live
+    logger._on_login(0)
+    regular = logger.raw_capture
+    def fail(*args, **kwargs):
+        raise OSError("진단 디스크 실패")
+    monkeypatch.setattr(logger, "_write_transition_record", fail)
+    record = logger.run_aftermarket_transition()
+    assert not record.succeeded
+    assert logger.raw_capture is regular
+    assert not logger.accepting_events
+    assert regular.queue.done.wait(1)
+
+
+@pytest.mark.parametrize("failure_write", range(1, 11))
+def test_단계별_기록_실패는_수신을_막고_열린_writer를_정리한다(
+        transition_live, monkeypatch, failure_write):
+    logger, _ = transition_live
+    logger._on_login(0)
+    regular = logger.raw_capture
+    writes, registrations, closed_bytes = [], [], []
+    original_write = logger._write_transition_record
+    original_call = logger.ocx.dynamicCall
+    def write():
+        writes.append(logger.transition.record.phase)
+        if regular.queue.snapshot()["writer_closed"] and not closed_bytes:
+            closed_bytes.append(regular.path.read_bytes())  # 임시 디렉터리의 작은 합성 파일만
+        if len(writes) >= failure_write:
+            raise OSError("지속 기록 실패")
+        original_write()
+    def call(method, *args):
+        if method.startswith("SetRealReg"):
+            registrations.append(args)
+            assert not logger.accepting_events
+        return original_call(method, *args)
+    monkeypatch.setattr(logger, "_write_transition_record", write)
+    monkeypatch.setattr(logger.ocx, "dynamicCall", call)
+    record = logger.run_aftermarket_transition()
+    assert not record.succeeded and record.failed_step == "diagnostic_write"
+    assert not logger.accepting_events and not logger._transition_active
+    assert logger._shutdown_requested and logger.exit_code == 2
+    assert bool(registrations) == (failure_write >= 9)
+    assert (logger.raw_capture is not regular) == (failure_write >= 7)
+    assert regular.queue.done.wait(1) and logger.raw_capture.queue.done.wait(1)
+    assert regular.queue.snapshot()["writer_closed"]
+    assert logger.raw_capture.queue.snapshot()["writer_closed"]
+    if closed_bytes:
+        assert regular.path.read_bytes() == closed_bytes[0]
+    with pytest.raises(ValueError, match="한 번만"):
+        logger.run_aftermarket_transition()
+
+
+@pytest.mark.parametrize("stage", ["unsubscribe_regular", "finalize_regular", "open_aftermarket", "subscribe_nxt"])
+@pytest.mark.parametrize("fault", ["cancel", "timeout", "exception"])
+def test_단계별_중단은_후속_실행_없이_자원을_정리한다(transition_live, monkeypatch, stage, fault):
+    logger, _ = transition_live
+    logger._on_login(0)
+    regular = logger.raw_capture
+    now, injected, registrations = [100.0], [], []
+    logger._monotonic = lambda: now[0]
+    original_write = logger._write_transition_record
+    original_call = logger.ocx.dynamicCall
+    def write():
+        record = logger.transition.record
+        original_write()
+        if (record.phase == "step_started" and record.step_timing[-1].step == stage
+                and not injected):
+            injected.append(stage)
+            if fault == "cancel":
+                logger._shutdown("합성 전환 취소")  # Qt 재진입에서도 실제 shutdown을 중첩하지 않는다.
+            elif fault == "timeout":
+                now[0] += 30
+            else:
+                logger.transition._steps[stage] = lambda: (_ for _ in ()).throw(RuntimeError("합성 단계 오류"))
+    def call(method, *args):
+        if method.startswith("SetRealReg"):
+            registrations.append(args)
+        return original_call(method, *args)
+    monkeypatch.setattr(logger, "_write_transition_record", write)
+    monkeypatch.setattr(logger.ocx, "dynamicCall", call)
+    record = logger.run_aftermarket_transition()
+    assert not record.succeeded and record.failed_step == stage
+    assert not registrations and not logger.accepting_events
+    assert regular.queue.done.wait(1) and logger.raw_capture.queue.done.wait(1)
+    saved = json.loads(logger._transition_record_path.read_text(encoding="utf-8"))
+    assert saved["phase"] == "failed" and saved["cleanup"]
+    assert not logger._shutdown_done  # 종료 요청만 남기며 큐 정리는 이미 끝났다.
+
+
+def test_마지막_구독_중_콜백도_완료_기록_전에는_진단에만_남는다(transition_live, monkeypatch):
+    logger, _ = transition_live
+    logger._on_login(0)
+    call = logger.ocx.dynamicCall
+    def receive(method, *args):
+        if method.startswith("SetRealReg"):
+            logger._on_receive_real_data("005930_NX", "주식체결", "")
+        return call(method, *args)
+    monkeypatch.setattr(logger.ocx, "dynamicCall", receive)
+    record = logger.run_aftermarket_transition()
+    assert record.succeeded and record.first_event_after is None
+    assert record.callbacks_during[0]["transition_step"] == "subscribe_nxt"
+    assert logger.raw_capture.queue.snapshot()["accepted_callbacks"] == 0
+    assert logger._transition_record_path.parent.name == "session_transitions"
+    assert logger.accepting_events
+
+
+def test_첫_수신_공백_기록_실패는_입력을_막고_종료를_요청한다(transition_live, monkeypatch):
+    logger, _ = transition_live
+    logger._on_login(0)
+    record = logger.run_aftermarket_transition()
+    def fail():
+        raise OSError("첫 수신 기록 실패")
+    monkeypatch.setattr(logger.transition, "_persist_record", fail)
+    logger._on_receive_real_data("005930_NX", "주식체결", "")
+    assert not logger.accepting_events and logger._shutdown_requested
+    assert record.failed_step == "diagnostic_write" and not record.succeeded
+
+
+def test_새_writer_생성_뒤_계획_파일_실패도_구독_없이_정리한다(transition_live, monkeypatch):
+    from pathlib import Path
+    logger, _ = transition_live
+    logger._on_login(0)
+    regular = logger.raw_capture
+    write = Path.write_text
+    def fail_plan(path, *args, **kwargs):
+        if path.name == "subscription_plan.json":
+            raise OSError("계획 파일 저장 실패")
+        return write(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "write_text", fail_plan)
+    record = logger.run_aftermarket_transition()
+    assert record.failed_step == "open_aftermarket"
+    assert logger.raw_capture is not regular
+    assert record.next_session_id == logger.raw_capture.identity.session_id
+    assert regular.queue.snapshot()["state"] == "closed"
+    assert logger.raw_capture.queue.done.wait(1)
+    assert logger.raw_capture.queue.snapshot()["state"] == "interrupted"
+    assert logger._aftermarket_subscribed_at is None
+
+
+def test_실제_drain_대기_실패는_새_세션_없이_정리한다(transition_live, monkeypatch):
+    logger, _ = transition_live
+    logger._on_login(0)
+    regular = logger.raw_capture
+    monkeypatch.setattr(regular.queue.drained, "wait", lambda timeout: False)
+    record = logger.run_aftermarket_transition()
+    assert record.failed_step == "finalize_regular"
+    assert logger.raw_capture is regular and record.next_session_id is None
+    assert regular.queue.done.wait(1)
+    assert regular.queue.snapshot()["state"] == "interrupted"
+    assert regular.queue.snapshot()["writer_closed"]
+    assert not logger.accepting_events

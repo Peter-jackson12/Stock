@@ -12,7 +12,9 @@
 from __future__ import annotations
 
 import sys
+import json
 from pathlib import Path
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -24,6 +26,7 @@ from collector.kiwoom.session_transition import (  # noqa: E402
     STEP_UNSUBSCRIBE,
     STEPS,
     SessionTransition,
+    write_transition_record,
 )
 
 
@@ -263,3 +266,121 @@ def test_전환은_한_번만_실행한다():
         assert "한 번만" in str(exc)
         return
     raise AssertionError("두 번째 실행을 허용했다")
+
+
+def test_각_단계는_디스크의_시작_기록과_이전_완료를_확인한_뒤_실행한다(tmp_path):
+    path = tmp_path / "transition.json"
+    calls, saved = [], []
+    def persist():
+        payload = transition.record.describe()
+        write_transition_record(path, payload)
+        saved.append(json.loads(path.read_text(encoding="utf-8")))
+    def step(name):
+        def run():
+            disk = json.loads(path.read_text(encoding="utf-8"))
+            assert disk["phase"] == "step_started"
+            assert disk["steps_completed"] == calls
+            assert disk["step_timing"][-1]["step"] == name
+            assert disk["step_timing"][-1]["completed_at"] is None
+            assert not disk["succeeded"]
+            calls.append(name)
+            return True
+        return run
+    transition = SessionTransition(**dict(zip(STEPS, map(step, STEPS))), persist=persist)
+    assert transition.run().succeeded
+    assert [p["phase"] for p in saved] == ["started"] + [
+        "step_started", "step_completed"] * 4 + ["completed"]
+    assert saved[-1]["succeeded"]
+
+
+@pytest.mark.parametrize("failure_write", range(1, 11))
+def test_모든_필수_기록_실패에서_후속_단계가_실행되지_않는다(failure_write):
+    calls, writes = [], []
+    def persist():
+        writes.append(transition.record.phase)
+        if len(writes) >= failure_write:
+            raise OSError("기록 실패")
+    def step(name):
+        return lambda: calls.append(name) or True
+    transition = SessionTransition(**dict(zip(STEPS, map(step, STEPS))), persist=persist)
+    record = transition.run()
+    assert calls == list(STEPS[:min(4, (failure_write - 1) // 2)])
+    assert record.failed_step == "diagnostic_write"
+    assert not record.succeeded and not transition.in_progress
+    assert record.recording_error == "OSError: 기록 실패"
+
+
+@pytest.mark.parametrize("stage", STEPS)
+@pytest.mark.parametrize("fault", ["cancel", "timeout", "exception", "interrupt"])
+def test_각_단계의_취소_시간초과_예외는_다음_단계를_막고_실패를_저장한다(stage, fault):
+    now, cancelled, calls, saved = [10.0], [False], [], []
+    def step(name):
+        def run():
+            calls.append(name)
+            if name == stage:
+                if fault == "cancel":
+                    cancelled[0] = True
+                elif fault == "timeout":
+                    now[0] += 30
+                elif fault == "exception":
+                    raise OSError("단계 오류")
+                else:
+                    raise KeyboardInterrupt()
+            return True
+        return run
+    transition = SessionTransition(**dict(zip(STEPS, map(step, STEPS))),
+        clock=lambda: now[0], cancelled=lambda: cancelled[0],
+        persist=lambda: saved.append(transition.record.describe()))
+    record = transition.run()
+    assert calls == list(STEPS[:STEPS.index(stage) + 1])
+    assert not record.succeeded and record.failed_step == stage
+    assert not transition.in_progress
+    assert saved[-1]["phase"] == "failed" and saved[-1]["error"]
+
+
+def test_콜백_진단_저장_실패도_현재_단계_이후를_막는다():
+    calls = []
+    def finalize():
+        assert not transition.accept_callback(code="005930")
+        return True
+    def persist():
+        if transition.record.callbacks_during:
+            raise OSError("콜백 진단 실패")
+    transition = SessionTransition(unsubscribe_regular=lambda: None,
+        finalize_regular=finalize, open_aftermarket=lambda: calls.append("open"),
+        subscribe_nxt=lambda: calls.append("subscribe"), persist=persist)
+    record = transition.run()
+    assert not calls and not record.succeeded
+    assert record.failed_step == "diagnostic_write"
+    assert record.callbacks_during[0]["code"] == "005930"
+
+
+@pytest.mark.parametrize("operation", ["fsync", "replace"])
+def test_원자적_교체_실패는_마지막_성공_기록을_보존한다(tmp_path, monkeypatch, operation):
+    import os
+    path = tmp_path / "transition.json"
+    write_transition_record(path, {"phase": "step_started"})
+    def fail(*args):
+        raise OSError("교체 실패")
+    monkeypatch.setattr(os if operation == "fsync" else Path, operation, fail)
+    with pytest.raises(OSError, match="교체 실패"):
+        write_transition_record(path, {"phase": "step_completed"})
+    assert json.loads(path.read_text()) == {"phase": "step_started"}
+    assert not path.with_suffix(".tmp").exists()
+
+
+def test_벽시계_역행과_미수신은_단조_공백을_왜곡하지_않는다():
+    transition, _ = _transition()
+    record = transition.run(last_event_before=10, last_event_before_utc="2026-09-18T01:00:00+00:00")
+    assert record.reception_gap_sec is None
+    transition.note_first_event_after(at=12.5, at_utc="2026-09-18T00:00:00+00:00")
+    assert record.reception_gap_sec == 2.5
+    assert record.last_event_before_kst == "2026-09-18T10:00:00+09:00"
+    assert record.first_event_after_kst == "2026-09-18T09:00:00+09:00"
+    assert not transition.note_first_event_after(at=20)
+    record.first_event_after = 9
+    assert record.reception_gap_sec is None  # 잘못 주입한 역행 단조 값도 음수로 인증하지 않는다.
+    no_before, _ = _transition()
+    missing = no_before.run()
+    no_before.note_first_event_after(at=20)
+    assert missing.reception_gap_sec is None
