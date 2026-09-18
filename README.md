@@ -32,6 +32,7 @@ LOB/초봉 변환은 레거시 회귀용이고 틱 재생의 선행 조건이 �
 ### 개발하거나 AI에게 이어 맡기려면
 
 - **AI 읽기 순서·작업 원칙:** [AGENTS.md](AGENTS.md). [CLAUDE.md](CLAUDE.md)는 같은 지침으로 안내한다.
+- **2026-09-18 커밋 한국어화 전후 ID:** [커밋 대응표](docs/COMMIT_ID_MAP_20260918.json). 과거 문서·수집 리비전 조회에 사용한다.
 - **코드 검토 순서·반례·미확인 사항:** [TICK_CROSS_REVIEW.md](TICK_CROSS_REVIEW.md).
 - **rev.2의 D-4/D-5/D-6 수정 근거·기존 검증 기록:** [과거 인계](docs/archive/HANDOFF_20260916.md). 현재 실행 지시가 아니다.
 - **상시 응답 추가 전 운영 연결·실측 기록:** [2026-09-16 이전 인계](docs/archive/HANDOFF_20260916_PRE_HEARTBEAT.md). 현재 상태는 HANDOFF를 본다.
