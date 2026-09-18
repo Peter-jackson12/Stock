@@ -1,6 +1,32 @@
-# 현재 인계 — 2026-09-19 / 닫힌 raw 압축 보관·복원 시제품
+# 현재 인계 — 2026-09-19 / 닫힌 raw 압축 보관·복원 시제품 독립 검토
 
-## 이번 완료 — 작은 합성 데이터의 보관·복원 검증
+## 이번 완료 — 완료 표식 디렉터리에 남는 SQLite WAL 사이드카 결함 수정
+
+- 시작 HEAD `97e3777`, 작업 트리는 깨끗했다. 다른 Stock 작업 활동은 확인하지 않고(별도 표시 없음),
+  아래 시제품의 독립 검토만 진행했다. 운영 raw 전체 읽기·압축·복사·삭제, 로그인·수집기 변경은 하지 않았다.
+- **재현된 결함**: `collector/raw_archive.py`의 `_inflate()`가 내부적으로 쓰는 `read_raw_v2()`는
+  `?mode=ro`(immutable 아님)로 연다. `RawV2Writer`가 `PRAGMA journal_mode=WAL`을 쓰므로 이 플래그가
+  DB 파일 헤더에 영구 기록되고, gzip 복원으로 만든 사본도 이 플래그를 그대로 가진다. immutable 없이
+  이런 사본을 열면 SQLite가 `-wal`/`-shm` 사이드카를 새로 만든다 — `_validate_raw`의 첫 연결은
+  `mode=ro&immutable=1`로 이를 피했지만 `read_raw_v2` 호출에는 그 처리가 없었다(주석은 사이드카
+  가능성을 언급하면서도 정리 코드가 빠져 있었다).
+  합성 스크립트로 직접 `archive_raw`/`restore_raw`를 실행해 확인: `archive.json`+`raw.db.gz`만
+  있어야 할 완료된 bundle 디렉터리에 `verification.db.partial-shm`/`-wal`이, `raw.db`만 있어야 할
+  복원 디렉터리에 `raw.db.partial-shm`/`-wal`이 남았다. `docs/COLLECTION_RUNBOOK.md`가 명시한
+  "완료 표식/복원 디렉터리 내용" 계약 위반이며, 게시된 산출물에 `archive.json`이 설명하지 않는
+  잔존 파일이 남는 문제다(데이터 손상은 아니며 SQLite가 만드는 빈 WAL/shm 북키핑 파일이다).
+- **수정**: `_inflate()`가 검증 성공 후 `output` 이름 기준 `-wal`/`-shm` 사이드카가 있으면 삭제하도록
+  변경했다([raw_archive.py:114-122](collector/raw_archive.py:114)). archive/restore 양쪽 경로 모두
+  같은 함수를 거치므로 한 곳만 고치면 된다. 실패 경로(잔여물 진단 보존 정책)는 바꾸지 않았다 — 이
+  정리는 검증이 끝난 뒤에만 실행된다.
+- **회귀 테스트**: `tests/test_raw_archive.py::test_publish_leaves_no_sqlite_sidecars` 추가.
+  수정 전 코드로 먼저 실행해 실패를 확인했고(`verification.db.partial-shm`/`-wal` 잔존 검출),
+  수정 후 통과를 확인했다. `test_raw_archive.py`+`test_raw_v2.py`+`test_capture_session.py`
+  **66개 통과(4.57초)**(기존 65개 + 신규 1개). 임시 합성 DB만 사용했다.
+- 이 결함 수정과 별개로, 실 데이터 압축률·속도·전원 장애 내구성은 여전히 미확인이다(아래 이전
+  인계와 동일). 이번 검토는 시제품 상한을 바꾸지 않았고 운영 적용을 진행하지 않았다.
+
+## 이전 완료 — 작은 합성 데이터의 보관·복원 검증
 
 - 시작 HEAD `34c5a43`, 작업 트리는 깨끗했다. 앱에서 다른 Stock 작업은 idle/notLoaded였고
   Python/uv/claude 프로세스는 조회에 나타나지 않았다. 운영 파일의 표본 검사·정리 작업은 반복하지 않았다.

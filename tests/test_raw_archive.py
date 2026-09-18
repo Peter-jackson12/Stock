@@ -157,6 +157,17 @@ def test_intermediate_failure_has_no_completion_marker(source, tmp_path, monkeyp
         archive.restore_raw(tmp_path / "bundle", tmp_path / "restored")
 
 
+def test_publish_leaves_no_sqlite_sidecars(source, tmp_path):
+    # read_raw_v2 opens mode=ro (not immutable=1) on a WAL-flagged copy and
+    # creates -wal/-shm; a completed bundle/restore must not leak them.
+    pack(source, tmp_path)
+    bundle = tmp_path / "bundle"
+    assert sorted(p.name for p in bundle.iterdir()) == ["archive.json", "raw.db.gz"]
+    restored_dir = tmp_path / "restored"
+    archive.restore_raw(bundle, restored_dir)
+    assert sorted(p.name for p in restored_dir.iterdir()) == ["raw.db"]
+
+
 def test_wrong_session_does_not_publish(source, tmp_path):
     with pytest.raises(ValueError, match="session mismatch"):
         pack(source, tmp_path, session_id="other")

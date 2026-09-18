@@ -116,6 +116,10 @@ def _inflate(archive, output, expected):
     with output.open("rb") as stream:
         if _transfer(stream) != expected:
             raise ValueError("raw validation changed restored bytes")
+    for suffix in ("-wal", "-shm"):
+        sidecar = output.with_name(output.name + suffix)
+        if sidecar.exists():
+            sidecar.unlink()
     return meta, controls
 
 
