@@ -271,6 +271,12 @@ WAL/SHM/rollback journal이 하나라도 있으면 크기 0이어도 거부한�
 raw manifest, 종료 근거 진술, gzip 형식/레벨·Python/zlib 버전·압축본 크기/해시와 검증 결과를 기록한다.
 압축본만 있거나 `.partial`만 있는 디렉터리는 미완료다. 실패·중단·ENOSPC 시 잔여물은 진단용으로
 남기고 자동 재개/삭제하지 않는다. 새 목적지 이름으로 재시도하며 잔여물 제거는 별도로 검토한다.
+복원 검증용 사본의 `-wal`/`-shm` 정리(검증 성공 후 실행)가 실패해도 이후 게시 단계로 넘어가지
+않는다 — archive 경로는 `raw.db.gz`/`archive.json`을, restore 경로는 `raw.db`를 게시하지 않으며
+원본 바이트와 기존에 이미 게시된 보관본은 그대로 남는다. 두 사이드카(`-wal`, `-shm`) 중 먼저
+삭제가 끝난 쪽은 잔여물에서 빠지므로, 남는 파일 집합은 정리가 어디까지 진행됐는지에 따라 달라진다
+(고정된 목록이 아니다). 합성 검증:
+[test_copy_sidecar_unlink_failure_blocks_publish, test_second_sidecar_unlink_failure_leaves_only_that_sidecar](../tests/test_raw_archive.py).
 완료 표식도 복원 시 압축본 해시·gzip EOF/CRC·복원 크기/해시·raw 계약을 다시 확인한다.
 해시는 우발 손상 대조이며 manifest와 데이터의 동시 악의적 변조를 막는 서명은 아니다.
 파일 fsync/이름 게시는 OS 전원 장애·스토리지 고장 내구성의 실측 인증이 아니다.

@@ -1,4 +1,32 @@
-# 현재 인계 — 2026-09-19 / 첫 실데이터 시험 백테스트 체크리스트
+# 현재 인계 — 2026-09-19 / 복원 사본 사이드카 정리 실패 경계 합성 검증
+
+## 이번 완료 — 사본 sidecar 삭제 실패 시 게시 차단 확인 (실제 결함 없음)
+
+- 시작 HEAD `6e1029f`(origin/master 반영 확인), 작업 트리는 깨끗했다. 이어서 `b4c6b76`
+  (`BACKTEST_TODO.md` 정리, 문서만 변경)이 병행 커밋된 것을 확인했으며 이번 작업과는
+  독립적이다. 아래 WAL/SHM 사이드카 정리 수정(`raw_archive.py:114-122`)의 실패 경계만
+  독립적으로 합성 검증했고, 이미 통과한 검증은 반복 구현하지 않았다. 운영 raw 읽기·압축·
+  해시·복사·삭제, 로그인·수집기 변경·예약은 하지 않았다.
+- `_inflate()`가 검증 성공 후 지우는 복사본의 `-wal`/`-shm` 삭제(`sidecar.unlink()`)에만
+  실패를 주입했다. `Path.unlink`를 이름이 `-wal`/`-shm`으로 끝날 때만 실패하도록 monkeypatch해
+  다른 파일 연산(게시용 `_publish`의 `partial.unlink()` 등)은 그대로 두었다.
+  archive/restore 두 경로 모두 `archive.json`·최종 `raw.db`가 게시되지 않았고, 원본
+  바이트와 restore 케이스의 기존 `archive.json`/`raw.db.gz`도 그대로 보존됐다.
+- 첫 사이드카(`-wal`) 삭제는 성공하고 두 번째(`-shm`)만 실패하는 경우도 확인했다.
+  이미 지운 `-wal`은 잔여물에 없고 `-shm`만 남는다 — 실패 잔여물은 정리 진행 정도에 따라
+  달라지며 고정된 파일 집합이 아니다. 이 내용을 `docs/COLLECTION_RUNBOOK.md`에 명시했다.
+- **실제 결함은 재현되지 않았다.** `sidecar.unlink()` 호출에 try/except가 없어 예외가
+  그대로 호출자까지 전파되고, 이후의 게시 코드(`_publish`/`_json_publish`)는 그 예외 때문에
+  실행되지 않는다 — 이미 있는 구조가 요구 사항을 만족했으므로 구현은 바꾸지 않았다.
+- 검증: `tests/test_raw_archive.py`에 회귀 3개 추가
+  (`test_copy_sidecar_unlink_failure_blocks_publish`[archive/restore 2건],
+  `test_second_sidecar_unlink_failure_leaves_only_that_sidecar`).
+  `test_raw_archive.py`+`test_raw_v2.py`+`test_capture_session.py` **69개 통과(2.93초)**
+  (기존 66개 + 신규 3개). 임시 합성 DB만 사용했다.
+- 실 데이터 압축률·속도·전원 장애 내구성은 여전히 미확인이다(아래 이전 인계와 동일).
+  이번 검증은 시제품 상한을 바꾸지 않았고 운영 적용을 진행하지 않았다.
+
+## 이전 인계 — 첫 실데이터 시험 백테스트 체크리스트
 
 ## 이번 완료 — 현재 할 일의 단일 목록
 

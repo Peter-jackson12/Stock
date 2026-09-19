@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -166,6 +167,75 @@ def test_publish_leaves_no_sqlite_sidecars(source, tmp_path):
     restored_dir = tmp_path / "restored"
     archive.restore_raw(bundle, restored_dir)
     assert sorted(p.name for p in restored_dir.iterdir()) == ["raw.db"]
+
+
+@pytest.mark.parametrize("stage", ["archive", "restore"])
+def test_copy_sidecar_unlink_failure_blocks_publish(source, tmp_path, monkeypatch, stage):
+    # If the copy's -wal/-shm cleanup in _inflate() cannot delete, the caller
+    # must never reach the publish step that follows it.
+    before = source.read_bytes()
+    if stage == "restore":
+        pack(source, tmp_path)
+        bundle_json_before = (tmp_path / "bundle/archive.json").read_bytes()
+        bundle_gz_before = (tmp_path / "bundle/raw.db.gz").read_bytes()
+
+    original_unlink = Path.unlink
+
+    def fail_sidecar_unlink(self, *args, **kwargs):
+        if self.name.endswith(("-wal", "-shm")):
+            raise OSError("synthetic sidecar delete failure")
+        return original_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_sidecar_unlink)
+
+    with pytest.raises(OSError, match="synthetic sidecar"):
+        if stage == "archive":
+            pack(source, tmp_path)
+        else:
+            archive.restore_raw(tmp_path / "bundle", tmp_path / "restored")
+
+    assert source.read_bytes() == before
+    if stage == "archive":
+        bundle = tmp_path / "bundle"
+        assert not (bundle / "archive.json").exists()
+        assert not (bundle / "raw.db.gz").exists()
+        leftovers = sorted(p.name for p in bundle.iterdir())
+        assert "raw.db.gz.partial" in leftovers
+        assert any(name.startswith("verification.db.partial-") for name in leftovers)
+    else:
+        restored_dir = tmp_path / "restored"
+        assert not (restored_dir / "raw.db").exists()
+        leftovers = sorted(p.name for p in restored_dir.iterdir())
+        assert "raw.db.partial" in leftovers
+        assert any(name.startswith("raw.db.partial-") for name in leftovers)
+        # the archive bundle produced by an earlier, unrelated run stays untouched
+        assert (tmp_path / "bundle/archive.json").read_bytes() == bundle_json_before
+        assert (tmp_path / "bundle/raw.db.gz").read_bytes() == bundle_gz_before
+
+
+def test_second_sidecar_unlink_failure_leaves_only_that_sidecar(source, tmp_path, monkeypatch):
+    # _inflate() deletes -wal then -shm in sequence. If only the second delete
+    # fails, the first is already gone -- residue reflects cleanup progress,
+    # not a fixed set of leftover files.
+    before = source.read_bytes()
+    original_unlink = Path.unlink
+
+    def fail_shm_only(self, *args, **kwargs):
+        if self.name.endswith("-shm"):
+            raise OSError("synthetic second sidecar delete failure")
+        return original_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_shm_only)
+
+    with pytest.raises(OSError, match="synthetic second sidecar"):
+        pack(source, tmp_path)
+
+    assert source.read_bytes() == before
+    bundle = tmp_path / "bundle"
+    assert not (bundle / "archive.json").exists()
+    leftovers = sorted(p.name for p in bundle.iterdir())
+    assert not any(name.endswith("-wal") for name in leftovers)
+    assert any(name.endswith("-shm") for name in leftovers)
 
 
 def test_wrong_session_does_not_publish(source, tmp_path):
