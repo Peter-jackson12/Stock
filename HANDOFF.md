@@ -1,4 +1,44 @@
-# 현재 인계 — 2026-09-20 / 첫 실데이터 시험 입력 후보 조사 (선정 불가)
+# 현재 인계 — 2026-09-20 / 첫 실데이터 시험 품질 문제 처리 방향 결정
+
+## 이번 완료 — 방향 결정 (실데이터 신규 조회·표본 검사·백테스트 없음)
+
+- 시작 HEAD `e146c6b`, 작업 트리 깨끗함, `git fetch origin` 후 origin/master도 동일 `e146c6b`
+  (앞선 다이버전 없음), 단일 worktree만 확인했다. AGENTS.md·HANDOFF.md·BACKTEST_TODO.md·
+  TICK_RESEARCH_RUNBOOK.md를 다시 읽고, `engine/tick_research_run.py::run_raw_v2()`와
+  `scripts/inspect_raw_v2_sample.py`/런북의 표본 대조 계약만 코드로 직접 대조했다(재실행 없음).
+  raw DB 신규 조회·`inspect_raw_v2_sample.py` 실행·전체 checksum·틱 재생·백테스트·파생 파일
+  생성·수집 시작/종료·로그인·예약·구독·주문·압축/복사/삭제/VACUUM은 하지 않았다.
+- **`cf18cb43…`의 100건 표본 검사를 다음 필수 단계에서 제외했다.** 이 파일은 `direction_policy=
+  "unknown"`으로 저장됐고, `inspect_raw_v2_sample.py`는 원본 envelope에 저장된 정책을 그대로
+  `normalize_tick()`에 재입력할 뿐 최신 기본 정책(`signed_volume`)을 과거 파일에 강제 적용하지
+  않는다(런북에 이미 명시). 즉 이 표본이 `sample_consistent`로 나와도 "unknown 정책 재적용
+  결과가 저장값과 같다"는 것만 뜻하며, 현재 연구가 실제로 쓰는 `signed_volume` 기준 적합성은
+  전혀 검증하지 않는다. 코드 0이어도 런북이 명시한 대로 `full_integrity_verified=false` 등이라
+  연구 입력 합격도 아니다. 따라서 이미 문서화된 8.6% 방향 불일치·제어 레코드 99.8% 소멸을
+  뒤집을 근거가 될 수 없어, 우선 실행할 이유가 약하다고 판단했다.
+- **기본 경로로 새 clean closed 세션(경로 A)을 선택했다.** 현재 raw v2 파일 5개 중 현행 엄격
+  `run_raw_v2()` 계약(CaptureControl이 `session_start`/`session_note`가 아니면 즉시 실패)을
+  바로 통과한다고 판단할 파일은 없다(2개는 종료 자체가 안 됨/사실상 빈 파일, `cf18cb43…`는
+  방향 정책 자체가 unknown, `21f8c124…`는 말미 방향 미확인 8건·parse_error 8건). `98d9394`
+  이후 코드로 새로 수집한 세션을 writer_closed→finalization→종료 보고→signed_volume 정책→
+  제한 표본→품질 제어 기록 부재→전체 무결성 순으로 확인하는 경로가, 기존 raw 파생 경로보다
+  입력 계약과 provenance가 단순해 첫 시험 목적에 더 적합하다고 판단했다. 이번 작업에서
+  수집기를 실행하거나 예약하지 않았다.
+- **기존 raw 파생 경로(경로 B)는 예비로 남겼다**(구현 없음). 새 clean 세션을 기다릴 수 없다는
+  명확한 이유가 아직 없기 때문이다. 필요해질 경우의 최소 계약(원본 미수정·session_id/seq
+  추적·제외 사유 기록·정규화 코드 hash·policy 명시·오류 조용히 삭제 금지·별도 dataset identity
+  등)과, 선택 시 `cf18cb43…`/`21f8c124…` 중 어느 쪽이 더 나은 기반인지 판단하려면 추가 관측이
+  필요하다는 점만 [BACKTEST_TODO.md §2](BACKTEST_TODO.md#2-가장-먼저-할-일--시험-입력-결정)에
+  정리했다. 어느 파일도 이번에 파생 입력으로 합격시키지 않았다.
+- 경로 A를 위한 다음 실제 관측(코드 revision·direction_policy·feed_scope·session_id·시작/종료
+  근거·writer_closed·finalization·accepted=committed·오류/드롭·프로세스 부재·파일 크기 대조)
+  목록만 BACKTEST_TODO.md에 남겼다. 실제 수집 실행은 이번 작업 범위 밖이다.
+- `BACKTEST_TODO.md`의 "품질 문제 처리 방향 결정" 항목을 체크했다. 후보 파일 확정·입력 전체
+  검증·시험 실행·재현성 확인·전략 성과 평가는 완료 처리하지 않았다.
+- 문서만 변경했다. `git diff --check`/`--stat`로 형식만 확인했고 전체 pytest는 재실행하지
+  않았다(코드 변경 없음).
+
+# 이전 인계 — 2026-09-20 / 첫 실데이터 시험 입력 후보 조사 (선정 불가)
 
 ## 이번 완료 — PR #2 반영과 후보 조사
 
