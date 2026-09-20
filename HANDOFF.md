@@ -1,4 +1,40 @@
-# 현재 인계 — 2026-09-20 / Git-only CI와 로컬 검증 분리
+# 현재 인계 — 2026-09-20 / 첫 실데이터 시험 입력 후보 조사 (선정 불가)
+
+## 이번 완료 — PR #2 반영과 후보 조사
+
+- 시작 시 로컬 HEAD `ae4175b`, 작업 트리 깨끗함. `git fetch origin` 후 원격이 PR #2 병합
+  커밋 `fc8c4d1`(부모 `76d446b`)까지 앞서 있음을 확인하고, 충돌 없는 단순 지연이므로
+  `git merge --ff-only origin/master`로 반영했다. GitHub Actions Git-only CI 성공(1,213개
+  수집/1,207개 통과/6개 선택 해제/skip 0, Windows·Python 3.14.7)은 기존 보고를 그대로
+  이어받았으며 이번에 재실행하지 않았다.
+- `BACKTEST_TODO.md`의 "시험 입력 결정" 항목을 진행했다. 실제 raw DB 신규 조회·전체 검사·
+  백테스트는 하지 않았다. 기존 `operations_state/raw_sample_checks/a25fe6721db94d8cb2724ee2798a8ad7/`,
+  `operations_state/capture_sessions/*/status.json`, HANDOFF 기존 기록과
+  `sampledata/raw_ticks_v2/` 파일 메타데이터(이번에 `Get-ChildItem`으로 직접 확인)만 대조했다.
+- **결론: 현재 근거만으로 시험 후보를 지정할 수 없다.** 실제 raw v2 파일 5개 중 정상 종료된
+  것은 `cf18cb437b9a4f6ba2abf0fdadbbfe57`(09-17)와 `21f8c124e64e421893275ccdc83818ad`(09-18)
+  둘뿐이다(`2818147a…`는 event_count=1로 사실상 빈 파일, `1b120bb4…`는 크래시로 closed 아님,
+  `e13522d5…`는 interrupted·finalization 없음 — 모두 기존 근거에서 확인).
+  - `21f8c124…`는 기존에 확인된 말미 무부호 체결 8건·parse_error 8건 때문에 이미 차단 상태다
+    (기존 결정 유지, 재검토 안 함).
+  - `cf18cb43…`는 방향 정책 전환 커밋 `98d9394`(2026-09-17 15:47:59 KST, 이번에 `git show`로
+    직접 확인)보다 **이전** 코드 리비전 `30989e2c`(2026-09-17 12:33:34 KST, 직접 확인)로
+    수집됐다. 같은 세션을 대상으로 한 기존 10,384건 표본 대조(HANDOFF 09-17 15:38 KST 기록)에
+    구세대 방향 판정 스펙 대비 8.6% 불일치, 방향 정책 적용 시 제어 레코드 99.8% 소멸이 이미
+    문서화돼 있다 — "아직 확인 안 됨"이 아니라 **이미 확인된 대규모 품질 문제**다.
+    이 파일에 `inspect_raw_v2_sample.py` 표본 대조는 아직 없다.
+  - 두 세션 모두 `feed_scope=kiwoom_universe_venue_unverified`로 파일에 고정된 단일 종목이
+    없다(전 종목 구독, venue 미확정) — 종목 선택은 연구 실행 시점의 별도 결정이다.
+- 상세 표·부족한 근거·다음 최소 관측 계획(대상·범위·목적·예산·성공/중단 기준)은
+  [BACKTEST_TODO.md §2](BACKTEST_TODO.md#2-가장-먼저-할-일--시험-입력-결정)에 있다.
+  다음 관측은 `cf18cb43…`에 대한 `inspect_raw_v2_sample.py --start-seq 1 --limit 100` 한 번뿐이며
+  이번 작업에서는 실행하지 않았다. 실행되면 결과에 따라 중간/말미 확대 여부를 별도로 정한다.
+- 문서만 변경했다. `git diff --check`/`--stat`로 형식만 확인했고, 코드 변경이 없어 전체
+  pytest(1,207개)는 재실행하지 않았다. 로그인·수집기 시작/종료·구독/주문/예약, raw 압축·복사·
+  삭제·VACUUM, SQLite COUNT·전체 순번/체크섬 검사, 신규 표본 검사, 실제 틱 재생·백테스트는
+  이번 작업에서 하지 않았다.
+
+# 이전 인계 — 2026-09-20 / Git-only CI와 로컬 검증 분리
 
 ## 이번 완료 — GitHub PR에서 재현 가능한 검증 경로
 
