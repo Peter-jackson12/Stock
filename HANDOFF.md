@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-20 / 구조 재점검, 신규 수집 승인·당일 점검 대기
+# 현재 인계 — 2026-09-20 / 9월 21일 clean raw-v2 수집 전날 준비 완료
 
 현재 작업 요약만 유지한다. 과거 인계 전체는 [보존본 안내](docs/archive/README.md)에 있다.
 상세 계약은 [문서 인덱스](README.md), 연결 구조·남은 단순화 항목은 [파이프라인 지도](docs/PIPELINE_MAP.md)를 본다.
@@ -7,52 +7,148 @@
 
 첫 실제 연구 입력은 **현재 코드로 새 clean closed raw-v2 세션을 확보하는 경로 A**다.
 기존 raw를 가공하는 경로 B는 예비이며 구현하지 않는다. 후보 선정·전체 입력 검증·첫 백테스트는 미완료다.
-현재까지의 과거 raw 판정과 다음 체크 항목은 [BACKTEST_TODO](BACKTEST_TODO.md)에만 유지한다.
+과거 raw 판정과 다음 체크 항목은 [BACKTEST_TODO](BACKTEST_TODO.md)에만 유지한다.
 
-2026-09-21은 수집 예정일이다. 이 문서와 대화 알림은 예약 실행이나 live 로그인 승인이 아니다.
-서버 계획은 `live`지만 **사용자의 명시적 live 로그인·시세 수집 승인과 당일 점검 전에는 실행하지 않는다.**
-이번 GitHub 구조 점검에서는 실제 로그인·수집·로컬 데이터 조회를 하지 않았다.
-현재 Windows working tree·프로세스·lock·디스크·OCX 상태는 새로 관측하지 않았다.
+2026-09-21은 수집 예정일이다. 서버 계획은 **live**다.
+이는 코드가 live만 허용한다는 뜻이 아니라, 목표가 실제 시장 연구 입력 확보이고 mock 실피드가
+실시장과 동등하다는 근거가 없기 때문이다. 키움 공식 안내에서도 모의투자는 프로그램 제작·디버깅용 환경으로
+구분한다. 사용자의 명시적 live 로그인·시세 수집 승인과 당일 로컬 점검 전에는 실행하지 않는다.
 
-## 이번 원격 점검과 변경
+이번 전날 준비에서는 실제 로그인·구독·수집·예약·로컬 raw 조회를 하지 않았다.
+현재 Windows working tree·프로세스·lock·디스크·OCX 상태는 새로 관측하지 않았으므로 당일 다시 확인한다.
 
-- 검토 기준 master는 `1ca29221598830d521530a0b2f9bb64961c2086d`였다. 부모는 `67700a2`이며
-  시작 시 열린 PR은 없었다. 이 SHA는 **정리 전 기준**이지, 이후에도 최신 master라는 선언이 아니다.
-- 해당 기준 Actions `35503695544`는 success이며 로그상 1,213개 수집 / 1,207개 통과 / 6개 선택 해제다.
-  이후 문서·테스트 변경의 CI는 해당 PR/최신 commit의 Actions에서 별도로 확인한다.
-- `1ca2922`의 합성 probe 기대값 21건은 현재 signed_volume과 기존 운영 회귀의 기대값에 부합한다.
-  `session_start 1 + 정상 +2 체결 20`이며 실제 피드 품질 인증이 아니다.
-- 현재 인계와 체크리스트의 긴 이력을 원본 blob 그대로 archive에 보존하고 활성 내용을 분리했다.
-  README의 문서 담당 범위, 파이프라인 지도, 연구 런북의 CLI/화면 검증 차이와 오래된 OCX 안내를 정리했다.
-  문서 경로·절 링크·보존본 동일성·인계 크기를 검사하는 Git-only 회귀를 추가했다.
-- 수집기·정규화기·저장·연구 엔진·운영 화면·워크플로·의존성과 데이터는 변경하지 않는다.
-  실제 구조 개선 중 런타임 변경이 필요한 항목은 지도에 후속 작업으로 구분했다.
+## 2026-09-20 늦은 원격/공식 자료 점검
 
-## 다음 행동 — 수집 당일 로컬에서
+- 전날 점검 시작 기준 master는 `497e42e18fe4d0733d7640b428563c366ff53aae`이고 열린 PR은 없었다.
+  해당 master Actions `35505919234`는 success, Windows/Python 3.14.7에서
+  1,226개 수집 / 1,220개 통과 / 6개 선택 해제였다. 이후 원격이 진행되면 최신 상태가 우선이다.
+- 행정안전부 2026-09-16 공식 안내는 추석 연휴를 **9월 24~27일**로 명시한다.
+  따라서 9월 21일은 추석 연휴에 포함되지 않는다.
+- KRX 현재 공식 거래시간 안내는 정규장을 **09:00~15:30**으로 표시하고,
+  휴장일을 토요일·관공서 공휴일·노동절·연말 휴장·거래소가 별도로 정한 날로 규정한다.
+  9월 21일을 휴장으로 보는 현재 공식 근거는 확인하지 못했다.
+- 키움 공식 제도개편 안내에는 **KRX 애프터마켓(16:00~20:00) 관련 변경이 09/21부터 적용 예정**이라고 적혀 있다.
+  현재 기본 수집 경로는 정규장 전용이고 15:35에 종료하므로 이번 세션에 애프터마켓/NXT 전환을 끼워 넣지 않는다.
+  첫 적용일이라는 사실은 종료 후 해석 시 기록해 둔다.
+- 2026-09-20 현재 웹에서 확인 가능한 범위에서는 9월 21일 Open API+ 전용 점검/휴장 공지를 찾지 못했다.
+  **검색 결과 없음은 공지 부재 인증이 아니다.** 당일 아침 KRX/키움에 새 특별 공지가 생겼는지만 delta-check한다.
 
-1. `git status --short`와 AGENTS를 확인하고 `git fetch origin` 후 HEAD/origin/master·최근 변경·CI를 대조한다.
-   다른 worktree/에이전트와 실제 수집 활동을 먼저 확인한다. 사용자 변경과 실행 중 체크아웃을 보존한다.
-2. 사용자 승인, KRX/키움의 당일 특별 휴장·시간 변경·시스템 공지, Windows KST 시계를 확인한다.
-   공지 추출 실패를 "공지 없음"으로 판정하지 않는다. 확인할 수 없으면 로그인 전에 멈춘다.
-3. Python 수집 프로세스·다른 앱의 키움 접속·수집 lock·managed capture 상태·저장 root·여유 공간과
-   `.venv32`의 공식 preflight를 다시 확인한다. 기존 잠금 파일을 삭제하거나 생존 증거로 취급하지 않는다.
-4. 실제 CLI/정책을 읽고 승인된 새 세션을 시작한다. 현재 독립 CLI에는 `--server` 옵션이 없고,
-   로그인 창에서 선택한 서버의 응답을 기록한다. 요청 서버 불일치 차단은 managed 모드에만 있다.
-   확인할 수 없는 자동 로그인으로 live를 보장하지 않는다. 존재하지 않는 옵션을 붙이지 않는다.
-5. 기본 종료 요청 이후 같은 session_id의 상태·최종 보고·저널·로그·프로세스 부재·파일 메타데이터를 대조한다.
-   정상 종료 확정 전 raw 표본 검사로 넘어가지 않는다. 수집 중 코드 변경·추가 로그인·raw 조회는 하지 않는다.
+공식 확인 위치:
+- KRX 거래시간/휴장 규칙: https://global.krx.co.kr/contents/GLB/06/0602/0602020204/GLB0602020204T1.jsp
+- 행정안전부 추석 연휴 안내: https://www.mois.go.kr/frt/bbs/type010/commonSelectBoardArticle.do?bbsId=BBSMSTR_000000000008&nttId=129490
+- 키움 KRX 애프터마켓/NXT 제도개편: https://www.kiwoom.com/e/home/event/VEvent20260093View?dummyVal=0
+- 키움 Open API+ 안내: https://www1.kiwoom.com/h/customer/download/VOpenApiInfoView?dummyVal=0
 
-현재 독립 진입점과 정확한 시작/종료 절차는
-[수집 런북의 환경과 시작](docs/COLLECTION_RUNBOOK.md#환경과-수집-시작) 및
-[파이프라인의 진입점 차이](docs/PIPELINE_MAP.md#entrypoints)를 따른다.
-NXT/애프터마켓 전환이나 관리 모드의 단시간 수집을 이번 기본 세션에 끼워 넣지 않는다.
+## 내일 다시 분석하지 않아도 되는 현재 코드 계약
 
-종료 근거가 맞으면 **첫 시험 후보**로만 올린다. 다음은
-[최초 100건 표본](TICK_RESEARCH_RUNBOOK.md#닫힌-raw의-제한된-표본-대조) → 명시적 중간/말미 제한 구간 →
-별도 장외 whole-file 무결성·품질 검사 → 첫 시험이다.
-대용량 입력의 **검사만 하는 선행 절차**는 실행 전에 확정해야 한다.
-현재 직접 연구 CLI를 실행하면 검증과 전략 재생이 함께 진행되므로 검사 전용으로 사용하지 않는다.
-이는 신규 수집의 선행 조건이 아니라, 수집 후 첫 연구 실행 전에 해소할 항목이다.
+현재 독립 실행은 다음이다.
+
+```powershell
+.\.venv32\Scripts\python.exe collector/kiwoom/kiwoom_universe_logger.py --storage raw-v2
+```
+
+`--storage raw-v2`는 기본값이라 생략 가능하지만, 운영 의도를 명시하려고 붙여도 된다.
+독립 CLI에는 `--server` 옵션이 없다. 로그인 후 `GetServerGubun` 응답을
+`0=live`, `1=mock`으로 해석하며 그 외 값은 시작 실패다.
+**요청 server와 실제 server의 불일치 차단은 managed 실행에만 있다.**
+따라서 독립 실행에서 live 여부는 로그인 창 선택과 로그인 후 기록된 identity/server로 대조한다.
+
+기본 실행은 `--codes`, `--duration-seconds`, NXT/애프터마켓 계획을 주지 않는 기존 정규장 유니버스다.
+코스피/코스닥 코드 목록에서 현재 코드/이름 필터를 적용하고 100종목씩 화면을 나눠 SetRealReg한다.
+raw-v2에서 SetRealReg 반환이 0이 아니면 등록 실패로 종료한다. 종목 분류 정확성 자체는 별도 검증이다.
+
+OCX 생성 전에 같은 체크아웃의 `CollectorLease`를 획득한다.
+남아 있는 lock 파일 내용은 PID/생존 증거가 아니며 임의 삭제하지 않는다.
+다른 체크아웃·다른 앱의 키움 로그인까지 이 lock이 막아 주는 것은 아니다.
+
+로그인 성공 후 새 `LiveRawCapture`가 생성되며:
+- session_id: 새 UUID hex
+- raw: `sampledata/raw_ticks_v2/YYYYMMDD/<session_id>.db`
+- evidence: `operations_state/capture_sessions/<session_id>/`
+- latest status: `operations_state/capture_status.json`
+- source: `kiwoom`
+- feed_scope: `kiwoom_universe_venue_unverified`
+- venue: 각 이벤트 `unknown`
+- price_policy: `signed_magnitude`
+- direction_policy: `signed_volume`
+- 큐 capacity: 8,192 callbacks
+- 저장 batch 최대: 512 callbacks
+
+RawV2Writer는 파일을 `xb`로 새로 만들므로 기존 파일 overwrite/resume을 허용하지 않는다.
+정상 체결의 FID15 명시적 +/-만 방향으로 사용하며, 무부호·0·비정상 값은 방향 미확인 품질 기록으로 보존한다.
+
+중복 로그인/재접속 이벤트, FID 읽기 예외, 연결 끊김, 등록 실패, 큐 overflow,
+잘못된 callback packet/수신시각, 저장 오류는 clean 완료로 바꾸지 않는다.
+큐 overflow/invalid packet은 입력 수락을 중단하고 dropped를 증가시키며 파일을 정상 closed로 만들지 않는다.
+
+기본 정규장 실행의 시간 종료 조건은 **Windows 로컬 시각 15:35**다.
+수집기는 15:35에 종료 요청을 만들고, Qt 스레드에서 입력 중단/실시간 해제 후 저장 drain을 수행한다.
+15:35는 DB 저장 완료 시각이 아니다.
+
+clean 종료 후보의 최소 대조:
+- 동일 session_id / dataset_path / code revision / server / feed_scope
+- snapshot.state == closed
+- accepting == false
+- writer_closed == true
+- error == null
+- dropped_callbacks == 0
+- pending_callbacks == 0
+- accepted_callbacks == committed_callbacks
+- finalization 존재
+- committed_seq == finalization.final_seq
+- starting → draining → closed 보고/저널의 일관성
+- 종료 로그와 reason
+- 본체 및 관련 실행 프로세스의 실제 종료
+- raw 파일 크기와 LastWriteTimeUtc
+
+`accepted_callbacks`는 callback 수이고 `committed_seq/final_seq`는 session_start·parse_error 등
+제어 레코드까지 포함한 raw sequence이므로 서로 같아야 한다고 가정하지 않는다.
+closed/CI/합성 성공만으로 데이터 품질·무누락을 승인하지 않는다.
+
+## 내일 Astra/로컬에서만 다시 볼 delta-check
+
+아침에는 저장소를 처음부터 재분석하지 않는다. 아래만 현재값으로 다시 확인한다.
+
+1. `git status --short`, `git fetch origin`, HEAD/origin/master와 새 원격 commit/CI.
+2. 다른 worktree/에이전트가 tracked 파일을 편집하거나 수집을 시작했는지.
+3. 2026-09-20 점검 이후 KRX 특별 휴장/시간 변경 또는 키움 Open API+ 긴급 점검 공지가 새로 생겼는지.
+4. Windows 날짜·시각·시간대가 KST인지.
+5. 기존 Python 수집기, 다른 키움/KOA 접속, 관련 실행기·감시 프로세스.
+6. collector lock과 managed capture 미해결 상태.
+7. 저장 root와 C: 여유 공간.
+8. `.venv32` Python 32bit와 공식 `--preflight` 결과, 현재 OCX 등록/파일.
+9. 사용자가 login 창에서 **live**를 선택했고, 로그인 후 identity.server도 live인지.
+10. 시작 후 실제 session_id/raw/evidence 경로와 초기 status가 running/accepting/error 없음인지.
+
+이 중 불일치나 미확인이 있으면 로그인/구독을 밀어붙이지 않는다.
+
+## Astra 사용량 최소화 전략
+
+**아침 시작과 장 마감 후 검증을 두 작업으로 분리한다.**
+Astra가 repository 전체를 다시 읽거나 장중 6시간 이상 계속 추론할 필요는 없다.
+
+아침 작업은 위 delta-check와 preflight를 끝낸 뒤 collector를 시작하고 실제 session_id/server/raw 경로와
+초기 running 상태까지만 확인한다. 이후 collector 자체는 Qt 이벤트 루프를 가진 독립 Python 프로세스로
+15:35 종료 조건을 수행한다.
+
+단, **저장소 코드는 “Astra 작업/셸 종료 시 자식 프로세스가 반드시 살아남는다”는 실행환경 계약을 제공하지 않는다.**
+내일 로컬에서 실제 collector를 Astra 소유 임시 셸에 묶어 두지 않는 방식을 먼저 확인한다.
+가능하면 일반 Windows PowerShell/터미널의 별도 프로세스로 시작하고 PID+시작시각+실행파일을 재확인한다.
+Astra 작업 종료가 process tree 정리와 연결되는지 확정할 수 없다면 사용자가 자신의 일반 PowerShell에서
+위 한 줄 CLI를 직접 실행하는 것을 안전한 fallback으로 사용한다. live 로그인 창 확인은 어차피 사용자 상호작용이 필요하다.
+
+장중에는 status/log의 가벼운 관측 외에 코드 변경·추가 로그인·raw 조회·COUNT/checksum·표본 검사·백테스트를 하지 않는다.
+15:35 이후에는 **같은 session_id**를 입력으로 별도 짧은 작업에서 종료 근거만 대조한다.
+
+## 종료 후 다음
+
+종료 근거가 맞으면 **첫 시험 후보**로만 올린다.
+다음은 [최초 100건 표본](TICK_RESEARCH_RUNBOOK.md#닫힌-raw의-제한된-표본-대조)
+→ 명시적 중간/말미 제한 구간 → 별도 장외 whole-file 무결성·품질 검사 → 첫 시험이다.
+
+대용량 입력의 검사 전용 절차는 첫 연구 실행 전에 확정해야 한다.
+현재 직접 연구 CLI는 전체 검증과 전략 재생을 함께 진행하므로 검사 전용으로 사용하지 않는다.
+이는 신규 수집의 선행 조건은 아니다.
 
 ## 과거 로컬 관측의 근거 위치
 
@@ -60,14 +156,12 @@ NXT/애프터마켓 전환이나 관리 모드의 단시간 수집을 이번 기
 당시 `.venv32` Python 3.10.11/32bit, OCX/preflight 성공, 수집기 부재, 잠금 획득/해제,
 C: 여유 약 1.25 TiB와 working tree clean이 보고됐다. **현재 상태로 재사용하지 않는다.**
 
-32bit 합성 probe 성공 보고:
+32bit 합성 probe 성공:
 `operations_state/live_backend_probes/0067ae46003e4b35834086ac7f38211c/result.json`.
-두 경로 모두 Git 제외 로컬 근거다. 원격 문서에 적혔다는 이유로 이번에 원본을 읽었다고 주장하지 않는다.
-과거 raw의 표본·충돌·종료 상세 근거는 [인계 이력 보존본](docs/archive/README.md)에서 찾는다.
+Git 제외 로컬 근거이므로 필요할 때 로컬에서만 대조한다.
 
 ## 계속 지킬 경계
 
 합성/CI 통과 ≠ 실제 raw 품질, closed ≠ whole-file 검증, 표본 일치 ≠ 전체 정상,
 입력 검증 ≠ 전략 수익성, 첫 백테스트 ≠ 실거래 승인이다.
 `Daily_baseline`·`old_data`·운영 raw·operations_state·사용자 변경을 보존한다.
-일상 GitHub 작업은 이 대화에서 처리하고, Windows·OCX·실데이터가 필요한 단계만 로컬로 넘긴다.
