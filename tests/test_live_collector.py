@@ -26,7 +26,7 @@ def live(collector, monkeypatch, tmp_path):
     values.update({i: "3" for i in range(61, 81)})
     def call(method, *args):
         if method.startswith("KOA_Functions"):
-            return "0"
+            return ""  # Kiwoom live server: mock is "1", live may be blank.
         if method.startswith("GetConnectState"):
             return 1
         if method.startswith("GetCommRealData"):
@@ -61,6 +61,20 @@ def test_operational_default_preserves_raw_and_closes_new_file(live):
     assert not list(logger.db_path.parents[3].glob("raw_ticks/*"))
     status = json.loads((logger.raw_capture.directory / "status.json").read_text(encoding="utf-8"))
     assert status["snapshot"]["state"] == "closed" and status["control_heartbeat"] is False
+
+
+def test_legacy_zero_server_flag_is_still_live(live):
+    logger, _, _ = live
+    original = logger.ocx.dynamicCall
+
+    def call(method, *args):
+        if method.startswith("KOA_Functions"):
+            return "0"
+        return original(method, *args)
+
+    logger.ocx.dynamicCall = call
+    logger._on_login(0)
+    assert logger.raw_capture.identity.server == "live"
 
 
 def test_bad_fid_keeps_original_and_quality_issue(live):
