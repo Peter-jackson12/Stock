@@ -23,11 +23,24 @@ def main():
                 received_ns=time.perf_counter_ns(), received_at_utc=datetime.now(timezone.utc).isoformat())
         assert capture.finish("synthetic probe")
         with read_raw_v2(capture.path) as (manifest, rows):
-            count = sum(1 for _ in rows)
-        assert count == 41 and manifest["payload_sha256"] == capture.report.finalization.payload_sha256
+            records = list(rows)
+        count = len(records)
+        # signed_volume resolves +2 without the old per-callback parse_error.
+        assert count == 21
+        assert records[0]["event"].control_type == "session_start"
+        assert records[0]["raw_fields"]["details"] == dict(
+            direction_policy="signed_volume", price_policy="signed_magnitude")
+        assert all(not hasattr(row["event"], "control_type") for row in records[1:])
+        assert manifest["payload_sha256"] == capture.report.finalization.payload_sha256
+        snapshot = capture.queue.snapshot()
+        assert snapshot["state"] == "closed" and snapshot["writer_closed"]
+        assert not snapshot["accepting"] and snapshot["error"] is None
+        assert snapshot["accepted_callbacks"] == snapshot["committed_callbacks"] == 20
+        assert snapshot["pending_callbacks"] == snapshot["dropped_callbacks"] == 0
+        assert snapshot["committed_seq"] == snapshot["finalization"]["final_seq"] == count
         result = dict(checked_at_utc=datetime.now(timezone.utc).isoformat(), python_bits=capture.identity.python_bits,
             ocx_used=False, simulated_server=True, production_load_validated=False, callbacks=20,
-            verified_raw_records=count, snapshot=capture.queue.snapshot(), manifest=manifest)
+            verified_raw_records=count, snapshot=snapshot, manifest=manifest)
         path = root / "result.json"
         path.write_text(json.dumps(result, indent=2), encoding="utf-8")
         print(str(path))

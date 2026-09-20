@@ -1,4 +1,35 @@
-# 현재 인계 — 2026-09-20 / clean 세션 수집 전 문서 정책 동기화
+# 현재 인계 — 2026-09-20 / clean 세션 수집 직전 점검 (BLOCKED)
+
+- 깨끗한 master `a138843`을 fetch 후 `67700a2`로 fast-forward했다. 단일 worktree이며
+  Python 수집기 부재를 확인했다. Codex/Claude 앱과 Claude Code 프로세스는 존재하지만
+  관측 동안 다른 tracked 변경은 없었다. 실제 로그인·구독·수집·예약은 실행하지 않았다.
+- `.venv32` 공식 preflight는 32bit/OCX 등록·파일 존재/ready=true, 종료 0이다.
+  최초 sandbox의 Python 생성 실패(101)와 실제 사용자 환경의 성공을 구분한다.
+- 기존 합성 probe가 오래된 `count == 41` 가정으로 실패했다. 이번 합성 DB만 대조한 결과,
+  현재 signed_volume의 정상 +2 체결 20건은 parse_error 없이 session_start 포함 21건이다.
+  `scripts/probe_live_capture.py`의 기대값을 수정하고 정책·닫힘·콜백·오류/드롭·최종 순번 대조를
+  보강했다. 실제 32bit 재실행 종료 0, accepted=committed=20, final_seq=21,
+  closed/writer_closed/finalization 및 checksum 일치, 오류/드롭 0, 워커 종료를 확인했다.
+  이는 합성 검증이며 운영 raw나 실피드 품질 검증이 아니다.
+- 기존 lock은 읽기 전용 1바이트 잠금 획득/해제에 성공했다. 내용 `0`은 코드상 초기 자리표시자이며
+  PID나 closed 표시가 아니다. 파일을 삭제/변경하지 않았다. 운영 managed_captures.sqlite3는 없다.
+  최신 운영 status는 `21f8c124…`, 09-18 15:35 KST closed 주장으로 그대로이며 기존 품질 차단 유지.
+- C: 여유 약 1.25 TiB / 전체 1.82 TiB, raw_ticks_v2 논리 크기 약 85.30 GiB(sidecar 포함).
+  코드의 signed_volume/signed_magnitude/venue unknown/raw v2가 런북과 일치하고 UUID+xb로
+  기존 파일 덮어쓰기를 거부한다. 운영 raw는 파일 메타데이터만 조회했다.
+- **다음 수집은 BLOCKED:** mock/live 선택이 미확정이고 2026-09-21 시장 운영 여부의 공식 근거가
+  확보되지 않았다. KRX 달력 웹 추출에는 해당 날짜 내용이 없었다. 서버 지정과 공식 일정 확인 뒤
+  실제 로그인·전 종목 정규장 수집에 대한 별도 사용자 승인이 필요하다. 과거 mock 이력은 승인이 아니다.
+- 상세 로컬 근거·조건부 실행 계획: `operations_state/preflight_20260920/report.md` 및 같은 폴더의
+  환경/프로세스/디스크/실패 진단 기록. 성공 합성 결과는
+  `operations_state/live_backend_probes/0067ae46003e4b35834086ac7f38211c/result.json`.
+  모두 Git 제외다. 전체 테스트·운영 raw 조회·표본 검사·재생·백테스트는 하지 않았다.
+- 다음: blocker 해소 후 시작 직전 Git/프로세스/lock/공간을 재확인하고 독립 CLI
+  `collector/kiwoom/kiwoom_universe_logger.py --storage raw-v2`로 새 세션을 시작한다.
+  기본 15:35 종료 요청 뒤 동일 세션 상태→종료 보고/로그→프로세스 부재→파일 메타데이터를
+  대조하고, 정상 종료 확정 전 표본 검사로 넘어가지 않는다. 최초 표본은 담당 연구 런북의 100건부터다.
+
+# 이전 인계 — 2026-09-20 / clean 세션 수집 전 문서 정책 동기화
 
 ## 이번 완료 — 운영 수집 안내와 현재 코드 계약 일치
 
