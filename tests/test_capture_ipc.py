@@ -202,7 +202,7 @@ def test_os_identity_change_before_dispatch_prevents_bytes(tmp_path, pair):
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows socket sharing subprocess integration")
 @pytest.mark.parametrize("outcome", ["closed", "raw_closed", "raw_replay", "exit_without_report"])
-@pytest.mark.parametrize("environment", ["current", ".venv32"])
+@pytest.mark.parametrize("environment", ["current", pytest.param(".venv32", marks=pytest.mark.local_env)])
 def test_actual_fixture_process(tmp_path, outcome, environment):
     """Share a socket capability only with our new child; no TCP listener/OCX."""
     # uv venv executables may be launcher processes. Direct base Python keeps
@@ -211,11 +211,11 @@ def test_actual_fixture_process(tmp_path, outcome, environment):
     if environment == ".venv32":
         config_path = Path(__file__).resolve().parents[1] / environment / "pyvenv.cfg"
         if not config_path.exists():
-            pytest.skip("optional 32-bit environment unavailable")
+            pytest.fail("local_env requires .venv32/pyvenv.cfg")
         config = dict(line.split(" = ", 1) for line in config_path.read_text().splitlines() if " = " in line)
         interpreter = Path(config["home"]) / "python.exe"
         if not interpreter.exists():
-            pytest.skip("optional 32-bit base interpreter unavailable")
+            pytest.fail("local_env requires the 32-bit base interpreter from .venv32/pyvenv.cfg")
     left, right = socket.socketpair()
     replay_left, replay_right = socket.socketpair()
     process = subprocess.Popen(
