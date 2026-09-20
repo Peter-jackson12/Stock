@@ -1,82 +1,98 @@
 # Stock — 틱 수집과 재현 연구
 
-**처음에는 이 문서부터 읽으면 된다.** 목적에 맞는 상세 문서로 이동하고, 작업을 이어갈 때만
-[HANDOFF의 현재 인계](HANDOFF.md)를 확인한다. AI 작업자는 [AGENTS.md](AGENTS.md)부터 시작한다.
+원본 체결·호가 이벤트를 수집하고 **틱 단위 전략 재현의 정확성**을 검증하는 프로젝트다.
+운영 화면은 수집·조회·연구 작업을 관리하며, 화면·수집기·작업 워커는 별도 프로세스로 둔다.
+실제 주문 연결과 전략 수익성 입증은 별도 단계다. 합성/CI 성공을 실데이터 검증 완료로 해석하지 않는다.
 
-## 지금 무엇을 만드는가
+처음에는 이 문서에서 필요한 경로만 고른다. AI 작업자는 [AGENTS](AGENTS.md) →
+[현재 HANDOFF](HANDOFF.md)부터 읽고, 상세 계약은 해당 작업에 필요한 것만 연다.
+전체 과거 인계를 매 작업마다 읽지 않는다.
 
-원본 체결·호가 이벤트를 수집하고 **틱 단위로 기존 NXT 돌파 전략의 재현 정확성**을 검증한다.
-컨트롤 타워는 이 흐름을 한 화면에서 관리하며, 수집·화면·작업 워커는 독립 프로세스로 둔다.
-LOB/초봉 변환은 레거시 회귀용이고 틱 재생의 선행 조건이 아니다.
+## 기본 연구 흐름
 
-- **운영 화면:** 소규모 수집 제어·상시 응답·중단 대조, 결과 조회, 장외 검사·재생·1회 예약.
-- **수집 제어 계약:** 종료 명령·이력·관리자 복구, OS 프로세스 식별·제한 시간 IPC·raw v2 종료 보고의 합성 검증.
-- **운영 수집기:** 새 실행의 기본 raw v2 콜백·큐·종료 보고와 상태 관측 연결. 실피드 부하/품질 검증은 남아 있다.
-- **운영 보호:** 제어 이력 백업·회전/checkpoint, 기본 localhost, 외부 접속 시 OIDC·운영자 허용 목록.
-- **남은 검증/확장:** 실피드 필드·부하, 공급자 인증/실제가 검증, 재부팅 실측, 주문 기능.
-  원격 사용은 기존 PC 원격 접속으로 확정했다. 별도 IdP/TLS 연결은 외부 공개가 필요할 때의 선택 확장이다.
+```text
+신규 raw-v2 수집 (원문 + 정책에 따른 정규화 기록)
+  → 동일 세션 종료 근거 대조
+  → 최초 100건부터 제한 표본
+  → 별도 장외 전체 무결성·품질/입력 계약 확인
+  → 첫 틱 연구 실행
+  → 결과·대표 사례·재현성 대조
+```
 
-합성 테스트 통과를 운영 적용이나 실제 데이터 정확성 확인으로 해석하지 않는다.
-현재 수집이 계속되는지는 시각이 붙은 최신 관측으로 확인한다.
+이것은 운영자가 지킬 단계다. 모든 화살표가 자동 실행되는 통합 명령이라는 뜻은 아니다.
+특히 직접 연구 CLI는 검증과 재생을 함께 수행한다. 입력 합격을 먼저 확정하려면 별도 검사 절차가 필요하다.
+현재 작업 상태·승인 조건은 [HANDOFF](HANDOFF.md), 완료 체크는 [BACKTEST_TODO](BACKTEST_TODO.md)에만 기록한다.
+실제 진입점과 보호 범위의 차이는 [파이프라인 지도](docs/PIPELINE_MAP.md)를 본다.
 
-## 문서 찾기
+LOB/초봉 변환과 기존 런 비교는 유지하는 레거시 경로이며 위 틱 연구의 선행 조건이 아니다.
+`runs/`의 Trade/성과 분석과 `research_runs/`의 틱 진단 결과도 같은 결과 계약이 아니다.
 
-### 처음 이해하거나 사용하려면
+## 문서 찾기 — 사실마다 담당 문서 하나
 
-1. **전체 데이터 흐름·왜 틱인가:** [ARCHITECTURE_TICK.md](ARCHITECTURE_TICK.md).
-2. **컨트롤 타워 사용법·구축 순서·제어 계약:** [CONTROL_TOWER.md](CONTROL_TOWER.md).
-3. **지금 어디까지 했고 다음에 무엇을 하는가:** [HANDOFF.md](HANDOFF.md)의 현재 인계.
-4. **수집 시작/종료·장외 저장 검사·메타데이터·일봉·fchart 확인:** [수집 실행 안내](docs/COLLECTION_RUNBOOK.md).
-5. **닫힌 raw v2로 연구 실행·결과 해석:** [TICK_RESEARCH_RUNBOOK.md](TICK_RESEARCH_RUNBOOK.md).
-6. **첫 실데이터 시험 백테스트까지 남은 일:** [체크리스트](BACKTEST_TODO.md).
+| 알고 싶은 것 | 담당 문서 |
+|---|---|
+| 현재 결정·차단 조건·바로 다음 행동 | [HANDOFF](HANDOFF.md) |
+| 첫 실제 시험의 남은 체크 항목 | [BACKTEST_TODO](BACKTEST_TODO.md) |
+| 어떤 코드가 무엇을 실행하는지·경로 간 차이·단순화 후속 항목 | [파이프라인 지도](docs/PIPELINE_MAP.md) |
+| 수집 시작/종료·저장·메타데이터·별도 확장 절차 | [수집 실행 안내](docs/COLLECTION_RUNBOOK.md#환경과-수집-시작) |
+| raw 표본·연구 실행·결과 상태와 한계 | [틱 연구 실행 안내](TICK_RESEARCH_RUNBOOK.md) |
+| 운영 화면·제어 계약·IPC·예약·권한 | [CONTROL_TOWER](CONTROL_TOWER.md) |
+| 이벤트·시계·체결·전략의 설계 근거 | [ARCHITECTURE_TICK](ARCHITECTURE_TICK.md) |
+| Git-only/로컬 검증의 구분과 명령 | [테스트 안내](docs/TESTING.md) |
+| AI 읽기 순서·역할·문서 유지 원칙 | [AGENTS](AGENTS.md) |
 
-### 개발하거나 AI에게 이어 맡기려면
+상세 수집/제어 문서에는 날짜별 구현 경과도 있다. 과거 "미연결" 문구를 현재 판정으로 복사하지 말고
+[현재 연결 지도](docs/PIPELINE_MAP.md)와 해당 함수·관련 테스트를 대조한다. 상충하는 문구를 발견하면 담당 문서에 바로잡는다.
+문서 크기만으로 모듈/안전장치가 불필요하다고 판단하지 않는다.
 
-- **AI 읽기 순서·작업 원칙:** [AGENTS.md](AGENTS.md). [CLAUDE.md](CLAUDE.md)는 같은 지침으로 안내한다.
-- **2026-09-18 커밋 한국어화 전후 ID:** [커밋 대응표](docs/COMMIT_ID_MAP_20260918.json). 과거 문서·수집 리비전 조회에 사용한다.
-- **코드 검토 순서·반례·미확인 사항:** [TICK_CROSS_REVIEW.md](TICK_CROSS_REVIEW.md).
-- **rev.2의 D-4/D-5/D-6 수정 근거·기존 검증 기록:** [과거 인계](docs/archive/HANDOFF_20260916.md). 현재 실행 지시가 아니다.
-- **상시 응답 추가 전 운영 연결·실측 기록:** [2026-09-16 이전 인계](docs/archive/HANDOFF_20260916_PRE_HEARTBEAT.md). 현재 상태는 HANDOFF를 본다.
-- **기존 런 스토어·피처·전략/Broker 분리 배경:** [ARCHITECTURE_V2.md](ARCHITECTURE_V2.md).
-- **더 이전 수집·리샘플링 의사결정:** [REFACTORING_PLAN.md](REFACTORING_PLAN.md).
-- **문서 정리 전 README 보존본:** [과거 README](docs/archive/README_PRE_INDEX.md). 현재 실행 지시가 아니다.
+### 설계 배경과 과거 기록 — 필요할 때만
+
+- [코드 교차 검토 기록](TICK_CROSS_REVIEW.md): 반례와 검토 포인트. 기록 당시 적용 상태와 현재 코드를 구분한다.
+- [ARCHITECTURE_V2](ARCHITECTURE_V2.md): 기존 런 스토어·피처·전략/Broker 분리 배경과 레거시 계약.
+- [REFACTORING_PLAN](REFACTORING_PLAN.md): 초기 L0/L1 의사결정과 LOB 스키마. 과거 무유실·방향 판정 주장은 현 raw-v2 인증이 아니다.
+- [archive 안내](docs/archive/README.md): 날짜별 인계·후보 조사·이전 README. 원문 보존 위치와 당시 revision.
+- [커밋 ID 대응표](docs/COMMIT_ID_MAP_20260918.json): 한국어화 전후 과거 코드 리비전 대조.
+
+과거 문서를 무조건 지우거나 이동하지 않는다. 현재도 사용되는 레거시 스키마·회귀 계약이 들어 있을 수 있다.
 
 ## 운영 화면 실행
 
-저장소 루트 `C:\Projects\Stock`에서 기존 64비트 환경으로 실행한다.
+로컬 저장소 루트 `C:\Projects\Stock`에서 기존 64비트 환경으로 실행한다.
 
 ```powershell
 .\.venv\Scripts\python.exe -m streamlit run dashboard/app.py --server.address 127.0.0.1
 ```
 
-기본 **운영 관리** 화면에서 상태와 작업을 확인한다. 왼쪽 **백테스트 분석**은 기존 런 비교다.
-수집 버튼은 이 화면에서 새로 만든 소규모 세션만 제어한다. 세부 사용법은 [컨트롤 타워 §3](CONTROL_TOWER.md#3-지금-사용할-수-있는-흐름)을 본다.
-폰에서는 현재 사용 중인 PC 원격 접속 안에서 열 수 있다. 별도 인터넷 공개 서버로 배포된 상태는 아니다.
+기본 **운영 관리** 화면은 상태·작업을, 왼쪽 **백테스트 분석**은 기존 런 비교를 보여준다.
+수집 버튼은 화면에서 새로 만든 소규모 세션만 제어하며 외부 CLI 수집기를 자동 인수하지 않는다.
+폰 사용은 기존 PC 원격 접속 안에서 이 화면을 여는 방식이다. 외부 공개 서버로 배포된 상태가 아니다.
+사용법은 [CONTROL_TOWER의 사용 흐름](CONTROL_TOWER.md#3-지금-사용할-수-있는-흐름)을 따른다.
 
 ## 코드와 데이터 위치
 
-- `collector/`: 키움/KIS 수집, 원본 저장, 일봉/메타데이터. OCX 실행은 `.venv32`를 사용한다.
-- `control_tower/`, `dashboard/`: 작업 관리·제어 계약·운영/분석 화면. `.venv`를 사용한다.
-- `engine/`, `execution/`, `strategies/`: 이벤트 재생·가상 체결·전략.
-- `scripts/`, `tests/`: 명시적 실행 도구와 검증.
-- `sampledata/raw_ticks/`: 기존 raw v1 보존. `sampledata/raw_ticks_v2/YYYYMMDD/`: 새 운영 실행의 세션별 raw v2.
-- `research_runs/`: 새 틱 연구 JSON. `runs/`: 기존 Trade/성과 분석 런. 두 결과 계약은 아직 별개다.
-- `operations_state/`: 경량 작업 이력. 수집 DB와 분리하며 Git에 넣지 않는다.
-- `sampledata/Daily_baseline`, `sampledata/old_data`: 보존 대상.
+| 위치 | 역할 |
+|---|---|
+| `collector/` | 키움/KIS 수집·원본 저장·일봉/메타데이터. OCX는 `.venv32` |
+| `control_tower/`, `dashboard/` | 작업·제어 계약과 운영/분석 화면. `.venv` |
+| `engine/`, `execution/`, `strategies/` | 이벤트 재생·가상 체결·전략 |
+| `scripts/`, `tests/` | 명시적 실행 도구와 검증 |
+| `sampledata/raw_ticks_v2/YYYYMMDD/` | 새 운영 세션별 raw-v2. raw-v1은 `sampledata/raw_ticks/`에 보존 |
+| `research_runs/`, `runs/` | 각각 새 틱 연구 JSON과 기존 성과 분석 런 |
+| `operations_state/` | Git 제외 작업/수집 상태와 근거. raw와 분리 |
+| `sampledata/Daily_baseline`, `sampledata/old_data` | 보존 대상 기준선과 과거 데이터 |
 
 ## 개발 검증과 GitHub Actions
 
-push/PR마다 Windows + Python 3.14 + uv 0.12.5에서 `uv.lock`을 변경하지 않고
-설치한 뒤 Git으로 재현 가능한 테스트를 실행한다. Windows 파일 공유 잠금·프로세스·소켓
-합성 회귀도 포함하기 때문에 Windows runner를 사용한다. 상세 계약과 로컬 전체 실행은
-[테스트 안내](docs/TESTING.md)를 따른다.
+push/PR마다 Windows + 64비트 Python 3.14 + 고정 uv/lock으로 Git-only pytest를 실행한다.
+Windows 파일 잠금·프로세스·소켓 합성 회귀를 포함한다. 상세 범위는 [테스트 안내](docs/TESTING.md)를 따른다.
 
 ```powershell
 uv sync --locked --group dev
 uv run --locked --offline python -m pytest -ra
 ```
 
-기본 `pytest`는 `tests/`만 수집하고 `local_data`·`local_env`를 명시적으로 선택 해제한다.
-OCX 로그인 도구는 테스트 자동 수집 대상이 아니다. CI 성공은 실제 시장 데이터·백테스트·
-수집 운영 검증 완료를 뜻하지 않는다. 일반 Chat + GitHub에서는 작업 브랜치 → PR →
-Actions 실패 원인 수정 → 최신 커밋의 성공 확인 순서로 개발한다.
+기본 pytest는 `tests/`만 수집하고 `local_data`·`local_env`를 선택 해제한다.
+문서 경로/절 링크·원문 보존·HANDOFF 크기도 Git-only 회귀로 확인한다.
+CI는 실제 시장 데이터·OCX 로그인·실데이터 백테스트·수집 부하를 인증하지 않는다.
+일반 Chat + GitHub 작업은 브랜치 → PR → 변경 검증/CI → 원격 재확인 → 병합 순서다.
+Windows·실데이터가 필요한 경우만 로컬에 넘긴다.
