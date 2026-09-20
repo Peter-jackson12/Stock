@@ -63,3 +63,20 @@ LOB/초봉 변환은 레거시 회귀용이고 틱 재생의 선행 조건이 �
 - `research_runs/`: 새 틱 연구 JSON. `runs/`: 기존 Trade/성과 분석 런. 두 결과 계약은 아직 별개다.
 - `operations_state/`: 경량 작업 이력. 수집 DB와 분리하며 Git에 넣지 않는다.
 - `sampledata/Daily_baseline`, `sampledata/old_data`: 보존 대상.
+
+## 개발 검증과 GitHub Actions
+
+push/PR마다 Windows + Python 3.14 + uv 0.12.5에서 `uv.lock`을 변경하지 않고
+설치한 뒤 Git으로 재현 가능한 테스트를 실행한다. Windows 파일 공유 잠금·프로세스·소켓
+합성 회귀도 포함하기 때문에 Windows runner를 사용한다. 상세 계약과 로컬 전체 실행은
+[테스트 안내](docs/TESTING.md)를 따른다.
+
+```powershell
+uv sync --locked --group dev
+uv run --locked --offline python -m pytest -ra
+```
+
+기본 `pytest`는 `tests/`만 수집하고 `local_data`·`local_env`를 명시적으로 선택 해제한다.
+OCX 로그인 도구는 테스트 자동 수집 대상이 아니다. CI 성공은 실제 시장 데이터·백테스트·
+수집 운영 검증 완료를 뜻하지 않는다. 일반 Chat + GitHub에서는 작업 브랜치 → PR →
+Actions 실패 원인 수정 → 최신 커밋의 성공 확인 순서로 개발한다.

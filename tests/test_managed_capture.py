@@ -169,11 +169,12 @@ def test_access_denied_is_not_proof_of_exit(managed):
     assert store.get(launch)["state"] == "launching"
 
 
+@pytest.mark.local_env
 def test_real_32bit_child_claim_stop_and_journal_recovery(tmp_path):
     root = Path(__file__).resolve().parents[1]
     python = root / ".venv32/Scripts/python.exe"
     if not python.exists():
-        pytest.skip("32-bit environment unavailable")
+        pytest.fail("local_env requires .venv32/Scripts/python.exe")
     config = dict(line.split(" = ", 1) for line in (root / ".venv32/pyvenv.cfg").read_text().splitlines() if " = " in line)
     store = ManagedCaptures(tmp_path)
     launch, token = store.create(["005930"], 1, "mock", [str(python), str(Path(config["home"]) / "python.exe")])

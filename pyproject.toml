@@ -26,3 +26,10 @@ dev = [
     "pytest>=9.1.1",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers -m 'not local_data and not local_env'"
+markers = [
+    "local_data: 로컬 시장 데이터/LOB 기준선 필요; 명시적 실행 시 누락은 실패",
+    "local_env: 별도 로컬 32비트 Python 필요; 명시적 실행 시 누락은 실패",
+]
