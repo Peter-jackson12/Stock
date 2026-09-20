@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-20 / 9월 21일 clean raw-v2 수집 전날 준비 완료
+# 현재 인계 — 2026-09-21 / READY_TO_START, 사용자 PowerShell 실행 대기
 
 현재 작업 요약만 유지한다. 과거 인계 전체는 [보존본 안내](docs/archive/README.md)에 있다.
 상세 계약은 [문서 인덱스](README.md), 연결 구조·남은 단순화 항목은 [파이프라인 지도](docs/PIPELINE_MAP.md)를 본다.
@@ -9,13 +9,20 @@
 기존 raw를 가공하는 경로 B는 예비이며 구현하지 않는다. 후보 선정·전체 입력 검증·첫 백테스트는 미완료다.
 과거 raw 판정과 다음 체크 항목은 [BACKTEST_TODO](BACKTEST_TODO.md)에만 유지한다.
 
-2026-09-21은 수집 예정일이다. 서버 계획은 **live**다.
-이는 코드가 live만 허용한다는 뜻이 아니라, 목표가 실제 시장 연구 입력 확보이고 mock 실피드가
-실시장과 동등하다는 근거가 없기 때문이다. 키움 공식 안내에서도 모의투자는 프로그램 제작·디버깅용 환경으로
-구분한다. 사용자의 명시적 live 로그인·시세 수집 승인과 당일 로컬 점검 전에는 실행하지 않는다.
+## 당일 로컬 점검 — 07:01~07:04 KST
 
-이번 전날 준비에서는 실제 로그인·구독·수집·예약·로컬 raw 조회를 하지 않았다.
-현재 Windows working tree·프로세스·lock·디스크·OCX 상태는 새로 관측하지 않았으므로 당일 다시 확인한다.
+사용자가 오늘 live 시세 수집을 명시 승인했다. 거래 실행은 금지다.
+판정은 **READY_TO_START**: 에이전트 작업 종료 후 자식 프로세스 유지 보장이 미확인이라 실행하지 않았다.
+다음 행동은 사용자가 `C:\Projects\Stock`의 일반 PowerShell에서 아래 독립 CLI를 실행하고 live 로그인하는 것이다.
+로그인 후 실제 identity/server와 running/accepting/error, callback/commit 증가를 확인해야 한다.
+현재 신규 session_id/raw/PID는 없으며 9월 18일 status를 오늘 세션으로 재사용하지 않는다.
+
+- fetch 후 master를 `ee9b36c0dda9c08ebaf905357269bf602f0a6bf7`로 ff-only 동기화했다. 차이는 HANDOFF뿐이다.
+- 작업 트리 clean, worktree 1개, 다른 활성 작업·Python 수집기·키움/KOA 로그인 프로세스는 관측되지 않았다.
+- Windows는 2026-09-21 KST. C: 여유 1,369,782,996,992 bytes, raw root는 로컬 일반 디렉터리다.
+- lock 삭제 없이 획득/해제 성공, managed 상태 DB 없음. 공식 preflight는 32bit/OCX/ready 모두 정상이다.
+- 공식 브라우저 목록의 최신 일자는 KRX 시장운영 09-18, 키움 Open API+ 09-10으로 신규 공지는 관측되지 않았다.
+- 로그인·합성 probe·raw DB 조회는 하지 않았다. 자세한 로컬 근거: `operations_state/preflight_20260921/report.md`.
 
 ## 2026-09-20 늦은 원격/공식 자료 점검
 
