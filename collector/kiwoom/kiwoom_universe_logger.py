@@ -323,7 +323,10 @@ class KiwoomUniverseLogger:
         if self.storage == "raw-v2":
             try:
                 flag = str(self.ocx.dynamicCall("KOA_Functions(QString, QString)", "GetServerGubun", "")).strip()
-                server = {"1": "mock", "0": "live"}.get(flag)
+                # Kiwoom OpenAPI+ contract: "1" is mock; live commonly returns
+                # the empty string. Keep "0" for backward compatibility with
+                # earlier fixtures, but reject unrelated unexpected values.
+                server = "mock" if flag == "1" else ("live" if flag in ("", "0") else None)
                 if server is None:
                     raise ValueError(f"unknown server flag: {flag!r}")
                 if self.managed is not None and server != self.managed.plan["server"]:
