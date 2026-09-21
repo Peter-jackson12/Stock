@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-21 / sidecar 합성 검증 완료, 운영 적용 미승인
+# 현재 인계 — 2026-09-21 / sidecar 합성 일부 미검증, 운영 적용 미승인
 
 현재 목표·차단 조건·다음 행동만 유지한다. [문서 인덱스](README.md),
 [첫 시험 체크리스트](BACKTEST_TODO.md), [파이프라인 지도](docs/PIPELINE_MAP.md)를 따른다.
@@ -11,36 +11,36 @@
 `FIRST_RESEARCH_CANDIDATE`로 승격하지 않는다. 원본을 폐기하지 않는다.
 실제 whole-file 무결성·전체 품질 분포·연구 입력 합격·첫 백테스트는 모두 미완료다.
 
-전략 없는 qualification 구현과 추가 보호 경계는 PR #8의 변경이다. 후속
-[잔여 sidecar 합성 검증](TICK_RESEARCH_RUNBOOK.md#잔여-sidecar의-합성-검증-결과)은 작은 Windows
-fixture에서 완료했다. 실제 50.6GB DB는 열지 않았다. 현재 도구는 기존 sidecar가 하나라도 있으면
-계속 안전하게 거부하며, 실제 운영 적용은 미승인이다.
+전략 없는 qualification과 보호 경계는 PR #8로 master에 병합됐다.
+[잔여 sidecar 합성 실험](TICK_RESEARCH_RUNBOOK.md#잔여-sidecar의-합성-검증-결과)은
+SQLite의 잔여물 생성·정리와 잠금 공백 반례를 재현했지만 운영 안전성의 충분 조건은 입증하지 못했다.
+현재 qualification은 sidecar를 계속 거부한다. **원본의 잠금을 해제한 뒤 쓰기 가능 연결로 정리하는
+in-place 경로는 채택하지 않는다.** 다음은 원본 보호를 유지한 파일 집합 복제와 격리 복제본 처리의
+작은 합성 검증이다. 새 도구가 구현·검증됐다는 뜻도, 운영 raw 복사 승인도 아니다.
 
 생산 데이터 사실은 사용자가 전달한 PowerShell 출력·로컬 제한 검사 보고다. ChatGPT가 로컬 raw·
 저널·프로세스를 직접 검사한 결과가 아니다. 로컬 working tree와 프로세스 상태는 다음 로컬 작업에서
 재확인한다. 별도 표본/원문 조사 파일을 생성하지 않았다는 보고이므로 채팅 보고를 원시 파일로 가장하지 않는다.
-이번 GitHub 검토·수정·CI 확인은 아래 원격 근거와 구분한다.
+로컬 TEMP의 lab result.json도 이번 GitHub 대화에서 직접 읽지 않았다. 원격 코드/CI와 로컬 보고를 구분한다.
 
 ## 원격 검토와 검증
 
-- PR #7의 수집 종료·품질 차단 문서를 검토하고 정상 merge했다.
-  merge commit: `fe5d96c1fb2c76d86d608b5d8cf598c0441d4c91`.
-- qualification 최초 구현은 `a563e26`, 인계 시 branch HEAD는 `f75d799`였다.
-  `codex/raw-v2-qualification`은 PR #7 head `bb59d029`를 조상으로 보존한다. 강제 푸시·이력 재작성은 하지 않았다.
-- PR #8 검토 중 두 경계를 수정했다: 입력 resolve로 junction/reparse가 숨는 문제,
-  사유 누락/null/빈 목록의 parse_error가 연구 합격으로 빠지는 문제.
-  반례 추가 `3223af0`, 수정 `04fa5cc`. 기존 reader/전략 정책을 완화하지 않았다.
-- 새 [경계 회귀](tests/test_raw_v2_qualification_boundaries.py) 14건을 추가했다.
-  reasonless parse_error, junction 상위 경로, parent traversal, 0-byte sidecar 보존, CLI exit 3을 포함한다.
-- 코드 `04fa5ccf734917422d32f5efc67aecf5c1247ee0`와 당시 master의 PR 병합 트리에 대해
-  Actions `35580010889`, job `106270479685` 로그를 직접 확인했다.
-  Windows / Python 3.14.7: **1,249 passed, 6 deselected**. 기존 qualification 14건과 신규 경계 14건 모두 통과했다.
-  이는 GitHub 합성 실행이며 사용자의 Windows PC에서 새로 실행한 결과가 아니다.
-- 이전 로컬 보고: qualification 14 passed, 관련 raw/archive/docs 84 passed, 전체 1,235 passed/6 deselected.
-  실제 raw를 검사했다는 뜻이 아니다. 이후 문서 변경의 최신 HEAD·PR·CI는 원격에서 다시 확인한다.
-- 이번 sidecar 합성 변경의 로컬 결과: 요청된 qualification/boundary/sidecar/archive/raw-v2/docs 묶음
-  **103 passed**, 전체 Git-only **1,254 passed, 6 deselected**. `local_data`/`local_env`와 운영 raw 검사는
-  실행하지 않았다. 합성 통과는 아래 운영 격리 조건을 인증하지 않는다.
+- PR #7의 수집 종료·품질 차단 문서: 일반 merge `fe5d96c1fb2c76d86d608b5d8cf598c0441d4c91`.
+- PR #8의 qualification 및 reparse/reasonless parse_error 경계 수정:
+  일반 merge `a5b14bf888f73039aac8ddda54f24405fbd6f0e3`.
+  최종 PR CI `35580677425`/job `106272602968`: Windows/Python 3.14.7,
+  **1,249 passed, 6 deselected**. GitHub 합성 실행이지 운영 데이터 인증이 아니다.
+- 로컬 sidecar lab 인계: branch `codex/raw-v2-sidecar-lab-b363c7d8`, commit
+  `717786ce1be4b5c7f9ce73f0a5818d023beb6b53`. 변경 5파일의 코드와 문서를 읽고 PR #9를 생성했다.
+  branch push CI `35595122891`/job `106318055739` 로그에서 Windows/Python 3.14.7,
+  **1,254 passed, 6 deselected**를 직접 확인했다. 이때 sidecar pytest는 5건이며 lab 전체 실행이 아니다.
+- 로컬 보고의 관련 묶음 **103 passed**, 문서 **13 passed**, 전체 **1,254 passed/6 deselected**는
+  위 GitHub 관측과 출처를 구분한다. `local_data`/`local_env`와 운영 raw 검사는 하지 않았다는 보고다.
+- PR #9 검토에서 [추가 경계 회귀](tests/test_raw_v2_sidecar_lab_boundaries.py) 두 묶음을 넣었다.
+  기존/후발 writer, 잠금 해제 후 재연결 경합, 부분 sidecar 정리, 실제 rollback journal,
+  incomplete/출처 불명 sidecar, junction, 보호 해제 후 경로 교체를 검사한다.
+  이 추가분의 최신 CI는 PR #9에서 확인하며 이전 1,254건을 추가분의 결과로 재사용하지 않는다.
+  강제 푸시·이력 재작성은 하지 않는다.
 
 ## 대상과 종료 증거 — 로컬 보고
 
@@ -81,7 +81,7 @@ status/journal/manifest가 주장하는 payload 스트림 SHA-256:
 정확한 seq·종목·FID20은 [현재 후보 조사](BACKTEST_TODO.md#2026-09-21-신규-세션의-제한-조사)에 둔다.
 이미 조사한 표본/5건을 이유 없이 다시 읽지 않는다.
 
-5건의 FID20은 15:32:10–15:32:39이며 153000이 없다. “15:30 체결의 2분 지연 수신”을 지지하지 않는다.
+5건의 FID20은 15:32:10–15:32:39이며 153000이 없다. “15:30 체결의 2분 지연 수신”을 지지하지 않는다。
 말미 선택 표본이므로 장중 부재·경계 집중·전체 원인을 추론하지 않는다. 체결 유형/원인은 분류 미확정이다.
 FID20은 초 정밀도이며 표시값과 수신 시각의 차이를 순수 네트워크 지연으로 해석하지 않는다.
 로컬 `C:/OpenAPI/koa_devguide.xml` 조사 보고에 무부호 FID15의 예외/대체 방향 근거가 없다.
@@ -100,30 +100,30 @@ FID20은 초 정밀도이며 표시값과 수신 시각의 차이를 순수 네�
 
 일반 reader의 mode=ro/query_only는 SQL 쓰기 금지이지 sidecar 비생성 보장이 아니다.
 qualification은 별도 sealed reader이며 reparse 입력/상위 경로·sidecar·활성 write/delete handle을 거부한다.
-단, 파일 공유 잠금은 상위 디렉터리 전체의 이름 공간 잠금이 아니다. 외부 접근·경로 변경을 배제하지
+단, 파일 공유 잠금은 상위 디렉터리 전체의 이름 공간 잠금이 아니다. 外部 접근·경로 변경을 배제하지
 못하면 실행하지 않는다. immutable을 무조건 붙여 우회하지 않는다.
 
-전용 lab을 Windows 11/64-bit Python 3.14.7/SQLite 3.53.1/NTFS에서 실행했다. 최종 근거는
-`%TEMP%/Stock_raw_sidecar_lab_d2799ff9fb0e4bf78ebf9b35f8753fdd/result.json`이다.
-일반 mode=ro 실제 조회가 0-byte WAL/32 KiB SHM을 만들고 명시적 close·자식 exit 뒤에도 남기는 현상을
-재현했다. 합성 복제본에서 쓰기 가능 connect/close만으로는 안 없어졌고, metadata 페이지 read 뒤
-cursor/connection close에서는 main SHA-256·전체 2행·payload checksum을 유지한 채 없어져 qualification이
-통과했다. 일반 reader 재조회는 sidecar를 다시 만들었다.
+로컬 lab 원시 근거: `%TEMP%/Stock_raw_sidecar_lab_d2799ff9fb0e4bf78ebf9b35f8753fdd/result.json`.
+Windows 11/64-bit Python 3.14.7/SQLite 3.53.1/NTFS에서 일반 mode=ro 조회가 0-byte WAL/32 KiB SHM을
+만들고 명시적 close·자식 exit 뒤에도 남기는 현상을 재현했다는 보고다. 합성 복제본의 writable metadata
+페이지 read + 명시적 close는 main 바이트/논리 내용을 유지하며 정리됐지만, 단순 connect/close는 안 됐다.
 
-그러나 committed WAL의 표식 행은 main-only 복사에서 사라졌고, rollback journal/incomplete/출처 불명
-sidecar/junction은 모두 거부 대상이다. 열린 WAL handle에서는 SHM만 없어지고 WAL은 남았다. sealed handle
-유지 중 write는 막혔지만, handle 해제 직후 후발 writer가 먼저 진입해 commit하는 경합과 경로 identity
-교체가 재현됐다. 처리 전체의 연속 배제 조건을 입증하지 못했으므로 **합성은 일부 미검증, 운영은 미승인**이다.
-0-byte WAL/32 KiB SHM만으로 삭제를 승인하지 않는다. 상세 수치·허용 후보·거부 조건은 런북 한 곳에 둔다.
+committed WAL의 표식 행은 main-only 복사에서 사라졌다. 열린 WAL handle에서는 정리가 일부만 됐으며,
+sealed handle 해제 직후 후발 writer가 먼저 commit하는 경합과 파일 identity 교체도 재현됐다.
+이는 in-place 정리의 안전성 증명이 아니라 해당 경로의 반례다. 0-byte WAL/32 KiB SHM만으로 삭제를
+승인하지 않는다. 상세 수치·후속 합성 설계는 런북 한 곳에 둔다.
 
 ## 바로 다음 작업과 역할
 
-1. 합성 결과·코드·잠금/내용 보존 반례를 이 ChatGPT 대화에서 검토한다. 현재는 차단을 유지한다.
-2. 실제 처리를 검토하려면 비협조적 후발 writer와 경로 교체까지 처리 전체에서 막는 운영 격리 조건,
-   대상 identity/sidecar 출처, 실패 시 원본 보존·복구 절차를 별도로 설계하고 승인받는다.
-3. 승인 전 운영 raw/evidence를 조회·해시·복사하거나 sidecar를 정리하지 않는다. 이번 인계는 삭제 승인이 아니다.
-4. 승인된 sidecar 해결 뒤에만 50.6GB qualification의 장외 시각·I/O/시간·중단 기준·공간·새 출력 경로와
-   동시 collector 부재를 확정한다. 실제 검사 실행도 이번 작업 범위가 아니다.
+1. GitHub에서 PR #9의 최신 diff/CI를 확인하고 검증된 lab/회귀/문서만 정상 병합한다.
+   로컬 TEMP 결과는 현재 전달 보고와 대조할 때만 읽고, 기존 합성 근거는 새 영속 lab 경로에 보존한다.
+   운영 evidence를 재조회하는 단계가 아니다.
+2. Windows 로컬에서는 런북의 복제본 합성 계획만 진행한다. 원본 파일 집합을 처음부터 끝까지 보호한
+   handle에서 복제하고, source SQLite 재연결 없이 격리 복제본에서만 정리한다. 아직 구현·검증 전이다.
+   복제본의 main SHA-256/manifest/seq/payload/품질 문제 보존과 실패 시 미승격을 검증한다.
+3. 승인 전 운영 raw/evidence를 조회·해시·복사하거나 sidecar를 정리하지 않는다. 이번 인계는 복사/삭제 승인이 아니다.
+4. 합성 경로가 검증돼도 대상별 출처·잠금/경로 보호·I/O/공간·복제/검사 예산과 별도 승인을 먼저 받는다.
+   실제 복제와 50.6GB qualification은 별도 단계다. 동시 collector 부재와 장외 조건도 다시 확인한다.
 5. whole-file 결과에서 stream integrity·reason별 count·종목/시간 분포·예상 40,564를 대조한 뒤
    다음 연구 입력 정책을 결정한다. 결과 전에 후보 승격·재수집·파생 경로·시간 절단을 자동 승인하지 않는다.
 
