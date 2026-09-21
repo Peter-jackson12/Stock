@@ -97,6 +97,88 @@
 실제 사례다. 원본 오류 기록을 삭제하거나 무부호 값을 임의의 방향으로 채우지 않는다.
 대상·판정은 [현재 체크리스트](BACKTEST_TODO.md), 상세 당시 근거는 [인계 보존본](docs/archive/README.md)을 본다.
 
+## 닫힌 raw의 whole-file qualification
+
+전략·주문·체결 시뮬레이션 없이 전체 raw-v2의 구조 무결성과 품질 적합성을 분리해 검사할 때
+`scripts/qualify_raw_v2.py`를 사용한다. 운영자가 같은 session의 writer 종료·프로세스 종료 근거를
+먼저 대조하고 그 근거 위치나 설명을 `--closure-evidence`에 남긴다. 이 문자열은 운영자 주장으로
+기록될 뿐 종료를 자동 인증하지 않는다. `--expected-session-id`는 manifest와 반드시 일치해야 한다.
+
+```powershell
+.venv/Scripts/python.exe scripts/qualify_raw_v2.py `
+  --db C:/path/to/closed_v2_example.db `
+  --expected-session-id expected-session-id `
+  --closure-evidence "status/journal/process closure checked separately" `
+  --output-root C:/path/to/qualification_runs
+```
+
+검사 reader는 다음 조건을 모두 만족할 때만 `immutable=1`을 사용한다.
+
+- Windows 로컬 고정 NTFS의 일반 파일이며 입력 경로와 모든 상위 경로가 reparse point가 아니다.
+  검사 전에 resolve로 junction/symlink를 숨기지 않는다. `..` 경로도 거부한다.
+- `-wal`, `-shm`, `-journal`이 하나도 없다. 크기 0인 sidecar도 자동 삭제하거나 무시하지 않는다.
+- 기존·신규 write/delete handle을 막는 Windows 공유 잠금을 scan 전체 동안 유지한다.
+- scan 전후 같은 파일 identity·크기·mtime, 열린 handle과 경로의 일치, sidecar 부재를 다시 확인한다.
+
+운영자는 검사 중 상위 디렉터리의 이동·교체·junction 변경도 없어야 함을 보장해야 한다.
+파일 공유 잠금은 상위 디렉터리 전체의 이름 공간 잠금이 아니다. 전후 검사만으로 임의의 동시 경로 교체까지
+원천 차단했다고 해석하지 않는다. 외부 접근과 경로 변경을 배제할 수 없으면 실행하지 않는다.
+조건이 모호하면 읽지 않고 실패한다. 일반 `read_raw_v2()`는 기존 호출자를 위한 SQLite read-only
+snapshot reader이며 WAL 처리 중 sidecar가 생길 수 있으므로 원본 비변경 qualification 계약이 아니다.
+현재 sidecar가 있는 운영 raw는 별도 보존·해결 절차가 합성 검증되기 전까지 이 도구의 입력이 될 수 없다.
+
+결과는 새 UUID 폴더의 `result.json`에만 생성한다. `stream_integrity_verified`는 manifest/session,
+공통 seq, 수신 시각, 닫기 경계, event count, payload checksum, iterator 전체 소진이 모두 확인된 경우에만
+참이다. 구조적으로 정상인 `parse_error`와 normalized issue는 scan을 중단하지 않고 control type·reason·
+종목·수신 UTC 5분 구간·고정 상한 예시로 집계한다. 대응 tick의 issue와 바로 뒤 `parse_error`는 원시
+레코드 수는 각각 보존하되 `logical_issue_counts`에서 두 개의 독립 체결 오류로 중복 계산하지 않는다.
+사유가 누락/null/빈 목록인 `parse_error`도 `unspecified_parse_error`로 집계하며 연구 합격으로 통과시키지 않는다.
+추가 보호 회귀는 [경계 테스트](tests/test_raw_v2_qualification_boundaries.py)를 따른다.
+
+종료 코드 0은 구조 무결성과 현행 연구 품질 계약이 모두 합격, 2는 전체 구조 검증은 완료했지만 품질상
+연구 부적합, 3은 입력/보호 조건/구조 검증 실패다. `stream_integrity_verified=true`와
+`research_eligible=false`는 정상적인 진단 결과다. 어느 경우에도 공급자 무누락·venue·원천 정확성·
+전략 성과를 인증하지 않으며 DB 본체 파일 바이트 hash를 새로 계산하지 않는다.
+
+### 잔여 sidecar의 합성 검증 계획
+
+**설계 단계이며 운영 처리 승인이 아니다.** 운영 raw·sidecar는 그대로 둔다. 아래 실험은 새로 만든
+작은 Windows NTFS fixture에만 적용한다. 일반 입력 경로를 받는 운영 cleanup 도구를 먼저 만들지 않는다.
+
+SQLite 공식 [WAL 계약](https://www.sqlite.org/wal.html#the_wal_file)은 WAL을 DB 상태의 일부로 다루며,
+수동 삭제 대신 SQLite의 open/close 생명주기를 통한 정리를 안내한다. 따라서 우선 비교할 후보는
+**SQLite가 정상 연결·명시적 close 과정에서 자체 정리하는 경로**다. 이는 쓰기 가능 연결이며 recovery나
+checkpoint로 main DB를 바꿀 수 있으므로 원본 비변경 검사라고 부르지 않는다. 단순 connect/close와 실제
+페이지 접근 후 close를 구분한다. Python 연결의 with 블록 종료만으로 연결이 닫혔다고 가정하지 않는다.
+
+합성 실험은 다음을 대조한다.
+
+1. CaptureSession/RawV2Writer 정상 finish·명시적 close·자식 프로세스 종료 후의 깨끗한 기준선,
+   일반 read-only reader 이후 생긴 실제 0-byte WAL/SHM, 아직 read-only 연결이 열린 상태를 구분한다.
+   단순히 임의 파일을 만들어 넣은 fixture를 실제 SQLite 생성 상태와 혼동하지 않는다.
+2. 외부 프로세스가 없는 기준선의 main/존재하는 모든 sidecar를 바이트 hash·크기·시각·file identity로 보존한다.
+   작은 fixture의 manifest·전체 payload checksum·행 순서·전체 논리 내용과 qualification 결과를 기록한다.
+   원본+WAL의 일관성이 불명확하면 main만 복사하거나 immutable로 열어 비교 기준을 만들지 않는다.
+3. 합성 복제본에서만 SQLite-managed 정리를 시험한다. 0-byte WAL 잔여물 사례에서 main 바이트가
+   유지되는지, sidecar가 사라지는지, 전체 논리 내용과 qualification 판정이 유지되는지 각각 비교한다.
+   바이트 일치와 논리 일치 중 하나만으로 다른 하나를 주장하지 않는다. 재조회가 sidecar를 다시 만드는지도 확인한다.
+4. 미반영 committed WAL, non-empty/비정상 WAL, rollback journal, incomplete raw, 활성 reader/writer,
+   sidecar handle, 후발 writer, junction·경로 교체는 별도 반례다. WAL에만 있는 표식 행을 보존하는지 확인한다.
+   불명확한 상태는 잔여물 전용 절차에서 거부하고 수동 삭제·강제 checkpoint로 통과시키지 않는다.
+5. 보호 handle 획득 → 해제 → SQLite 쓰기 가능 연결 사이의 경합 창을 시험한다. 현재 sealed_source를
+   유지하면 자신의 쓰기 가능 연결도 막힐 수 있으며, 잠금을 놓고 다시 여는 것은 연속적인 배제 증명이 아니다.
+   CollectorLease와 프로세스 목록은 비협조적인 외부 프로그램까지 막지 않는다. 충분한 배제 조건을
+   입증하지 못하면 운영 미승인으로 남긴다. 필요하면 격리된 일관 복제본 경로를 별도 설계하되 원본을 교체하지 않는다.
+
+실행 Python의 경로·bitness·버전, sqlite3.sqlite_version 및 sqlite_source_id(), NTFS와 잠금 오류 코드를 남긴다.
+환경을 자동 업그레이드하거나 OCX에 로그인하지 않는다. DB별 32 MiB, 전체 fixture 256 MiB 이내에서
+예산·자식 프로세스 종료를 관리하고 새 evidence 폴더에만 기록한다. 크기 상한은 이 합성 실험의 상한이지
+운영 qualification의 크기 제한이 아니다.
+
+합성 결과 검토 → 대상·조건을 명시한 별도 운영 승인 → sidecar 해결 → 장외 I/O/시간/공간/중단 예산 확인
+→ 실제 whole-file qualification 순서를 유지한다. 처리 전 0-byte WAL/32 KiB SHM이라는 관측만으로
+삭제 안전성·전체 품질을 승인하지 않는다. 실험 실패나 차단도 유효한 산출물이며 정책을 완화하지 않는다.
+
 ## 결과 읽기
 
 원본 DB를 열지 않는 경량 조회:

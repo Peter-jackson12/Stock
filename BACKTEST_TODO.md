@@ -105,18 +105,19 @@ raw seq와 별도로 콜백 단위 committed 수를 늘리며 중단 경로는 �
 
 ## 3. 장외 실행 전 준비
 
-- [ ] **원본 비변경 검사 경로:** mode=ro/query_only 조회의 sidecar 생성/SHM mtime 갱신이 보고됐다.
-  불변성·동시 쓰기·잔여 sidecar 처리를 설계하고 작은 합성 Windows 회귀로 확인한다.
-  immutable을 무조건 적용하거나 원본 sidecar를 삭제해 통과시키지 않는다.
-- [ ] **검사 전용 품질 진단:** 전략 실행 없이 무결성과 품질 분포를 별도로 보고할 도구/절차를 준비한다.
-  구조가 유효한 품질 오류 기록은 진단 집계하며, 유형/사유/종목/수신시각/FID20별 분포와 고유 문제 tick 수를 대조한다.
-  알려진 부적합은 유지하고 중단된 검사를 전체 완료로 바꾸지 않는다. 이 문서는 50.6GB 스캔 실행 승인이 아니다.
+- [x] **원본 비변경 검사 경로 구현·합성 검증:** [qualification 코드](collector/raw_v2_qualification.py)는
+  Windows 로컬 NTFS, sidecar 전무, 활성 write/delete handle 배제를 확인한 동안만 immutable reader를 연다.
+  일반 reader의 SHM 생성 가능성과 qualification 비변경, non-empty WAL·sidecar·활성 쓰기 핸들 거부를
+  작은 Windows fixture로 확인했다. 현재 운영 sidecar 삭제·checkpoint 절차를 구현한 것은 아니다.
+- [x] **검사 전용 품질 진단 구현·합성 검증:** [CLI](scripts/qualify_raw_v2.py)는 전략 실행 없이
+  stream integrity와 research eligibility를 분리한다. 구조가 유효한 parse_error를 끝까지 집계하고,
+  대응 tick issue와 제어 기록을 logical issue로 이중 계산하지 않는다. bounded category/example만 보존한다.
+  합성 회귀는 [tests/test_raw_v2_qualification.py](tests/test_raw_v2_qualification.py)에 있다.
 - [ ] **실행 계획:** 입력·장외 시간·허용 I/O/시간·중단 기준·새 출력 경로·여유 공간을 확정한다.
   수집과 겹치지 않게 한다. 종목 하나 선택도 원본 전체 읽기를 줄이지 않는다.
-- [ ] **검사 경로:** 화면은 32 MiB·100,000 raw 이내다. 초과 파일은 별도 대용량 검사/실행 계획이 필요하다.
-  직접 연구 CLI는 검사 전용이 아니고, 전체 순번/체크섬 검증 중 전략 재생도 수행한다.
-  화면 워커의 선행 무결성 스캔과 구분하며, 전략 실행 전 합격 절차를 먼저 확정·검증한다.
-  기존 reader/품질 계약을 재사용한다. 현재 없는 qualify 명령을 실행하지 않는다.
+- [x] **검사 경로:** 화면의 32 MiB·100,000 raw 상한과 별도로 대용량 streaming CLI가 존재한다.
+  직접 연구 CLI와 달리 전략 재생을 하지 않으며 전체 순번/count/checksum과 품질 진단을 함께 수행한다.
+  실제 대용량 실행 계획과 현재 sidecar의 안전한 해결은 여전히 별도 미완료다.
 - [ ] **입력 전체 검증:** 승인된 장외 범위에서 순번·checksum·품질 제어 기록·whole-file 입력 계약을 검사하고 근거를 보존한다.
   조기 중단은 전체 checksum 완료가 아니다. 실패를 합격 처리하거나 표본·closed·CI로 대체하지 않는다.
 
