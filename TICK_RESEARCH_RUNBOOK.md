@@ -179,7 +179,7 @@ close 뒤 main 12,288 bytes만 남았다. 자식 프로세스 exit는 이 상태
 자식 프로세스 exit 뒤에도 둘 다 남았다. WAL SHA-256은 빈 파일 hash `e3b0c442...b855`, SHM은
 `fd4c9fda...9389eb`였다. 임의 빈 파일을 실제 잔여물 재현으로 세지 않았다.
 
-잔여 파일 집합을 각각 일관 복제해 비교した結果は次のとおりだ。
+잔여 파일 집합을 각각 일관 복제해 비교한 결과는 다음과 같다.
 
 - 쓰기 가능 `connect → 명시적 close`만으로는 WAL/SHM이 모두 남아 qualification이 거부됐다.
 - 쓰기 가능 연결에서 metadata 페이지를 실제 읽고 cursor/connection을 명시적으로 닫자 WAL/SHM이
