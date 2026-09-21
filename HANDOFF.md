@@ -103,7 +103,9 @@ Windows 합성 회귀 14건, 관련 raw/문서 회귀 84건, Git-only 전체 1,2
 
 ## 바로 다음 작업과 역할
 
-1. 검증된 변경을 원격 PR/CI에서 확인한다. PR #7의 수집 종료 인계 커밋을 보존한 위에 현재 변경을 쌓았다.
+1. 원격 `codex/raw-v2-qualification`에 푸시했고 GitHub Actions CI `35577653551`은 success다.
+   PR #7의 수집 종료 인계 커밋을 보존한 위에 현재 변경을 쌓았다. GitHub 브라우저 인증이 없어
+   새 PR 생성만 미완료이며, 인증 가능한 환경에서 이 브랜치로 PR을 만든다.
 2. 현재 `.db-wal`/`.db-shm`을 삭제·checkpoint하지 않은 채 보존한다. main DB와 sidecar의 관계를
    안전하게 판정·해결할 별도 절차를 먼저 설계하고 작은 Windows 합성 회귀로 검증한다.
 3. sidecar 해결 뒤에만 실제 50.6GB qualification의 장외 시각·I/O/시간 예산·중단 기준·여유 공간·
