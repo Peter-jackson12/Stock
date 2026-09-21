@@ -22,7 +22,7 @@
 
 ### 직접 CLI와 선행 검사 구분
 
-[직접 CLI](scripts/run_tick_research.py)는 헤더에서 source/session을 얻은 뒤
+[직접 CLI](scripts/run_tick_research.py)는 DB 헤더에서 source/session을 얻은 뒤
 [run_raw_v2](engine/tick_research_run.py)를 호출한다. 이 경로는 읽으면서 선택 이벤트를 전략에 넘기며,
 전체 checksum은 [reader](collector/raw_v2.py)의 iterator를 끝까지 소비했을 때 확정된다.
 품질 오류로 조기 종료하면 전체 파일 검증 완료가 아니다. 끝에서 오류를 발견해도 런 전체는 failed/진단 전용이다.
@@ -146,10 +146,11 @@ snapshot reader이며 WAL 처리 중 sidecar가 생길 수 있으므로 원본 �
 **합성 실험은 일부 미검증, 실제 운영 적용은 미승인이다.** 2026-09-21에
 [전용 lab](scripts/lab_raw_v2_sidecars.py)과 [회귀](tests/test_raw_v2_sidecar_lifecycle.py)를 추가하고,
 자동 생성된 로컬 NTFS 루트
-`%TEMP%/Stock_raw_sidecar_lab_d2799ff9fb0e4bf78ebf9b35f8753fdd`에서만 실행했다.
-최종 원시 근거는 그 아래 `result.json`이다. 운영 raw·sidecar·evidence는 열거나 복사하거나 바꾸지 않았다.
-lab은 외부 DB 인자를 받지 않고 marker/UUID/NTFS/reparse/경로 이탈을 검사하며, DB별 32 MiB·전체 256 MiB와
-자식 프로세스 20초 제한을 둔다. 이번 fixture 총량은 512,545 bytes였다.
+`%TEMP%/Stock_raw_sidecar_lab_d2799ff9fb0e4bf78ebf9b35f8753fdd`에서만 실행했다는 로컬 보고다.
+최종 원시 근거는 그 아래 `result.json`이며 이번 GitHub 검토에서 직접 읽지 않았다.
+운영 raw·sidecar·evidence는 열거나 복사하거나 바꾸지 않았다는 보고다.
+lab은 일반 실행에서 외부 DB 인자를 받지 않고 내부 worker는 marker/UUID/NTFS/reparse/경로 이탈을 검사한다.
+DB별 32 MiB·전체 256 MiB와 자식 프로세스 20초 제한을 두며, 보고된 fixture 총량은 512,545 bytes였다.
 
 공식 계약과 이번 관측을 구분한다.
 
@@ -162,13 +163,13 @@ lab은 외부 DB 인자를 받지 않고 marker/UUID/NTFS/reparse/경로 이탈�
   기존/신규 handle의 access/share mode가 호환되어야 하며, `FILE_SHARE_WRITE`/`FILE_SHARE_DELETE`를
   주지 않은 handle의 효력은 그 handle이 닫힐 때까지만 유지된다고 한다.
 - Python [sqlite3 context manager 계약](https://docs.python.org/3/library/sqlite3.html#how-to-use-the-connection-context-manager)은
-  `with connection`이 commit/rollback만 수행하고 connection을 닫지 않는다고 한다. 실험도 모든 cursor와
-  connection을 명시적으로 닫았다.
+  `with connection`이 commit/rollback만 수행하고 connection을 닫지 않는다고 한다. 실험의 처리 후보는
+  cursor와 connection을 명시적으로 닫으며 다른 실험 연결도 명시적 close를 사용한다.
 
-실측 환경은 Windows 11 `10.0.26200`, 64-bit Python 3.14.7,
+보고된 실측 환경은 Windows 11 `10.0.26200`, 64-bit Python 3.14.7,
 SQLite 3.53.1/source id `2026-05-05 ... 6475127e9`, NTFS였다.
-Git 기준 `a5b14bf`와 미커밋 lab script SHA-256 `402b5c39...2fd8bb6`도 근거에 기록했다.
-최종 커밋에서는 같은 script hash를 대조한다. `CaptureSession`의 2-record fixture는
+Git 기준 `a5b14bf`와 미커밋 lab script SHA-256 `402b5c39...2fd8bb6`도 근거에 기록했다는 보고다.
+원격 blob과 로컬 실행 파일의 실제 바이트 대조는 별도로 구분한다. `CaptureSession`의 2-record fixture는
 `finish` 직후 main 4,096 bytes + WAL 32,992 bytes + SHM 32,768 bytes였고, writer connection의 명시적
 close 뒤 main 12,288 bytes만 남았다. 자식 프로세스 exit는 이 상태를 더 바꾸지 않았다.
 닫힌 main SHA-256은 `77807c60...25fad5b`, manifest/재계산 payload SHA-256은 모두
@@ -178,7 +179,7 @@ close 뒤 main 12,288 bytes만 남았다. 자식 프로세스 exit는 이 상태
 자식 프로세스 exit 뒤에도 둘 다 남았다. WAL SHA-256은 빈 파일 hash `e3b0c442...b855`, SHM은
 `fd4c9fda...9389eb`였다. 임의 빈 파일을 실제 잔여물 재현으로 세지 않았다.
 
-잔여 파일 집합을 각각 일관 복제해 비교한 결과는 다음과 같다.
+잔여 파일 집합을 각각 일관 복제해 비교した結果は次のとおりだ。
 
 - 쓰기 가능 `connect → 명시적 close`만으로는 WAL/SHM이 모두 남아 qualification이 거부됐다.
 - 쓰기 가능 연결에서 metadata 페이지를 실제 읽고 cursor/connection을 명시적으로 닫자 WAL/SHM이
@@ -208,6 +209,44 @@ sidecar handle과 경로 변경이 처리 전체에서 배제된 상태에서 SQ
 충족된다는 증거가 없으므로 현재 운영 DB에는 적용하지 않는다. 수동 unlink, 강제 checkpoint, immutable
 우회, 정책 완화도 허용하지 않는다.
 
+PR #9 검토에서는 lab에만 있던 잠금·부분 정리·경합·journal/reparse/경로 교체 반례를
+[추가 CI 회귀](tests/test_raw_v2_sidecar_lab_boundaries.py)로 고정한다.
+회귀 통과는 반례가 재현된다는 뜻이지 in-place 정리를 승인한다는 뜻이 아니다.
+
+### 다음 합성 계획 — 원본 비변경 복제본 경로
+
+**아직 구현·Windows 실측 전인 설계다. 운영 파일 복사나 처리 승인이 아니다.** in-place cleanup에서
+발견한 보호 해제/재연결 공백을 더 복잡한 운영 원본 쓰기 절차로 우회하지 않는다. 원본은 SQLite로
+재연결하지 않고, 원본 파일 집합의 보호를 유지한 채 별도 복제본을 얻는 경로부터 작은 fixture로 검증한다.
+
+- 입력은 lab이 직접 만든 출처가 있는 closed fixture로 한정한다. 모든 일반 파일과 상위 경로의
+  NTFS/reparse/identity를 검사한다. non-empty WAL, 모든 rollback journal, incomplete, 출처 불명,
+  파일 alias/hardlink, 확보할 수 없는 보호 조건은 거부한다. 0-byte WAL/SHM 존재만으로 허용하지 않는다.
+- main과 존재하는 WAL/SHM 각각의 write/delete 배제 handle을 모두 확보하고 재검사한 뒤 복사를 시작한다.
+  관련 상위 디렉터리 이름 공간 보호도 별도로 입증한다. source handle은 복제/동일성 확인 동안 놓지 않는다.
+  main handle 하나나 CollectorLease가 모든 sidecar/상위 경로를 보호한다고 가정하지 않는다.
+- 이미 보호한 handle에서 bounded streaming 복사와 SHA-256을 계산한다. 기존 lab의 `copy_sqlite_set()`은
+  정지 fixture용 경로 기반 복사이지 이 보호된 acquisition의 구현이 아니다. source 경로를 shutil로 다시
+  여는 것으로 대체하지 않는다. 복제본은 새 일반 파일로 만들며 원본과 hardlink로 공유하지 않는다.
+- 원본은 직접 SQLite open/cleanup하지 않는다. 복제본을 SQLite로 열기 전에 파일별 크기/hash/identity,
+  원본 파일 집합의 불변과 journal 부재를 재검사하고 receipt에 출처/정책/보호 구간을 남긴다.
+  sidecar 원시 복제 bytes는 별도 evidence로 보존한다. 복제본 경로/파일 ID는 원본과 달라야 한다.
+- 검증된 사적 복제본에서만 기존 metadata page read + 명시적 close 후보를 시험한다. 정리 전후 main의
+  바이트 hash와 전체 raw manifest/seq/payload가 같아야 한다. 바뀌면 복구된 다른 dataset으로 자동 승인하지
+  말고 실패/격리한다. 복제본에 sidecar가 남으면 immutable로 우회하지 않는다.
+- 기존 qualification을 변경 없이 복제본에 사용한다. clean 사례뿐 아니라 방향 미확인 + parse_error가 있는
+  closed fixture도 사용하여 원본과 동일한 품질 부적합이 유지되는지 확인한다. 물리 복제는 정규화/필터링
+  파생 경로 B가 아니며 원 session_id/seq/품질 기록을 그대로 유지해야 한다. 적합성 자동 승격은 없다.
+- 후발 writer/reader/sidecar handle, 파일 및 상위 디렉터리 교체, writable memory mapping,
+  중간 복사 중단/목적지 충돌/부분 정리/hash 불일치를 작은 합성 반례로 검증한다. 전후 hash가 같다는 이유만으로
+  연속 배제를 입증했다고 보고하지 않는다. 지원하지 못하는 접근 형태는 명시적 차단 조건으로 남긴다.
+- 실패/중단은 partial 또는 failed evidence만 남기고 qualification 입력으로 발행하지 않는다. 원본은 그대로
+  보존하며 자동 재시도/원본 롤백/원본 교체는 하지 않는다. 관리자·커널 수준 개입까지 막는다고 주장하지 않는다.
+
+DB별 32 MiB·전체 256 MiB·유한한 자식 timeout을 유지한다. 일반 lab CLI는 실제 DB 입력을 받지 않는다.
+실제 적용을 검토할 때는 별도로 장외 시각·대상 출처·기존 본체 hash와의 대조·동시 접근 배제·여유 공간·
+복제 읽기/쓰기/재검증/qualification의 총 I/O 예산을 승인받아야 한다. 복제만 통과해도 전체 품질 검사는 미완료다.
+
 ## 결과 읽기
 
 원본 DB를 열지 않는 경량 조회:
@@ -231,6 +270,7 @@ sidecar handle과 경로 변경이 처리 전체에서 배제된 상태에서 SQ
 - `completed_flat`: 마감 보유량이 0이다. 이것만으로 전략 수익성이나 체결 정확성을 인증하지 않는다.
 
 `orders`, `fills`, `signals`, `order_audit`에서 주문 수명과 체결 가격/수량을 확인한다.
+사례가 없으면 원인을 남기고 해당 경로의 실데이터 검증은 미완료로 둔다.
 `quote_checks`는 재생 이벤트마다 본 호가 검증 결과의 횟수이며 고유 호가 수가 아니다.
 결측/stale/잘못된 가격·잔량이 많다면 입력 계약과 정책을 먼저 확인한다.
 `processed_event_counts`와 `event_count`는 실패 시 다를 수 있다. 후자는 소비한 이벤트 수다.
