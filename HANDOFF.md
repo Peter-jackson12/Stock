@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-21 / 정상 종료 보고, 연구 입력 차단·검사 전용 진단 준비
+# 현재 인계 — 2026-09-21 / qualification 구현·합성 검증 완료, 실제 검사 차단
 
 현재 목표·차단 조건·다음 행동만 유지한다. [문서 인덱스](README.md),
 [첫 시험 체크리스트](BACKTEST_TODO.md), [파이프라인 지도](docs/PIPELINE_MAP.md)를 따른다.
@@ -10,6 +10,10 @@
 2026-09-21 신규 raw-v2의 **종료 증거는 일관되지만 제한 표본에서 품질 문제가 확인됐다.**
 `FIRST_RESEARCH_CANDIDATE`로 승격하지 않으며, 현행 엄격 연구 경로에서 차단한다.
 원본을 폐기하지 않는다. whole-file 무결성·전체 품질 분포·연구 입력 합격·첫 백테스트는 미완료다.
+
+전략을 실행하지 않는 원본 비변경 whole-file qualification 경로는 작업 브랜치
+`codex/raw-v2-qualification`의 `a563e26`에 구현됐다. 이는 합성 데이터 검증 완료이지
+아래 실제 50.6GB raw의 검사 완료가 아니다. 대상의 기존 sidecar 때문에 현재 도구는 안전하게 거부한다.
 
 이 문서는 사용자가 전달한 PowerShell 출력과 두 차례 로컬 제한 검사 보고를,
 원격 코드 `4821762fd93230b658339fee084d6c08e3e53ce9`와 대조한 인계다.
@@ -79,31 +83,36 @@ FID20은 초 정밀도이며 날짜/시계 동기화를 인증하지 않는다. 
   마지막 조회 전후 SHA-256은 `FD4C9FDA9CD3F9AE7C962B0DDF37232294D55580E1AA165AA06129B8549389EB`로 동일하다는 보고다.
 - rollback journal은 관측되지 않았다. 삭제·checkpoint·VACUUM·복사본 교체는 하지 않았다.
 
-현 검사기/reader의 `mode=ro` + `query_only`는 SQL 쓰기 금지이지 파일시스템 무변경 보장이 아니다.
+기존 표본 검사기/일반 reader의 `mode=ro` + `query_only`는 SQL 쓰기 금지이지 파일시스템 무변경 보장이 아니다.
 SQLite 공식 [WAL 읽기 전용 설명](https://www.sqlite.org/wal.html#read_only_databases)과 부합한다.
 [immutable 계약](https://www.sqlite.org/uri.html)은 잠금·변경 감지를 생략하므로 상수처럼 무조건 붙이지 않는다.
 불변성/잔여 WAL 처리 보장 없이 `immutable=1`로 우회하거나 현재 sidecar를 임의 삭제하지 않는다.
 
+새 [qualification 경로](scripts/qualify_raw_v2.py)는 Windows 로컬 NTFS·reparse 아님·sidecar 전무·
+write/delete handle 배제를 모두 확인한 동안에만 `immutable=1`을 사용한다. scan 전후 파일 identity·
+크기·mtime·sidecar 부재도 대조한다. 0-byte WAL을 포함해 sidecar가 하나라도 있거나 활성 쓰기 핸들이
+있으면 읽지 않는다. 일반 reader의 동작은 유지하며 역할을 분리했다.
+
+전략 없이 전체 reader를 소진하면서 구조 무결성과 품질 적합성을 별도 결과로 남긴다.
+정상 `parse_error`는 reason·종목·수신 UTC 5분 bucket·고정 상한 예시로 집계하고 scan을 계속한다.
+대응 tick issue와 parse_error는 raw record 수는 각각 유지하되 logical issue로 중복 계산하지 않는다.
+sequence gap·manifest/session 불일치·checksum·I/O 오류는 `stream_integrity_verified=false`다.
+Windows 합성 회귀 14건, 관련 raw/문서 회귀 84건, Git-only 전체 1,235건이 통과했고 6건은 선택 해제됐다.
+일반 reader의 SHM 생성, qualification 비변경, non-empty WAL·sidecar·활성 쓰기 핸들 거부를 합성 확인했다.
+실제 운영 raw는 조회·COUNT·hash·qualification·재생하지 않았다.
+
 ## 바로 다음 작업과 역할
 
-**추가 수집이나 백테스트가 아니라 검사 기반 정비가 우선이다.** 경로 A의 이번 수집은 실행됐지만 연구 합격은 실패했다.
-반복 수집만으로 해결된다고 가정하지 않는다. 예비 경로 B의 파생·시간 절단·품질 예외 허용은 아직 승인/구현하지 않았다.
+1. 검증된 변경을 원격 PR/CI에서 확인한다. PR #7의 수집 종료 인계 커밋을 보존한 위에 현재 변경을 쌓았다.
+2. 현재 `.db-wal`/`.db-shm`을 삭제·checkpoint하지 않은 채 보존한다. main DB와 sidecar의 관계를
+   안전하게 판정·해결할 별도 절차를 먼저 설계하고 작은 Windows 합성 회귀로 검증한다.
+3. sidecar 해결 뒤에만 실제 50.6GB qualification의 장외 시각·I/O/시간 예산·중단 기준·여유 공간·
+   새 출력 경로를 확정한다. 실행 전 외부 종료 근거와 expected session_id를 다시 대조한다.
+4. whole-file 결과에서 예상 parse_error 40,564와 실제 reason별 집계를 구분해 대조한다.
+   현재는 실제 건수 미확인이다. 연구 합격 전에는 백테스트를 실행하지 않는다.
 
-일반 ChatGPT/GitHub에서 먼저 진행할 작업:
-1. 원본에 sidecar를 만들지 않는 닫힌 파일 검사 경로를 설계·합성 검증한다.
-   기존 파일 보호 코드를 재사용하고 쓰기 중 파일·잔여 sidecar·경합에서는 안전하게 거부한다.
-2. 기존 raw reader/품질 계약을 재사용하는 **검사 전용 품질 분포 진단**을 준비한다.
-   전략/주문/체결을 호출하지 않고 구조·순번·payload checksum과 품질 적합성을 별도 결과로 기록한다.
-   품질 오류는 합격으로 바꾸지 않되 구조가 유효하면 집계하고 계속 읽는 진단 목적을 구분한다.
-   제어 기록 유형, 고유 문제 tick, 문제 사유, 종목/수신시각/FID20별 분포와 처음/마지막 seq를 대조한다.
-   중단/예산 초과/구조 오류는 전체 완료로 보고하지 않는다. 상세 계약은 연구 런북에 둔다.
-3. 관련 합성 회귀/CI로 변경을 검토한다. 직접 연구 CLI를 검사 도구로 쓰지 않는다.
-
-Windows/로컬에서만 필요한 작업:
-- 기존 로컬 근거와 전달 보고를 새 evidence 경로에 출처를 구분해 보존한다. 근거 확보를 이유로 raw를 재조회하지 않는다.
-- 준비된 파일 보호/검사 도구의 Windows 파일 잠금·sidecar 회귀를 작은 합성 데이터로 검증한다.
-- 이후에만 실제 50.6GB 진단의 장외 시각·I/O·메모리·시간 예산·중단 기준·새 출력 경로를 별도로 확정한다.
-  현재 sidecar 해결 방식이 먼저 검증돼야 한다. 이 인계는 전체 스캔 실행 승인이 아니다.
+추가 수집 반복, 경로 B 파생·시간 절단·품질 예외 허용은 아직 승인/구현하지 않았다.
+이 인계는 실제 전체 스캔이나 현재 sidecar 삭제 승인도 아니다.
 
 ## 계속 지킬 경계
 
