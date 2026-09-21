@@ -19,6 +19,9 @@ def fixture_set():
     root = lab.create_lab_root()
     baseline = root / "source" / "raw.db"
     lab.create_closed_fixture(baseline)
+    # run_lab normally creates this in its baseline worker.  These tests invoke
+    # later stages directly, so the parent must prepare it before spawning.
+    (root / "sync").mkdir()
     return root, baseline
 
 
