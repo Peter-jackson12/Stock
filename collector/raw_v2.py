@@ -160,15 +160,8 @@ class RawV2Writer:
 
 
 @contextmanager
-def read_raw_v2(path):
-    """Yield (manifest, iterator of envelopes) from a closed read-only snapshot.
-
-    Exhaust the iterator to verify its checksum/count. Any late error invalidates
-    the whole run. A closed header is a producer claim, not external feed proof.
-    No filtering precedes global sequence/integrity validation.
-    """
-    path = Path(path).resolve(strict=True)
-    conn = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0.5)
+def _read_raw_v2_connection(conn):
+    """Shared parser for already-open read-only SQLite connections."""
     iterator = None
     try:
         conn.execute("PRAGMA query_only=ON")
@@ -237,4 +230,22 @@ def read_raw_v2(path):
     finally:
         if iterator is not None:
             iterator.close()
+
+
+@contextmanager
+def read_raw_v2(path):
+    """Yield (manifest, iterator of envelopes) from a closed read-only snapshot.
+
+    Exhaust the iterator to verify its checksum/count. Any late error invalidates
+    the whole run. A closed header is a producer claim, not external feed proof.
+    No filtering precedes global sequence/integrity validation. This general
+    reader can participate in SQLite WAL handling and is not a filesystem-
+    nonmutating inspection API; qualification uses the separate sealed reader.
+    """
+    path = Path(path).resolve(strict=True)
+    conn = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0.5)
+    try:
+        with _read_raw_v2_connection(conn) as value:
+            yield value
+    finally:
         conn.close()

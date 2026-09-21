@@ -97,6 +97,43 @@
 실제 사례다. 원본 오류 기록을 삭제하거나 무부호 값을 임의의 방향으로 채우지 않는다.
 대상·판정은 [현재 체크리스트](BACKTEST_TODO.md), 상세 당시 근거는 [인계 보존본](docs/archive/README.md)을 본다.
 
+## 닫힌 raw의 whole-file qualification
+
+전략·주문·체결 시뮬레이션 없이 전체 raw-v2의 구조 무결성과 품질 적합성을 분리해 검사할 때
+`scripts/qualify_raw_v2.py`를 사용한다. 운영자가 같은 session의 writer 종료·프로세스 종료 근거를
+먼저 대조하고 그 근거 위치나 설명을 `--closure-evidence`에 남긴다. 이 문자열은 운영자 주장으로
+기록될 뿐 종료를 자동 인증하지 않는다. `--expected-session-id`는 manifest와 반드시 일치해야 한다.
+
+```powershell
+.venv/Scripts/python.exe scripts/qualify_raw_v2.py `
+  --db C:/path/to/closed_v2_example.db `
+  --expected-session-id expected-session-id `
+  --closure-evidence "status/journal/process closure checked separately" `
+  --output-root C:/path/to/qualification_runs
+```
+
+검사 reader는 다음 조건을 모두 만족할 때만 `immutable=1`을 사용한다.
+
+- Windows 로컬 고정 NTFS의 일반 파일이며 reparse point가 아니다.
+- `-wal`, `-shm`, `-journal`이 하나도 없다. 크기 0인 sidecar도 자동 삭제하거나 무시하지 않는다.
+- 기존·신규 write/delete handle을 막는 Windows 공유 잠금을 scan 전체 동안 유지한다.
+- scan 전후 같은 파일 identity·크기·mtime과 sidecar 부재를 다시 확인한다.
+
+조건이 모호하면 읽지 않고 실패한다. 일반 `read_raw_v2()`는 기존 호출자를 위한 SQLite read-only
+snapshot reader이며 WAL 처리 중 sidecar가 생길 수 있으므로 원본 비변경 qualification 계약이 아니다.
+현재 sidecar가 있는 운영 raw는 별도 보존·해결 절차가 합성 검증되기 전까지 이 도구의 입력이 될 수 없다.
+
+결과는 새 UUID 폴더의 `result.json`에만 생성한다. `stream_integrity_verified`는 manifest/session,
+공통 seq, 수신 시각, 닫기 경계, event count, payload checksum, iterator 전체 소진이 모두 확인된 경우에만
+참이다. 구조적으로 정상인 `parse_error`와 normalized issue는 scan을 중단하지 않고 control type·reason·
+종목·수신 UTC 5분 구간·고정 상한 예시로 집계한다. 대응 tick의 issue와 바로 뒤 `parse_error`는 원시
+레코드 수는 각각 보존하되 `logical_issue_counts`에서 두 개의 독립 체결 오류로 중복 계산하지 않는다.
+
+종료 코드 0은 구조 무결성과 현행 연구 품질 계약이 모두 합격, 2는 전체 구조 검증은 완료했지만 품질상
+연구 부적합, 3은 입력/보호 조건/구조 검증 실패다. `stream_integrity_verified=true`와
+`research_eligible=false`는 정상적인 진단 결과다. 어느 경우에도 공급자 무누락·venue·원천 정확성·
+전략 성과를 인증하지 않으며 DB 본체 파일 바이트 hash를 새로 계산하지 않는다.
+
 ## 결과 읽기
 
 원본 DB를 열지 않는 경량 조회:

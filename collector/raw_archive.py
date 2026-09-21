@@ -22,7 +22,7 @@ SCHEMA = "raw_archive_prototype_1"
 
 
 @contextmanager
-def _sealed_source(path):
+def sealed_source(path):
     # Windows share mode denies existing and future write/delete handles.
     # Unlike a SQLite read transaction this also protects the exact file bytes.
     if os.name != "nt":
@@ -47,10 +47,15 @@ def _sealed_source(path):
         yield stream
 
 
-def _no_sidecars(path):
+def reject_sqlite_sidecars(path):
     for suffix in ("-wal", "-shm", "-journal"):
         if os.path.lexists(str(path) + suffix):
             raise ValueError("SQLite sidecar exists; preserve it and resolve closure separately")
+
+
+# Backward-compatible private names used by the archive regression suite.
+_sealed_source = sealed_source
+_no_sidecars = reject_sqlite_sidecars
 
 
 def _transfer(source, destination=None, *, limit=MAX_BYTES):
@@ -135,8 +140,8 @@ def archive_raw(source, destination, *, root, session_id, closure_note):
     size = source.stat().st_size
     if not 0 < size <= MAX_BYTES:
         raise ValueError("prototype accepts only 1 byte to 32 MiB")
-    with CollectorLease(root), _sealed_source(source) as stream:
-        _no_sidecars(source)
+    with CollectorLease(root), sealed_source(source) as stream:
+        reject_sqlite_sidecars(source)
         before = os.fstat(stream.fileno())
         if not 0 < before.st_size <= MAX_BYTES:
             raise ValueError("prototype accepts only 1 byte to 32 MiB")
@@ -152,7 +157,7 @@ def archive_raw(source, destination, *, root, session_id, closure_note):
         meta, controls = _inflate(compressed, restored, original)
         if meta["session_id"] != session_id:
             raise ValueError("closure session mismatch")
-        _no_sidecars(source)
+        reject_sqlite_sidecars(source)
         after = os.fstat(stream.fileno())
         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
             raise ValueError("source changed")
@@ -188,7 +193,7 @@ def restore_raw(bundle, destination):
     if destination == bundle or destination == Path(receipt["source"]["path"]).parent:
         raise ValueError("separate restore directory required")
     require_disk_space(destination, minimum=MIN_FREE_BYTES + expected["size"])
-    with _sealed_source(bundle / "raw.db.gz") as stream:
+    with sealed_source(bundle / "raw.db.gz") as stream:
         packed = _transfer(stream, limit=MAX_BYTES + CHUNK)
         if packed != {key: receipt["compression"][key] for key in ("size", "sha256")}:
             raise ValueError("compressed byte size/hash mismatch")
