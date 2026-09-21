@@ -42,18 +42,21 @@ def _code_provenance():
 
 
 def _require_local_ntfs(path):
-    """Reject network, reparse, removable, and untested filesystem inputs."""
+    """Check the unresolved source and every ancestor, not a resolved target."""
     if os.name != "nt":
         raise OSError("qualification requires Windows sharing-lock semantics")
+    if ".." in path.parts:
+        raise ValueError("parent traversal raw input is not supported")
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     get_attributes = kernel.GetFileAttributesW
     get_attributes.argtypes = [wintypes.LPCWSTR]
     get_attributes.restype = wintypes.DWORD
-    attrs = get_attributes(str(path))
-    if attrs == 0xFFFFFFFF:
-        raise ctypes.WinError(ctypes.get_last_error())
-    if attrs & 0x400:  # FILE_ATTRIBUTE_REPARSE_POINT
-        raise ValueError("reparse-point raw input is not supported")
+    for component in (*reversed(path.parents), path):
+        attrs = get_attributes(str(component))
+        if attrs == 0xFFFFFFFF:
+            raise ctypes.WinError(ctypes.get_last_error())
+        if attrs & 0x400:  # FILE_ATTRIBUTE_REPARSE_POINT
+            raise ValueError("reparse-point raw input or ancestor is not supported")
 
     volume = ctypes.create_unicode_buffer(32768)
     get_volume_path = kernel.GetVolumePathNameW
@@ -76,18 +79,22 @@ def _require_local_ntfs(path):
     return filesystem.value
 
 
+def _file_identity(info):
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+
+
 @contextmanager
 def read_sealed_raw_v2(path):
     """Read a closed main-file-only raw-v2 without creating SQLite sidecars.
 
-    The immutable assumption is established by a local NTFS requirement, no
-    pre-existing sidecars, and a Windows handle whose share mode denies any
-    existing or future write/delete handle for the duration of the scan.
+    Do not resolve the input first: doing so would hide a symlink or junction.
+    The operator must keep the source directory namespace quiescent throughout
+    the scan; file sharing locks are not locks on all parent directories.
     """
-    path = Path(path).resolve(strict=True)
+    path = Path(path).absolute()
+    filesystem = _require_local_ntfs(path)
     if not path.is_file():
         raise ValueError("regular raw database file required")
-    filesystem = _require_local_ntfs(path)
     reject_sqlite_sidecars(path)
     proof = {"path": str(path), "filesystem": filesystem,
              "write_delete_handles_excluded": False,
@@ -95,8 +102,11 @@ def read_sealed_raw_v2(path):
              "source_stat_unchanged": False}
     with sealed_source(path) as stream:
         proof["write_delete_handles_excluded"] = True
+        _require_local_ntfs(path)
         reject_sqlite_sidecars(path)
         before = os.fstat(stream.fileno())
+        if _file_identity(before) != _file_identity(path.stat()):
+            raise ValueError("raw source path does not match the held file handle")
         conn = sqlite3.connect(path.as_uri() + "?mode=ro&immutable=1", uri=True, timeout=0)
         try:
             conn.execute("PRAGMA temp_store=MEMORY")
@@ -105,12 +115,12 @@ def read_sealed_raw_v2(path):
                 yield manifest, rows, proof
         finally:
             conn.close()
+            _require_local_ntfs(path)
             reject_sqlite_sidecars(path)
             proof["sidecars_absent_after"] = True
             after = os.fstat(stream.fileno())
-            before_identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
-            after_identity = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-            if before_identity != after_identity:
+            if (_file_identity(before) != _file_identity(after)
+                    or _file_identity(after) != _file_identity(path.stat())):
                 raise ValueError("raw source identity, size, or mtime changed during qualification")
             proof["source_stat_unchanged"] = True
             proof["size_bytes"] = after.st_size
@@ -211,7 +221,7 @@ class _Diagnostics:
         code = event.details.get("code") if isinstance(event.details, dict) else None
         if event.control_type == "parse_error":
             reasons = self._issues(event.details.get("issues") if isinstance(event.details, dict) else None,
-                                   "unspecified_parse_error")
+                                   "unspecified_parse_error") or ["unspecified_parse_error"]
             for reason in reasons:
                 self._add(self.parse_error_reasons, reason)
                 self._example(f"control:parse_error:{reason}", envelope, event)
@@ -238,7 +248,10 @@ class _Diagnostics:
     def result(self):
         def ordered(counter):
             return dict(sorted(counter.items()))
-        research_eligible = not self.logical_issues
+        # A parse_error is disqualifying even when its producer omitted reasons.
+        research_eligible = not (self.logical_issues or self.affected_tick_records
+                                 or self.disqualifying_control_records
+                                 or self.control_types.get("parse_error", 0))
         return {
             "counts": {"raw_records": self.total, "tick_records": self.ticks,
                        "trade_records": self.trades, "quote_records": self.quotes,
@@ -277,7 +290,8 @@ def qualify_raw_v2(path, *, output_root, expected_session_id, closure_evidence):
         raise ValueError("expected session and bounded external closure evidence are required")
     started = time.monotonic()
     inspected = datetime.now(timezone.utc).isoformat()
-    path = Path(path).resolve()
+    # Preserve the lexical input so the sealed reader can reject reparse paths.
+    path = Path(path).absolute()
     output_root = Path(output_root).resolve()
     run_id = uuid.uuid4().hex
     run_dir = output_root / run_id
@@ -331,7 +345,8 @@ def qualify_raw_v2(path, *, output_root, expected_session_id, closure_evidence):
             "The manifest closed state remains a producer claim; external closure evidence is required.",
             "Payload integrity does not prove provider completeness, venue identity, or feed accuracy.",
             "The main database byte hash is not recalculated by this streaming qualification.",
-            "Only local Windows NTFS with no SQLite sidecars is accepted."],
+            "Only local Windows NTFS with no SQLite sidecars is accepted.",
+            "Source directory ancestors must remain quiescent; file sharing is not a namespace lock."],
     }
     result = run_dir / "result.json"
     with result.open("x", encoding="utf-8") as stream:
