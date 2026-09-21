@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-21 / qualification 검토 완료, sidecar 합성 절차 검증 대기
+# 현재 인계 — 2026-09-21 / sidecar 합성 검증 완료, 운영 적용 미승인
 
 현재 목표·차단 조건·다음 행동만 유지한다. [문서 인덱스](README.md),
 [첫 시험 체크리스트](BACKTEST_TODO.md), [파이프라인 지도](docs/PIPELINE_MAP.md)를 따른다.
@@ -11,10 +11,10 @@
 `FIRST_RESEARCH_CANDIDATE`로 승격하지 않는다. 원본을 폐기하지 않는다.
 실제 whole-file 무결성·전체 품질 분포·연구 입력 합격·첫 백테스트는 모두 미완료다.
 
-전략 없는 qualification 구현과 추가 보호 경계는 PR #8의 변경이다. 바로 다음은
-[잔여 sidecar의 합성 검증 계획](TICK_RESEARCH_RUNBOOK.md#잔여-sidecar의-합성-검증-계획)을
-작은 Windows fixture에서 검증하는 것이다. 실제 50.6GB DB를 여는 작업이 아니다.
-현재 도구는 기존 sidecar가 하나라도 있으면 안전하게 거부한다.
+전략 없는 qualification 구현과 추가 보호 경계는 PR #8의 변경이다. 후속
+[잔여 sidecar 합성 검증](TICK_RESEARCH_RUNBOOK.md#잔여-sidecar의-합성-검증-결과)은 작은 Windows
+fixture에서 완료했다. 실제 50.6GB DB는 열지 않았다. 현재 도구는 기존 sidecar가 하나라도 있으면
+계속 안전하게 거부하며, 실제 운영 적용은 미승인이다.
 
 생산 데이터 사실은 사용자가 전달한 PowerShell 출력·로컬 제한 검사 보고다. ChatGPT가 로컬 raw·
 저널·프로세스를 직접 검사한 결과가 아니다. 로컬 working tree와 프로세스 상태는 다음 로컬 작업에서
@@ -38,6 +38,9 @@
   이는 GitHub 합성 실행이며 사용자의 Windows PC에서 새로 실행한 결과가 아니다.
 - 이전 로컬 보고: qualification 14 passed, 관련 raw/archive/docs 84 passed, 전체 1,235 passed/6 deselected.
   실제 raw를 검사했다는 뜻이 아니다. 이후 문서 변경의 최신 HEAD·PR·CI는 원격에서 다시 확인한다.
+- 이번 sidecar 합성 변경의 로컬 결과: 요청된 qualification/boundary/sidecar/archive/raw-v2/docs 묶음
+  **103 passed**, 전체 Git-only **1,254 passed, 6 deselected**. `local_data`/`local_env`와 운영 raw 검사는
+  실행하지 않았다. 합성 통과는 아래 운영 격리 조건을 인증하지 않는다.
 
 ## 대상과 종료 증거 — 로컬 보고
 
@@ -87,7 +90,7 @@ FID20은 초 정밀도이며 표시값과 수신 시각의 차이를 순수 네�
 **SQL 집계도, 무부호 체결 40,564건의 확인도 아니다.** whole-file에서 실제 control/reason별 count와 대조한다.
 전체 문제를 말미 5건으로 축소하거나 15:30 절단으로 합격한다고 가정하지 않는다.
 
-## SQLite sidecar — 보존, 운영 미해결
+## SQLite sidecar — 합성 일부 미검증, 운영 미승인
 
 최초 표본 조회 전 DB 본체만 있었고 조회 시각부터 아래 파일이 관측됐다는 보고다.
 - `.db-wal`: 0 bytes, 생성/수정 `2026-09-21T16:08:26.3320855+09:00`.
@@ -100,17 +103,26 @@ qualification은 별도 sealed reader이며 reparse 입력/상위 경로·sideca
 단, 파일 공유 잠금은 상위 디렉터리 전체의 이름 공간 잠금이 아니다. 외부 접근·경로 변경을 배제하지
 못하면 실행하지 않는다. immutable을 무조건 붙여 우회하지 않는다.
 
-sidecar 처리의 우선 실험 후보는 SQLite-managed open/close다. 이것은 원본을 바꿀 수 있는 처리이므로
-현재 운영 DB에 실행하지 않는다. 보호 핸들 해제 후 SQLite 연결까지의 경합도 검증 대상이다.
-0-byte WAL/32 KiB SHM만으로 삭제를 승인하지 않는다. 상세 실험·거부 기준은 런북 한 곳에 둔다.
+전용 lab을 Windows 11/64-bit Python 3.14.7/SQLite 3.53.1/NTFS에서 실행했다. 최종 근거는
+`%TEMP%/Stock_raw_sidecar_lab_d2799ff9fb0e4bf78ebf9b35f8753fdd/result.json`이다.
+일반 mode=ro 실제 조회가 0-byte WAL/32 KiB SHM을 만들고 명시적 close·자식 exit 뒤에도 남기는 현상을
+재현했다. 합성 복제본에서 쓰기 가능 connect/close만으로는 안 없어졌고, metadata 페이지 read 뒤
+cursor/connection close에서는 main SHA-256·전체 2행·payload checksum을 유지한 채 없어져 qualification이
+통과했다. 일반 reader 재조회는 sidecar를 다시 만들었다.
+
+그러나 committed WAL의 표식 행은 main-only 복사에서 사라졌고, rollback journal/incomplete/출처 불명
+sidecar/junction은 모두 거부 대상이다. 열린 WAL handle에서는 SHM만 없어지고 WAL은 남았다. sealed handle
+유지 중 write는 막혔지만, handle 해제 직후 후발 writer가 먼저 진입해 commit하는 경합과 경로 identity
+교체가 재현됐다. 처리 전체의 연속 배제 조건을 입증하지 못했으므로 **합성은 일부 미검증, 운영은 미승인**이다.
+0-byte WAL/32 KiB SHM만으로 삭제를 승인하지 않는다. 상세 수치·허용 후보·거부 조건은 런북 한 곳에 둔다.
 
 ## 바로 다음 작업과 역할
 
-1. 로컬은 최신 master/PR #8·CI와 사용자 변경을 확인한 뒤 작은 합성 DB만으로 위 sidecar 절차를 검증한다.
-   기존 운영 raw/evidence를 조회·해시·복사하거나 sidecar를 정리하지 않는다. 합성 근거는 새 경로에만 남긴다.
-2. 이 ChatGPT 대화에서 합성 보고·코드·잠금/내용 보존 반례를 대조한다. 충분 조건이 입증되지 않으면 차단 유지.
-3. 그 뒤 별도 대상·조건·승인을 받은 로컬 컨텍스트에서만 실제 sidecar를 처리한다. 이번 인계는 삭제 승인이 아니다.
-4. sidecar 해결 뒤에만 50.6GB qualification의 장외 시각·I/O/시간·중단 기준·공간·새 출력 경로와
+1. 합성 결과·코드·잠금/내용 보존 반례를 이 ChatGPT 대화에서 검토한다. 현재는 차단을 유지한다.
+2. 실제 처리를 검토하려면 비협조적 후발 writer와 경로 교체까지 처리 전체에서 막는 운영 격리 조건,
+   대상 identity/sidecar 출처, 실패 시 원본 보존·복구 절차를 별도로 설계하고 승인받는다.
+3. 승인 전 운영 raw/evidence를 조회·해시·복사하거나 sidecar를 정리하지 않는다. 이번 인계는 삭제 승인이 아니다.
+4. 승인된 sidecar 해결 뒤에만 50.6GB qualification의 장외 시각·I/O/시간·중단 기준·공간·새 출력 경로와
    동시 collector 부재를 확정한다. 실제 검사 실행도 이번 작업 범위가 아니다.
 5. whole-file 결과에서 stream integrity·reason별 count·종목/시간 분포·예상 40,564를 대조한 뒤
    다음 연구 입력 정책을 결정한다. 결과 전에 후보 승격·재수집·파생 경로·시간 절단을 자동 승인하지 않는다.

@@ -49,6 +49,7 @@ raw-v2는 원문만 저장하고 정규화를 훗날 처음 하는 구조가 아
 | NXT/애프터마켓 실험 | logger의 명시적 구독 계획/전환 옵션 | 기본 경로와 별개. 전환·제한 시간 관련 코드가 존재하지만 실피드 coverage/venue 인증과 같지 않음. 첫 기본 수집에 자동 적용하지 않음 |
 | 제한 표본 | [inspect_raw_v2_sample](../scripts/inspect_raw_v2_sample.py) | 닫힌 파일의 작은 seq 구간만 검사. 저장 당시 정책을 재적용. 전략 실행·전체 checksum 없음 |
 | whole-file qualification | [qualify_raw_v2](../scripts/qualify_raw_v2.py) | Windows 로컬 NTFS·sidecar 없음·write/delete handle 배제를 전제로 전체 구조/checksum과 품질 적합성을 분리. 전략 실행 없음 |
+| sidecar 합성 lab | [lab_raw_v2_sidecars](../scripts/lab_raw_v2_sidecars.py) | 외부 DB 인자를 받지 않고 UUID/marker가 있는 임시 NTFS fixture만 생성·실측. 운영 cleanup 도구가 아니며 결과도 운영 승인이 아님 |
 | 화면 연구 계획 | `service.plan_replay()` | 헤더만 읽어 계획 저장. 등록 성공은 입력 승인/실행 성공 아님 |
 | 화면 장외 실행 | `offline_worker.run_replay_job()` | 평일 시간/수집 잠금/상태 가드와 크기·건수 제한. 전체 reader 소진 후 연구 실행 |
 | 직접 연구 CLI | [run_tick_research](../scripts/run_tick_research.py) → `run_raw_v2()` | 화면의 시간·수집 잠금·크기 제한을 자동 상속하지 않음. 장외 실행은 운영자가 보장. 검증과 전략 재생이 함께 진행 |
