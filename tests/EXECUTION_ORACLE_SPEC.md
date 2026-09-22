@@ -3,7 +3,7 @@
 기준: `98725431ca84f6fc88efb293e126b915799f0a28` (PR #10 병합).
 [실행 계약](../TICK_RESEARCH_RUNBOOK.md#simulation-reality-contract-v1) ·
 [시뮬레이터](../execution/tick_simulator.py) · [현재 인계](../HANDOFF.md).
-이 파일은 **테스트 명세·감사 한계·반례**를 담당한다. 운영 실행 규칙의 기계적 설명은
+이 파일은 **테스트 명세·감사 한계·반례**를 담당한다. 기계적 실행 설명은
 `execution/reality_contract.py`, 연구 사용 안내는 기존 런북이 담당한다.
 
 ## 1. 구현 관찰과 독립적인 기대를 분리
@@ -13,7 +13,7 @@
 `ARCHITECTURE_TICK.md` §11 C, 런북의 실행 모델/순서, PR #10 계약을 출발점으로 삼는다.
 시장가 buy는 유효한 ask, sell은 bid로 거래한다. 양쪽 유한 양수 가격/정수 잔량,
 양수 spread, 호가 나이 이하 조건이 모두 필요하다. 체결가 fallback은 없다.
-주문 ready 이전, 효력 있는 취소 이후, exclusive close 이상에서는 체결할 수 없다.
+주문 ready 이전, 이미 효력 있는 취소 뒤, exclusive close 이상에서는 체결할 수 없다.
 같은 시각의 타이머는 이전 호가를 보고, 외부 이벤트는 수신 seq순이며 전략은 그 뒤에 호출된다.
 지연 0 주문도 제출 전에는 존재하지 않는다. 호가 budget은 새 quote seq에서만 갱신된다.
 잔여량은 유지하고 마감에 만료한다. 공매도/차입/허위 청산을 만들지 않는다.
@@ -38,11 +38,10 @@ endpoint에서도 매칭하므로 마지막 deadline과 endpoint가 같아도 �
 기존 문자열은 자원이 생긴 뒤 재시도할 수 있다고만 설명했다. **즉시 고정점까지 재매칭**하는
 정책과 **다음 매칭 라운드에서만 재시도**하는 정책을 구별하지 못했다. 이 감사의 기본 oracle는
 기존 동작을 바꾸지 않는 두 번째 해석을 명시한다. 이는 문서에서 유일하게 도출된 시장 정답이
-아니며, phase multiplicity까지 고정한 공개 호출 계약의 보완이다.
+아니며, 매칭 횟수까지 고정한 공개 호출 계약의 보완이다.
 
-따라서 oracle 일치는 이 명시적 해석과 유한 수치 범위에서의 일치다. 원래의 모호한 문구가
-충분했다는 증명도, production 구현의 무제한 상태 공간 증명도 아니다.
-추가 advance 삽입/삭제는 경제적으로 무관한 변형이라고 가정하지 않는다.
+따라서 oracle 일치는 이 명시적 해석과 유한 수치 범위에서의 일치다. 원래 문구의 충분성이나
+production의 무제한 상태 공간을 증명하지 않는다. 추가 advance 삽입/삭제는 불변 변형이 아니다.
 
 ## 2. 독립성 및 범위
 
@@ -60,7 +59,7 @@ Fraction은 arbitrary Decimal context의 반올림을 복제하지 않는다. �
 
 ## 3. 유한 전수 공간
 
-[전수 테스트](test_execution_oracle_audit.py)는 다음 다섯 개의 별도 직교 행렬을 실행한다.
+[전수 테스트](test_execution_oracle_audit.py)는 다섯 개의 별도 직교 행렬을 실행한다.
 각 public command 직후 fill의 ID/방향/수량/가격/시각/fee/quote seq, cash, position,
 주문 총량/잔여량/ready/cancel/status, clock/closed를 비교한다. private budget/audit는 비교하지 않는다.
 
@@ -81,9 +80,11 @@ Fraction은 arbitrary Decimal context의 반올림을 복제하지 않는다. �
 
 ## 4. 불변식과 변형 관계
 
-각 checkpoint에서 oracle와 별개로 전체 fill ledger를 재합산한다. cash/position 비음수,
+각 checkpoint에서 oracle와 별개로 fill ledger를 재합산한다. cash/position 비음수,
 주문량 보존, quote seq/방향별 budget 상한, buy ask/sell bid, fee 합산,
 ready/cancel/close 인과 경계와 stale 조건을 검사한다.
+취소 요청 전 확정된 fill이 지연 0 취소와 같은 ns를 가질 수 있으므로, 해당 과거 prefix는 보존한다.
+요청 이후 생기는 fill에는 `time < cancel_effective_time`을 엄격하게 적용한다.
 
 [변형 테스트](test_execution_metamorphic.py): 미래 suffix와 완료 prefix 분리,
 동일 외부 호출열의 모든 chunk 경계, 접수순을 유지한 order ID 전단사 치환,
@@ -97,7 +98,8 @@ fee 단조성은 **동일 호가의 단일 buy·추가 자원/갱신 없음**에
 unused provenance/raw envelope의 경제적 비간섭과 입력 identity 변화,
 Decimal context별 계약 identity, 늦은 iterator 오류의 전체 실패 전파를 검사한다.
 `raw_manifest`처럼 상태 분류가 사용하는 예약 metadata는 unused가 아니다.
-입력 능력과 not_modeled 설명을 변경해 새로운 모델을 몰래 활성화하지 않는다.
+[계약 보완 회귀](test_execution_contract_audit.py)는 v1 타입 유지, 라운드 설명,
+취소 인과성, 한 advance 안에서의 예약 deadline 유지 및 명세 링크도 검사한다.
 
 ## 5. 불일치와 최소 반례의 분류
 
@@ -137,9 +139,8 @@ fee=0.005, size=1, buy latency=0에서 quote 후 buy1을 제출한다.
 production은 `1+fee`를 먼저 1.00으로 반올림하여 1주를 허용하고,
 실제 차감은 별도 반올림되어 cash=-0.01/position=1, fee=0.00505가 된다.
 
-근거: `_match`의 capacity 산식과 별도 gross/fee 차감, 생성자가 이 유효 context/입력을 거부하지 않음.
-Python Decimal 문서는 context의 정밀도/반올림이 연산에 적용됨을 설명한다.
-<https://docs.python.org/3/library/decimal.html#floating-point-notes>
+근거: `_match`의 capacity 산식과 별도 gross/fee 차감, 생성자가 이 context/입력을 거부하지 않음.
+Python Decimal의 정밀도/반올림 설명: <https://docs.python.org/3/library/decimal.html#floating-point-notes>.
 context를 기록하고 안정적으로 유지하는 것만으로 solvency가 보장되지는 않는다.
 이는 oracle rounding 복제 누락으로 정상화할 문제가 아니라 **음수 cash라는 독립 불변식 위반**이다.
 경제적 영향이 있어 수정은 별도 PR로 분리한다. 정밀도/입력 규모의 지원 범위와 체결전 차감 검증을
@@ -156,20 +157,37 @@ production은 `running` result만 남기고 `ResearchRunFailed`/완료 진단을
 경제적 체결 결과는 없는 최소 사례다. 정상 run_raw_v2가 만드는 manifest의 결함을 뜻하지 않는다.
 입력 검증/진단 보완 후속으로 분리하고 재현 테스트와 별도 `strict xfail`로 추적한다.
 
+### AUD-1 — 감사기 자체 오류, 수정
+
+첫 CI는 `tests` 패키지의 보조 모듈 import 경로 오류로 collection 단계에서 중단됐다.
+수정 뒤의 CI에서 다음 두 검사기 오류도 발견했다. production과 oracle 전이는 일치한 상태였다.
+
+- q@0(size1) -> buy2(latency0) -> cancel(latency0)에서 이미 확정된 buy1@0까지
+  `fill_time < cancel_time`으로 소급 거부했다. 취소 요청 당시 fill prefix와 요청 이후를 분리해 수정했다.
+  기존 callback 취소의 소급 금지 계약이 근거이며 새 quote@0에도 잔여 주문이 체결되지 않는 회귀를 추가했다.
+- ID 치환 시험에서 q@0와 q@1의 각 size2를 보고 세 주문 모두의 체결을 기대했다.
+  그러나 latency2라면 첫 quote를 소모하기 전에 두 번째 quote가 **대체**하므로 두 주문만 체결된다.
+  손계산 기대 수량을 delay2에서 2, delay0/1에서 3으로 바로잡았다. ID 치환 불변식은 유지했다.
+
+oracle의 수량 산식/상태전이, production 체결 행동을 이 실패에 맞춰 변경하지 않았다.
+이는 oracle bug 범주에 가까운 **검증 harness/기대 assertion 오류**이며 production 버그로 집계하지 않는다.
+
 ## 6. 변경/해석 한계와 다음 검증
 
 TickSimulator/ReceiveOrderReplay/quote validation/전략/연구 실행기의 행동은 바꾸지 않는다.
-계약 v1의 기존 필드 타입은 유지하고 자원 재시도/매칭 라운드 설명을 additive로 보완한다.
+계약 v1의 기존 필드 타입은 유지하고 `resource_retry_policy`, `same_timestamp_policy.matching_rounds`,
+공개 호출열 의존성과 `numeric_safety`를 additive로 보완한다. 음수 cash를 올바른 정책으로 허용하는 수정이 아니다.
+`input_capabilities`의 형식 지원과 관측 인증 구분은 유지한다. 응답 지연 미모델링, 부분체결,
+유동성 재충전 및 마감 설명도 읽고 대조했으며 새 기능을 주장하지 않는다.
 설명/관련 코드 hash가 달라져 contract_sha256 및 reproducibility_key가 바뀌지만
-과거 파일을 덮어쓰거나 v2로 자동 재발급하지 않는다.
+과거 파일을 덮어쓰거나 v2로 자동 재발급하지 않는다. 고정 연구 실행기의 호출열은 해당 코드와 이벤트에서 결정된다.
 
-CI success는 6,912개 기본 도메인의 일치와 감사 회귀 통과를 뜻한다. NUM-1/RUN-1의
-예상 실패 두 건을 해결했다는 뜻이 아니다. 최종 HEAD/run/job/실측 수치는 PR 본문에 남긴다.
-지원 수치 범위의 solvency 검증을 첫 실제 연구 전에 확정해야 한다. 자원 부족 양방향 주문을
-쓰는 호출자는 advance 일정의 의미도 먼저 받아들여야 한다. 실제 strategy 전체, 임의 타입,
-극대 수량/지수, 실행 중 context 변경, 전 피드/전 날짜의 정확성은 이 유한 감사로 증명하지 않는다.
+CI success는 유한 감사 회귀의 통과를 뜻한다. NUM-1/RUN-1의 예상 실패 두 건을 해결했다는 뜻이 아니다.
+최종 HEAD/run/job/실측 수치는 PR 본문에 남긴다. 지원 수치 범위의 solvency 검증을 첫 실제 연구 전에
+확정해야 한다. 자원 부족 양방향 주문을 쓰는 호출자는 advance 일정의 의미도 먼저 받아들여야 한다.
+실제 strategy 전체, 임의 타입, 극대 수량/지수, 실행 중 context 변경, 전 피드/전 날짜의 정확성은 미증명이다.
 
 queue, impact, L2/L3, MBO, response/feed latency는 모델링하지 않는다. top1 새 snapshot을
-실제 신규 유동성으로 재인식하는 가정은 특히 큰 한계다. 실제 원천 정확성·체결 가능성·수익성은 미인증이다.
+실제 신규 유동성으로 재인식하는 가정은 특히 큰 한계다. 원천 정확성·실제 체결 가능성·수익성은 미인증이다.
 사용자 Windows 저장소, 실제 raw/evidence/DB, OCX, live collector, qualification,
 실제 백테스트와 로컬 git 조작은 이번 작업의 입력/실행 범위가 아니다.

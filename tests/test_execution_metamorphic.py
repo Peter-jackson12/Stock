@@ -31,7 +31,10 @@ def test_id_alpha_renaming_preserves_submission_order_economics():
             if reference is None:
                 reference = result
             assert result == reference
-            assert [f.order_id for f in pair.sim.fills] == list(ids)
+            # delay=2이면 초기 quote를 소비하기 전에 새 quote로 교체된다.
+            # 두 snapshot의 budget을 합산하지 않으므로 그 경우 2주만 체결된다.
+            expected_count = 2 if delay == 2 else 3
+            assert [f.order_id for f in pair.sim.fills] == list(ids[:expected_count])
 
 
 def test_future_suffix_cannot_rewrite_committed_prefix_fills():
@@ -75,7 +78,7 @@ def test_all_chunk_partitions_preserve_economics_without_extra_clock_calls():
             sim = TickSimulator(**cfg)
             def strategy(view, account):
                 for command in scripted_orders(view.event.seq):
-                    invoke(account, command)
+                    invoke(simulator=account, command=command)
             for chunk in chunks:
                 replay_chunk(sim, chunk, strategy)
             sim.close(6)

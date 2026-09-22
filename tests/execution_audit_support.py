@@ -20,9 +20,9 @@ def quote(seq=1, ns=0, **changes):
     return replace(event, **changes)
 
 
-def invoke(sim, command):
+def invoke(simulator, command):
     op, *args = command
-    return getattr(sim, "on_event" if op == "event" else op)(*args)
+    return getattr(simulator, "on_event" if op == "event" else op)(*args)
 
 
 def observable(sim):
@@ -49,9 +49,11 @@ class Pair:
         self.quotes = {}
         self.checkpoints = 0
         self.close_ns = None
+        self.cancel_request_prefix = {}
 
     def apply(self, *command):
         self.trace.append(command)
+        before_fills = len(self.sim.fills)
         if command[0] == "event" and command[1].kind == "quote":
             self.quotes[command[1].seq] = command[1]
         if command[0] == "close":
@@ -63,6 +65,8 @@ class Pair:
         assert actual == expected, (self.cfg, self.trace, "production", actual, "oracle", expected)
         if command[0] in ("submit", "cancel"):
             assert actual_return == expected_return
+        if command[0] == "cancel" and actual_return:
+            self.cancel_request_prefix[command[1]] = before_fills
         self.assert_invariants()
         self.checkpoints += 1
         return self
@@ -74,11 +78,15 @@ class Pair:
         cash = Fraction(str(self.cfg["cash"]))
         position = 0
         quantities, liquidity = Counter(), Counter()
-        for fill in sim.fills:
+        for index, fill in enumerate(sim.fills):
             order = sim.orders[fill.order_id]
             assert fill.quantity > 0 and fill.side == order.side
             assert fill.time_ns >= order.ready_ns
-            assert order.cancel_ns is None or fill.time_ns < order.cancel_ns
+            # 같은 ns라도 요청 전 확정된 fill은 지연 0 취소로 소급 취소하지 않는다.
+            # 요청 이후 새 fill에는 effective cancel의 strict 경계를 적용한다.
+            before_request_at_tie = (index < self.cancel_request_prefix.get(fill.order_id, 0)
+                                     and fill.time_ns == order.cancel_ns)
+            assert order.cancel_ns is None or fill.time_ns < order.cancel_ns or before_request_at_tie
             assert self.close_ns is None or fill.time_ns < self.close_ns
             q = self.quotes[fill.quote_seq]
             assert 0 <= fill.time_ns - q.received_ns <= self.cfg["max_quote_age_ns"]

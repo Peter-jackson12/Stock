@@ -34,7 +34,7 @@ jobs:
         run: >-
           uv run --locked --offline python -m pytest -q -s -ra --durations=5
           tests/test_execution_oracle_audit.py tests/test_execution_metamorphic.py
-          tests/test_execution_research_audit.py
+          tests/test_execution_research_audit.py tests/test_execution_contract_audit.py
       - name: Run execution reality synthetic regressions
         run: >-
           uv run --locked --offline python -m pytest -ra
