@@ -680,7 +680,7 @@ class KiwoomUniverseLogger:
             self.log.emit(f"⚠️ 전환 중 콜백 {len(record.callbacks_during)}건 보존"
                           f"{f', {record.callbacks_dropped}건 한도 초과로 누락' if record.callbacks_dropped else ''}"
                           " — 진단 저장 성공 여부는 recording_error와 함께 확인한다")
-        return result if False else record
+        return record
 
     def _write_transition_record(self):
         """새 세션 생성 전부터 같은 별도 경로에 단계별 진단을 저장한다."""
@@ -863,7 +863,7 @@ class KiwoomUniverseLogger:
                 break
 
             # 명시적 전환 트리거 감지. 실제 OCX 호출(run_aftermarket_transition)은
-            # Qt 스레드의 _poll_control 에서만 한다 — 여기서는 조건만 세운다.
+            # Qt 스레드에서 한 번만 한다 — 여기서는 조건만 세운다.
             # self.transition is None 가드가 한 번만 세우는 것을 보장한다: 전환이
             # 시작되면(성공이든 실패든) 바로 채워지고, 트리거는 다시 세워지지 않는다.
             if (self.aftermarket_plan is not None and self.transition is None
