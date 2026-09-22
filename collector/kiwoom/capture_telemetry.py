@@ -87,6 +87,7 @@ class CaptureTelemetry:
         self._samples_lock = threading.Lock()
         self._flush_lock = threading.Lock()
         self._last_flush_ns = None
+        self._close_requested = False
         # entries, returns, inflight, last_enter_ns, last_return_ns,
         # last_duration_ns, last_return_id, outcome, connection_observation
         self._poll = (0, 0, 0, None, None, None, None, None, None)
@@ -192,11 +193,14 @@ class CaptureTelemetry:
     def poll_snapshot(self, now_ns):
         state = self._poll
         connection = state[8]
+        entry_age = None if state[3] is None else now_ns - state[3]
+        return_age = None if state[4] is None else now_ns - state[4]
+        entry_age = entry_age if entry_age is None or entry_age >= 0 else None
+        return_age = return_age if return_age is None or return_age >= 0 else None
         return dict(entries=state[0], returns=state[1], in_flight=state[2],
             last_entry_ns=state[3], last_return_ns=state[4], last_duration_ns=state[5],
             last_return_id=state[6], last_outcome=state[7],
-            entry_age_ns=None if state[3] is None else now_ns - state[3],
-            return_age_ns=None if state[4] is None else now_ns - state[4],
+            entry_age_ns=entry_age, return_age_ns=return_age,
             connection=None if connection is None else dict(poll_id=connection[0],
                 observed_ns=connection[1], value_type=connection[2], value=connection[3],
                 truncated=connection[4]),
@@ -246,24 +250,38 @@ class CaptureTelemetry:
             self.disable(f"flush:{type(exc).__name__}")
             return False
         finally:
+            if self._close_requested and not self.closed:
+                try:
+                    self._close_stream_locked()
+                except Exception as exc:
+                    self.disable(f"close:{type(exc).__name__}")
             self._flush_lock.release()
+
+    def _close_stream_locked(self):
+        """_flush_lock 소유 중에만 호출한다. 실제 close 성공 뒤에만 closed를 세운다."""
+        if self.stream is not None:
+            self.stream.close()
+            self.stream = None
+        self.closed = True
 
     def close(self):
         if self.closed:
             return True
+        # 다른 thread가 flush 중이면 그 flush의 finally가 닫기를 인계받는다.
+        # 호출자는 False를 pending으로 기록하고 후속 정리 단계에서 재확인할 수 있다.
+        self._close_requested = True
         try:
             self.flush(force=True)
         except Exception as exc:
-            # 最終 flush의 예외도 파일 닫기를 건너뛰게 해서는 안 된다.
+            # 최종 flush의 예외도 파일 닫기를 건너뛰게 해서는 안 된다.
             # 앞서 기록된 진단 오류는 disable의 first-error 정책으로 보존한다.
             self.disable(f"close_flush:{type(exc).__name__}")
+        if self.closed:
+            return True
         if not self._flush_lock.acquire(blocking=False):
             return False
         try:
-            if self.stream is not None:
-                self.stream.close()
-                self.stream = None
-            self.closed = True
+            self._close_stream_locked()
             return True
         except Exception as exc:
             self.disable(f"close:{type(exc).__name__}")
