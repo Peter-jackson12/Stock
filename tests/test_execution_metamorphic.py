@@ -1,7 +1,9 @@
 """참인 변형 관계와 참이 아닌 advance 분할 반례를 분리한다."""
 from dataclasses import replace
-from decimal import Context, Decimal, ROUND_HALF_EVEN, localcontext
+from decimal import Context, Decimal, ROUND_HALF_EVEN, ROUND_FLOOR, ROUND_CEILING, localcontext
+from fractions import Fraction
 from itertools import permutations, product
+from time import perf_counter
 
 import pytest
 
@@ -212,14 +214,159 @@ def low_precision_case():
 def test_known_low_precision_solvency_counterexample_is_reproduced():
     sim, ref = low_precision_case()
     # 독립 손계산: 1.01 * 1.005 = 1.01505 > 1.01, 따라서 매수 불가.
+    # PR #11의 동일 반례를 유지한다. d431308의 strict XPASS 확인 후 정상 회귀로 전환.
     assert ref.state.fills == () and ref.state.cash == Decimal("1.01")
-    assert sim.position == 1 and sim.cash == Decimal("-0.01")
-    assert sim.fills[0].fee == Decimal("0.00505")
+    assert sim.position == 0 and sim.cash == Decimal("1.01")
+    assert sim.fills == []
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="NUM-1: 유효하지만 낮은 Decimal precision에서 현금 보존/독립 oracle 위반; 미수정")
 def test_known_low_precision_must_preserve_cash_and_match_exact_oracle():
     sim, ref = low_precision_case()
     assert sim.cash >= 0
     assert observable(sim) == ref.export()
+
+
+def _fixture_decimal_text(value):
+    """이 행렬의 유리수만 12자리 고정 격자로 옮긴다. SUT helper/Decimal 연산 없음."""
+    units = value * 10 ** 12
+    assert units.denominator == 1 and units >= 0
+    whole, fraction = divmod(units.numerator, 10 ** 12)
+    return f"{whole}.{fraction:012d}"
+
+
+def test_numeric_bounded_precision_rounding_and_exact_cost_matrix():
+    started, count, checkpoints = perf_counter(), 0, 0
+    grid = product((1, 3, 6, 12, 28), (ROUND_HALF_EVEN, ROUND_FLOOR, ROUND_CEILING),
+                   (("2", "3"), ("1", "1.01"), ("0.00006", "0.00007")),
+                   ("0", "0.005", "0.2"), (1, 2, 3), (-1, 0, 1), (1, 2))
+    for prec, rounding, (bid, ask), fee, qty, offset, size in grid:
+        exact = qty * Fraction(ask) * (1 + Fraction(fee))
+        cash = _fixture_decimal_text(exact + Fraction(offset, 10 ** 12))
+        with localcontext(Context(prec=prec, rounding=rounding)):
+            pair = Pair(config(cash=cash, fee_rate=fee, max_quote_age_ns=10))
+            book = dict(bid=bid, ask=ask, bid_size=size, ask_size=size)
+            pair.apply("event", quote(**book)).apply("submit", "B", "buy", qty)
+            pair.apply("event", quote(2, 1, **book)).apply("event", quote(3, 2, **book))
+            # Buy capacity is tested before selling can add cash; partial fills
+            # use three bounded snapshots, and the remainder is then cancelled.
+            expected_bought = qty - 1 if offset < 0 else qty
+            assert pair.sim.position == expected_bought
+            pair.apply("cancel", "B").apply("submit", "S", "sell", qty)
+            pair.apply("event", quote(4, 3, **book)).apply("event", quote(5, 4, **book))
+            pair.apply("close", 6)
+            assert pair.sim.position == 0
+            count += 1
+            checkpoints += pair.checkpoints
+    assert (count, checkpoints) == (2430, 21870)
+    print(f"NUMERIC_MATRIX affordability: traces={count} checkpoints={checkpoints} seconds={perf_counter()-started:.3f}")
+
+
+def test_numeric_fee_monotonicity_across_bounded_contexts():
+    count, checkpoints = 0, 0
+    for prec, rounding, cash in product((1, 3, 28), (ROUND_HALF_EVEN, ROUND_FLOOR, ROUND_CEILING),
+                                        ("1.01", "2.0301", "3.1")):
+        quantities = []
+        for fee in ("0", "0.005", "0.1", "0.2"):
+            with localcontext(Context(prec=prec, rounding=rounding)):
+                pair = execute(config(cash=cash, fee_rate=fee),
+                               [("event", quote(bid="1", ask="1.01", ask_size=3)),
+                                ("submit", "B", "buy", 3), ("close", 2)])
+                quantities.append(pair.sim.position)
+                count += 1
+                checkpoints += pair.checkpoints
+        assert quantities == sorted(quantities, reverse=True)
+    assert (count, checkpoints) == (108, 324)
+    print(f"NUMERIC_MATRIX monotonicity: traces={count} checkpoints={checkpoints}")
+
+
+def test_numeric_precision_28_is_not_an_unbounded_safety_guarantee():
+    price = "1.0000000000000000000000000001"
+    with localcontext(Context(prec=28, rounding=ROUND_HALF_EVEN)):
+        # Historical capacity's rounded unit cost hid this exact over-budget amount.
+        assert Decimal(price) * (1 + Decimal(0)) == Decimal(1)
+        pair = execute(config(cash="1", fee_rate="0"),
+                       [("event", quote(bid="0.9", ask=price)), ("submit", "B", "buy", 1)])
+        assert pair.sim.fills == [] and pair.sim.cash == 1
+
+
+@pytest.mark.parametrize("cash,bid,ask,fee", [
+    ("4e64", "1e64", "2e64", "1e-64"),
+    ("4e-64", "1e-64", "2e-64", "0"),
+    ("9" * 64, "1", "8" * 64, "0"),
+])
+def test_numeric_envelope_endpoints_ignore_context_traps_and_exponents(cash, bid, ask, fee):
+    with localcontext(Context(prec=1, rounding=ROUND_CEILING, Emin=-2, Emax=2, clamp=1)) as context:
+        for signal in context.traps:
+            context.traps[signal] = True
+        context.clear_flags()
+        pair = execute(config(cash=cash, fee_rate=fee),
+                       [("event", quote(bid=bid, ask=ask)), ("submit", "B", "buy", 1),
+                        ("submit", "S", "sell", 1), ("close", 2)])
+        assert pair.sim.position == 0 and len(pair.sim.fills) == 2
+        assert not any(context.flags.values())
+
+
+@pytest.mark.parametrize("changes", [
+    {"cash": "1e65"}, {"cash": "1e-65"}, {"cash": "9" * 65},
+    {"fee_rate": "1e-65"}, {"fee_rate": "0.1" + "0" * 64},
+])
+def test_numeric_unsupported_constructor_values_fail_closed(changes):
+    with pytest.raises(ValueError, match="numeric envelope"):
+        TickSimulator(**config(**changes))
+
+
+@pytest.mark.parametrize("changes", [
+    {"ask": "1e65"}, {"bid": "1e-65"}, {"ask": "9" * 65},
+    {"ask_size": 10 ** 18 + 1}, {"bid_size": 10 ** 18 + 1},
+])
+def test_numeric_out_of_range_quote_does_not_advance_or_poison_replay(changes):
+    sim = TickSimulator(**config(buy_latency_ns=1))
+    sim.on_event(quote())
+    sim.submit("B", "buy", 1)
+    before = observable(sim), list(sim.audit)
+    with pytest.raises(ValueError, match="numeric envelope"):
+        sim.on_event(quote(2, 1, **changes))
+    assert (observable(sim), sim.audit) == before
+    # Same sequence remains usable; the rejected event neither filled old orders
+    # nor advanced the receive-order cursor.
+    sim.on_event(quote(2, 1))
+    assert sim.position == 1 and sim.fills[0].time_ns == 1
+
+
+def test_numeric_quantity_envelope_is_checked_before_order_creation():
+    sim = TickSimulator(**config())
+    sim.on_event(quote())
+    before = observable(sim), list(sim.audit)
+    with pytest.raises(ValueError, match="numeric envelope"):
+        sim.submit("B", "buy", 10 ** 18 + 1)
+    assert (observable(sim), sim.audit) == before
+    sim.submit("B", "buy", 1)
+    assert sim.position == 1
+
+
+def test_numeric_maximum_quantity_uses_integer_capacity_not_decimal_quotient_limit():
+    n = 10 ** 18
+    with localcontext(Context(prec=1)):
+        sim = TickSimulator(**config(cash=3 * n))
+        sim.on_event(quote(bid_size=n, ask_size=n))
+        sim.submit("B", "buy", n)
+        assert sim.cash == 0 and sim.position == n and sim.orders["B"].remaining == 0
+        sim.submit("S", "sell", n)
+        assert sim.position == 0 and sim.cash == 2 * n
+
+
+def test_numeric_ledger_guard_does_not_commit_or_consume_a_rejected_fill(monkeypatch):
+    import execution.tick_simulator as module
+    sim = TickSimulator(**config(cash="10", fee_rate="0.01"))
+    sim.on_event(quote(ask_size=2))
+    # Synthetic reduced envelope makes the normally unreachable long-run limit
+    # testable without enormous state or modifying the account balance directly.
+    with monkeypatch.context() as patch:
+        patch.setattr(module, "MAX_LEDGER_DIGITS", 2)
+        with pytest.raises(ValueError, match="resulting cash"):
+            sim.submit("B", "buy", 2)
+    assert sim.cash == 10 and sim.position == 0 and sim.fills == []
+    assert sim.orders["B"].remaining == 2 and sim.orders["B"].status == "pending"
+    sim.advance(0)
+    assert sim.position == 2 and sim.cash == Decimal("3.94")
+    assert len(sim.fills) == 1 and sim.fills[0].quantity == 2

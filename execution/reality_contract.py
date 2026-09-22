@@ -6,6 +6,9 @@
 from decimal import getcontext
 from typing import TYPE_CHECKING
 
+from execution.tick_simulator import (MAX_INPUT_DIGITS, MAX_INPUT_EXPONENT,
+                                      MAX_LEDGER_DIGITS, MAX_LEDGER_EXPONENT, MAX_QUANTITY)
+
 if TYPE_CHECKING:
     from execution.tick_simulator import TickSimulator
 
@@ -68,13 +71,35 @@ def simulation_contract(sim: "TickSimulator") -> dict:
             "rate": str(sim.fee_rate),
             "research_requires_explicit_rate": True,
             "separate_tax_or_broker_schedule": "not_modeled",
-            "currency_quantization": "none_beyond_decimal_context",
+            "currency_quantization": "none_exact_finite_decimal",
         },
         "numeric_safety": {
             "arbitrary_context_and_input_magnitude": "not_certified",
             "post_debit_solvency_guard": False,
-            "known_issue": "NUM-1_low_precision_can_admit_buy_and_produce_negative_cash",
+            "known_issue": "none",
+            "resolved_issues": ["NUM-1"],
             "stable_context_alone_guarantees_solvency": False,
+            "arithmetic": "exact_finite_decimal_integer_coefficients_v1",
+            "scope": "simulator_affordability_gross_fee_cash_not_strategy_arithmetic",
+            "affordability": "exact_integer_floor_of_cash_over_price_times_one_plus_fee",
+            "pre_fill_solvency_check": True,
+            "state_commit": "only_after_exact_cost_cash_and_ledger_envelope_checks",
+            "ambient_decimal_context": "does_not_round_execution_ledger_strategy_still_uses_it",
+            "numerical_envelope": {
+                "representation": "Decimal_str_input_no_normalization_of_trailing_zeros",
+                "input_coefficient_digits_max": MAX_INPUT_DIGITS,
+                "input_exponent_min": -MAX_INPUT_EXPONENT,
+                "input_exponent_max": MAX_INPUT_EXPONENT,
+                "input_fields": ["initial_cash", "fee_rate", "positive_finite_bid", "positive_finite_ask"],
+                "fee_rate_range": "0_lte_rate_lt_1",
+                "quantity_and_displayed_side_size_max": MAX_QUANTITY,
+                "cash_ledger_coefficient_digits_max": MAX_LEDGER_DIGITS,
+                "cash_ledger_exponent_min": -MAX_LEDGER_EXPONENT,
+                "cash_ledger_exponent_max": MAX_LEDGER_EXPONENT,
+                "out_of_range": "ValueError_before_constructor_acceptance_order_submission_or_quote_replay",
+                "ledger_exhaustion": "ValueError_before_committing_that_fill_not_rollback_of_prior_fills",
+            },
+            "currency_rounding_tick_size_and_market_rules": "not_certified",
         },
         "slippage_model": {
             "status": "not_modeled_separately",

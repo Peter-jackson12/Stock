@@ -19,11 +19,23 @@ def test_resource_clarification_preserves_v1_field_types():
     assert contract["same_timestamp_policy"]["matching_rounds"]["deadline_endpoint_tie"] == "two_separate_rounds"
 
 
-def test_numeric_limit_is_not_disguised_as_a_corrected_solvency_policy():
+def test_numeric_limit_is_not_disguised_as_unbounded_solvency_certification():
     contract = simulation_contract(TickSimulator(**config()))
-    assert contract["numeric_safety"]["post_debit_solvency_guard"] is False
-    assert contract["numeric_safety"]["stable_context_alone_guarantees_solvency"] is False
-    assert contract["numeric_safety"]["known_issue"].startswith("NUM-1_")
+    numeric = contract["numeric_safety"]
+    assert numeric["post_debit_solvency_guard"] is False
+    assert numeric["stable_context_alone_guarantees_solvency"] is False
+    assert numeric["known_issue"] == "none" and numeric["resolved_issues"] == ["NUM-1"]
+    assert numeric["arbitrary_context_and_input_magnitude"] == "not_certified"
+    assert numeric["pre_fill_solvency_check"] is True
+    assert numeric["arithmetic"] == "exact_finite_decimal_integer_coefficients_v1"
+    envelope = numeric["numerical_envelope"]
+    assert envelope["input_coefficient_digits_max"] == 64
+    assert (envelope["input_exponent_min"], envelope["input_exponent_max"]) == (-64, 64)
+    assert envelope["quantity_and_displayed_side_size_max"] == 10 ** 18
+    assert envelope["cash_ledger_coefficient_digits_max"] == 512
+    assert (envelope["cash_ledger_exponent_min"], envelope["cash_ledger_exponent_max"]) == (-128, 128)
+    assert "not_strategy" in numeric["scope"]
+    assert contract["fee_model"]["currency_quantization"] == "none_exact_finite_decimal"
     assert contract["scope"] == "single_instrument_single_venue_long_only_market_orders"
     assert input_capabilities(TickSimulator(**config()))["dataset_evidence"]["capture_completeness"] == "not_verified"
 
