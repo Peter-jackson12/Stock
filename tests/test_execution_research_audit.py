@@ -11,10 +11,10 @@ from collector.raw_v2 import RawV2Writer
 from engine.tick_research_run import ResearchRunFailed, run_raw_v2, run_research
 from engine.tick_session import replay_chunk
 from execution.tick_simulator import TickSimulator
-from execution_audit_support import config, observable, quote
-from execution_oracle import Specification
+from tests.execution_audit_support import config, observable, quote
+from tests.execution_oracle import Specification
 from strategies.nxt_breakout.tick_research import NxtResearchStrategy
-from test_execution_metamorphic import partitions
+from tests.test_execution_metamorphic import partitions
 
 
 def settings():

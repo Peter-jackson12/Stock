@@ -9,8 +9,8 @@ from itertools import product
 from pathlib import Path
 from time import perf_counter
 
-from execution_audit_support import Pair, config, quote
-from execution_oracle import Specification
+from tests.execution_audit_support import Pair, config, quote
+from tests.execution_oracle import Specification
 
 
 def finish(name, count, checkpoints, expected, started):
@@ -36,7 +36,7 @@ def test_oracle_hand_calculated_two_sided_fee_ledger():
     assert ref.state.cash == Fraction("3.6") and ref.state.position == 0
     assert ref.state.fills == (("B", "buy", 2, Fraction(3), 0, Fraction("0.6"), 1),
                                ("S", "sell", 2, Fraction(2), 0, Fraction("0.4"), 1))
-    # 同じ source を使わず、資金不足の正解も手計算で固定する。
+    # production을 사용하지 않고 자금 부족의 정답도 손계산으로 고정한다.
     poor = Specification(config(cash="3.02", fee_rate="0.01"))
     poor.apply(("event", quote()))
     poor.apply(("submit", "B", "buy", 1))

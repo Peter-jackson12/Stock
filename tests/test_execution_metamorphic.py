@@ -8,8 +8,8 @@ import pytest
 from engine.tick_session import replay_chunk
 from execution.tick_simulator import TickSimulator
 from execution.reality_contract import simulation_contract
-from execution_audit_support import Pair, config, economic, invoke, observable, quote
-from execution_oracle import Specification
+from tests.execution_audit_support import Pair, config, economic, invoke, observable, quote
+from tests.execution_oracle import Specification
 
 
 def execute(cfg, commands):

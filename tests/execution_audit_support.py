@@ -5,7 +5,7 @@ from fractions import Fraction
 
 from engine.tick_ordering import OrderedTick
 from execution.tick_simulator import TickSimulator
-from execution_oracle import Specification
+from tests.execution_oracle import Specification
 
 
 def config(**changes):
