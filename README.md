@@ -39,6 +39,7 @@ LOB/초봉 변환과 기존 런 비교는 유지하는 레거시 경로이며 �
 | 선택적 Qt 폴링·기존 FID 시각 표본과 해석 한계 | [수신 진단 계약](docs/COLLECTOR_TELEMETRY.md) |
 | raw 표본·연구 실행·결과 상태와 한계 | [틱 연구 실행 안내](TICK_RESEARCH_RUNBOOK.md) |
 | 독립 execution oracle·유한 검증 범위·미해결 반례 | [실행 감사 명세](tests/EXECUTION_ORACLE_SPEC.md) |
+| 원본 보호 handle 기반 격리 복제 합성 lab·운영 미승인 경계 | [복제 lab 명세](tests/RAW_V2_CLONE_LAB_SPEC.md) |
 | 운영 화면·제어 계약·IPC·예약·권한 | [CONTROL_TOWER](CONTROL_TOWER.md) |
 | 이벤트·시계·체결·전략의 설계 근거 | [ARCHITECTURE_TICK](ARCHITECTURE_TICK.md) |
 | Git-only/로컬 검증의 구분과 명령 | [테스트 안내](docs/TESTING.md) |

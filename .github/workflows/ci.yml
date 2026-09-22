@@ -29,6 +29,27 @@ jobs:
           enable-cache: false
       - name: Install locked dependencies
         run: uv sync --locked --group dev --python 3.14
+      - name: Audit protected synthetic clone and failure preservation
+        timeout-minutes: 2
+        run: |
+          uv run --locked --offline python -c "import platform,sqlite3; print('CLONE_ENV', platform.platform(), platform.python_version(), sqlite3.sqlite_version)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run --locked --offline python -m pytest -q -s -ra tests/test_raw_v2_clone_lab.py
+          $testExit = $LASTEXITCODE
+          if ($testExit -ne 0) {
+            Get-ChildItem -Path "$env:TEMP/Stock_raw_sidecar_lab_*/clone_*/result.json" -File -ErrorAction SilentlyContinue | Select-Object -First 64 | ForEach-Object {
+              if ($_.Length -le 131072) {
+                try {
+                  $report = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
+                  if ($report.status -eq 'failed') {
+                    Write-Output ("CLONE_FAILURE " + $_.FullName + " " + $report.error)
+                    Write-Output ("CLONE_SOURCE_CHECK " + $report.source_verification_error.summary)
+                  }
+                } catch { Write-Output ("CLONE_REPORT_UNREADABLE " + $_.FullName) }
+              }
+            }
+          }
+          exit $testExit
       - name: Audit telemetry sampling and raw noninterference
         timeout-minutes: 2
         run: >-
