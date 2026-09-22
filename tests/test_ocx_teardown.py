@@ -224,7 +224,7 @@ def test_wrong_thread_shutdown_has_no_side_effects(live):
 
 def test_legacy_writer_also_finishes_before_clear(collector):
     logger, _, _ = collector
-    control = enabled(logger, hook=lambda: None)
+    control = enabled(logger)
     start_writer(logger)
     logger._shutdown("legacy")
     assert not logger.db_thread.is_alive()
@@ -276,7 +276,50 @@ def test_invalid_phase_record_disables_only_phase_writes(tmp_path, detail):
 
 def test_cli_explicit_teardown_is_opt_in(collector):
     logger, _, _ = collector
-    # 既存 parser をそのモジュールから取得し、Qt生成・ログインは行わない。
+    # 기존 parser만 조회한다. Qt 생성이나 로그인을 실행하지 않는다.
     parser = logger.start.__globals__["parse_collector_args"]
     assert parser([])[0].explicit_ocx_teardown is False
     assert parser(["--explicit-ocx-teardown"])[0].explicit_ocx_teardown is True
+
+
+@pytest.mark.parametrize("constructor_fails", [False, True])
+def test_partial_ocx_initialization_failure_is_preserved(collector, monkeypatch, constructor_fails):
+    old, _, _ = collector
+    control = Control()
+    def failed_connect(fn):
+        raise RuntimeError("synthetic signal binding failure")
+    control.OnEventConnect = SimpleNamespace(connect=lambda fn: None)
+    control.OnReceiveRealData = SimpleNamespace(connect=failed_connect)
+    def factory(*args):
+        if constructor_fails:
+            raise RuntimeError("synthetic constructor failure")
+        return control
+    monkeypatch.setitem(old.__init__.__globals__, "QAxWidget", factory)
+    with pytest.raises(SystemExit) as caught:
+        type(old)(code_revision="fixture", explicit_ocx_teardown=True)
+    assert caught.value.code == 1
+    assert control.calls == (0 if constructor_fails else 1)
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_event_loop_markers_distinguish_return_from_exception(live, tmp_path, raises):
+    logger, _, _ = live
+    control = enabled(logger)
+    def loop():
+        if raises:
+            raise RuntimeError("synthetic event loop failure")
+        return 0
+    logger.app.exec_ = loop
+    with CaptureDiagnostics(tmp_path / "loop_diag", handler=Handler()) as diagnostics:
+        logger.diagnostics = diagnostics
+        if raises:
+            with pytest.raises(RuntimeError, match="event loop failure"):
+                logger.start()
+        else:
+            logger.start()
+        path = diagnostics.path
+    names = [row["phase"] for row in phases(path)]
+    assert ("event_loop_returned" in names) is not raises
+    assert "event_loop_unwinding" in names
+    assert names.index("ocx_clear_returned") < names.index("diagnostics_closing")
+    assert control.calls == 1
