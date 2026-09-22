@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from execution.tick_simulator import TickSimulator
 from execution.quote_validation import check_ordered_quote
+from execution.reality_contract import input_capabilities, simulation_contract
 from strategies.nxt_breakout.tick_research import NxtResearchStrategy
 
 
@@ -48,6 +49,7 @@ def _code_identity():
     root = Path(__file__).resolve().parents[1]
     names = ("engine/tick_research_run.py", "engine/tick_ordering.py",
              "execution/tick_simulator.py", "execution/quote_validation.py",
+             "execution/reality_contract.py",
              "strategies/nxt_breakout/tick_research.py", "engine/nxt_tick_engine.py")
     return {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in names}
 
@@ -78,6 +80,9 @@ def run_research(events, *, output_root, dataset_label, simulator_config,
     _json(settings)
     provenance = deepcopy(input_provenance)
     _json(provenance)
+    contracts = dict(simulation_contract=simulation_contract(sim),
+                     input_capabilities=input_capabilities(sim))
+    contract_hash = hashlib.sha256(_json(contracts).encode("utf-8")).hexdigest()
     code_identity = _code_identity()
     run_dir = Path(output_root).resolve() / uuid4().hex
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -85,6 +90,7 @@ def run_research(events, *, output_root, dataset_label, simulator_config,
     base = dict(schema="tick_research_result_v1", dataset_label=dataset_label,
                 raw_identity_verified=False, input_provenance=provenance,
                 settings=settings, code_sha256=code_identity,
+                **contracts, contract_sha256=contract_hash,
                 started_at=datetime.now(timezone.utc).isoformat(),
                 limitations=["normalized_events_only", "single_instrument_long_only",
                              "top_of_book_refresh_liquidity_assumption", "not_live_execution",
@@ -116,7 +122,8 @@ def run_research(events, *, output_root, dataset_label, simulator_config,
               "completed_no_fills" if not sim.fills else "completed_flat")
     event_hash = digest.hexdigest()
     reproducibility_key = hashlib.sha256(_json(dict(events=event_hash, settings=settings,
-                                                     code=code_identity, provenance=provenance)).encode("utf-8")).hexdigest()
+                                                     code=code_identity, provenance=provenance,
+                                                     contracts=contract_hash)).encode("utf-8")).hexdigest()
     report = base | dict(status=status, finished_at=datetime.now(timezone.utc).isoformat(),
                          event_count=count, event_sha256=event_hash,
                          input_complete=error is None, reproducibility_key=reproducibility_key,

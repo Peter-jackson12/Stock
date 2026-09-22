@@ -29,5 +29,11 @@ jobs:
           enable-cache: false
       - name: Install locked dependencies
         run: uv sync --locked --group dev --python 3.14
+      - name: Run execution reality synthetic regressions
+        run: >-
+          uv run --locked --offline python -m pytest -ra
+          tests/test_reality_contract.py tests/test_tick_execution_boundaries.py
+          tests/test_tick_simulator.py tests/test_tick_research_run.py
+          tests/test_raw_v2.py tests/test_documentation.py
       - name: Run Git-reproducible tests
         run: uv run --locked --offline python -m pytest -ra

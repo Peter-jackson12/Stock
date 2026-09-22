@@ -1,9 +1,21 @@
-# 현재 인계 — 2026-09-21 / sidecar 합성 일부 미검증, 운영 적용 미승인
+# 현재 인계 — 2026-09-22 / 실행 현실성 계약 PR 검토, 운영 적용 미승인
 
 현재 목표·차단 조건·다음 행동만 유지한다. [문서 인덱스](README.md),
 [첫 시험 체크리스트](BACKTEST_TODO.md), [파이프라인 지도](docs/PIPELINE_MAP.md)를 따른다.
 과거 기록은 [보존본 안내](docs/archive/README.md)와 Git 이력에 보존한다.
 수집 시작 전 원문은 `4821762fd93230b658339fee084d6c08e3e53ce9:HANDOFF.md`에 남아 있다.
+
+## 2026-09-22 원격 계약 작업
+
+사용자 보고 live session은 `39b5af8b45024458be9a3ae2a2259685`다. 로컬 관측이 아니다.
+이번에는 GitHub branch/PR와 Actions 합성 검증만 한다. Windows 저장소·raw/evidence·DB·OCX·
+수집기·실제 qualification/백테스트를 건드리지 않으며 로컬 Git 조작을 요청하지 않는다.
+
+`codex/execution-reality-contract`에 [실행 현실성 계약](TICK_RESEARCH_RUNBOOK.md#simulation-reality-contract-v1),
+입력 형식 capability, 결과 저장/identity와 합성 회귀를 추가한다. 체결·정규화·수집 동작은 유지한다.
+PR 검토 대상이며 자동 병합하지 않는다. CI 건수는 해당 PR 최신 head 로그로 확인하고 아래 과거 수치를 재사용하지 않는다.
+시작 master는 `6a6d6076649befc767e5d8d59151cbcfb2f27c34`로 PR #9 병합을 확인했다.
+아래 운영 후속은 이번 원격 작업의 실행 범위나 승인에 포함되지 않는다.
 
 ## 현재 판정과 근거 수준
 
@@ -115,11 +127,10 @@ sealed handle 해제 직후 후발 writer가 먼저 commit하는 경합과 파�
 
 ## 바로 다음 작업과 역할
 
-1. GitHub에서 PR #9의 최신 diff/CI를 확인하고 검증된 lab/회귀/문서만 정상 병합한다.
-   로컬 TEMP 결과는 전달 보고 대조에만 사용하고, 기존 합성 근거는 새 영속 lab 경로에 보존한다.
-   운영 evidence를 재조회하는 단계가 아니다.
-2. Windows에서는 [복제본 합성 계획](TICK_RESEARCH_RUNBOOK.md#다음-합성-계획--원본-비변경-복제본-경로)만
-   진행한다. source SQLite 재연결 없이 보호한 handle에서 복제하고, 사적 복제본에서만 정리한다.
+1. GitHub에서 실행 현실성 계약 PR의 diff/최신 CI를 검토하고 PR 상태로 보고한다. 자동 병합하지 않는다.
+   PR #9는 시작 master에 이미 병합됐다. 운영 evidence/TEMP 결과를 재조회하는 단계가 아니다.
+2. 별도 후속 후보는 [복제본 합성 계획](TICK_RESEARCH_RUNBOOK.md#다음-합성-계획--원본-비변경-복제본-경로)이다.
+   source SQLite 재연결 없이 보호한 handle에서 복제하고, 사적 복제본에서만 정리한다.
    아직 구현·검증 전이다. 품질 문제 보존과 실패 시 미승격도 검증한다.
 3. 승인 전 운영 raw/evidence를 조회·해시·복사하거나 sidecar를 정리하지 않는다. 이번 인계는 복사/삭제 승인이 아니다.
 4. 합성 검증 뒤에도 대상별 출처·잠금/경로 보호·장외 시각·동시 collector 부재·공간·총 I/O 예산과
