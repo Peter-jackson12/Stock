@@ -272,7 +272,9 @@ class KiwoomUniverseLogger:
             stopped = worker is None or not worker.is_alive()
         ok = self._ocx_teardown.release(self.ocx, writer_stopped=stopped,
                                         diagnostics=self.diagnostics)
-        if not ok:
+        # deferred/clearing은 아직 최종 실패가 아니다. 실제 clear 실패만
+        # 프로세스의 예정 종료 코드를 비정상으로 올린다.
+        if not ok and self._ocx_teardown.state == "failed":
             self.exit_code = 2
         return ok
 
@@ -281,7 +283,14 @@ class KiwoomUniverseLogger:
         # clear 중 재진입은 _shutdown_done / accepting_events 가드로 차단한다.
         observe(self.telemetry, "flush", force=True)
         self._release_ocx_if_stopped()
-        self.log.close()
+        self._phase("log_close_enter")
+        try:
+            self.log.close()
+        except Exception as exc:
+            self.exit_code = 2
+            self._phase("log_close_failed", error=type(exc).__name__)
+        else:
+            self._phase("log_close_returned")
         self._phase("qt_quit_enter", teardown_state=self._ocx_teardown.state)
         self.app.quit()
         self._phase("qt_quit_returned")
