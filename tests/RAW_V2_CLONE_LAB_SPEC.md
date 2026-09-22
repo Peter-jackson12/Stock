@@ -11,7 +11,9 @@
 이 명세는 해당 부분의 구현 상태를 갱신한다. 계획 전체의 완료나 운영 적용을 선언하지 않는다.
 
 외부 DB/출력 경로를 받는 CLI가 아니다. Windows local NTFS의 UUID TEMP root를 스스로 만든다.
-32 MiB/file, 256 MiB/root 범위만 다룬다. 50.6 GB 운영 DB를 이 도구에 넣는 경로는 없다.
+source main/WAL/SHM과 destination copy는 각각 32 MiB 이하, root는 256 MiB 이하의 합성 범위다.
+`_inventory`가 source 세 파일 모두를 검사하며 일반 `enforce_budget`의 DB 접미사 검사와 구분한다.
+32 MiB가 모든 보고서 파일에 적용된다는 뜻은 아니다. 50.6 GB 운영 DB를 이 도구에 넣는 경로는 없다.
 사용자 PC, raw/evidence/operations_state, collector/OCX, 전략, TickSimulator와 production qualification 코드를 변경하지 않는다.
 
 ## 검증 단계
@@ -61,14 +63,37 @@ non-empty WAL/journal/미상 파일/누락/alias/출처 불일치,
 destination 충돌/hash 오류/잔여 sidecar/main 변경, I/O·시간 한도를 검사한다.
 
 예외 시 원본과 이미 생성된 evidence/working/result를 삭제하거나 자동 재시도하지 않는다.
-`status=failed`, verified/eligible=false로 남긴다. 예외 연결 traceback도 보존한다.
-KeyboardInterrupt/SystemExit는 실패 기록 뒤 다시 전달한다.
-원본 검증을 완료하지 못하면 `source_unchanged`를 true로 채우지 않는다.
+`status=failed`, verified/eligible=false로 남긴다. 원본 검증을 완료하지 못하면
+`source_unchanged`를 true로 채우지 않는다. 실제 before/after record 비교도 수행한다.
+
+### 독립 감사 반영 — 선언과 관측, 이중 실패
+
+하드코딩됐던 `source_sqlite_reopened=false`는 제거했다. 대신
+`declared_source_sqlite_policy="no_reopen_during_clone"`는 **선언된 계약**임을 이름에 표시한다.
+이 필드 자체가 호출을 관측한 카운터는 아니다. SQLite 호출 spy 회귀와 코드의 경로 대조가 근거이며,
+fixture 생성 단계의 SQLite 사용과 clone 단계의 원본 재연결 금지를 구분한다.
+
+작업이 먼저 실패하고 마지막 `verify_source()`도 실패할 때, 원래 작업의 `error`/`traceback`을 유지하고
+후속 원본 검증 실패는 `source_verification_error`에 따로 남긴다. 기존에는 Python의 연결 traceback에
+원 예외가 포함될 수 있었지만 최상위 error와 전달되는 예외는 마지막 검증 오류로 바뀔 수 있었다.
+작업 오류 없이 마지막 원본 검증만 실패한 경우에도 전체 결과는 실패다. working qualification의
+중간 성공이 남아 있더라도 전체 `synthetic_copy_verified`/`research_eligible`은 false다.
+
+KeyboardInterrupt/SystemExit는 실패 결과를 기록한 뒤 다시 전달한다. 원래 취소 뒤 일반 원본 검증 오류가
+추가돼도 취소를 일반 실패 반환으로 바꾸지 않는다. 일반 작업 오류 뒤 검증 중 새 취소가 발생하면 새 취소를
+전달하되 원래 작업 오류도 보존하며, 실제 마지막 예외는 `terminal_error`로 구분한다.
+메시지는 오류별 1,024자, traceback은 오류별 16 Ki 문자까지만 직렬화하고 잘림 여부를 표시한다.
+이것은 traceback 생성 비용의 상한이나 강제 종료 시 기록 보장이 아니다.
+
+추가 회귀는 RuntimeError/KeyboardInterrupt/SystemExit × 복사 전/중의 이중 실패,
+working 검증 성공 후 마지막 source 검증만 실패하는 경우, main/WAL/SHM 각각의 크기 초과를 확인한다.
+작은 fixture의 실제 바이트·SHA 비교는 공유 snapshot helper 밖에서도 수행한다.
+기존 helper를 공유하는 모든 논리 검증이 완전히 독립 oracle로 바뀐 것은 아니다.
 
 CI는 Python/SQLite/Windows 버전과 pytest 요약을 로그에 출력한다.
 최초 구현 기준 CI #92는 **1 failed / 1451 passed / 6 deselected**였다.
-이를 전체 성공으로 세지 않는다. 이후 수정의 최종 검증은 PR의 최종 HEAD 로그를 따른다.
-집중 단계와 전체 단계는 일부 테스트를 반복 실행하므로 pass 수를 서로 더하지 않는다.
+#96은 디렉터리 권한 반례를 드러낸 실패 실행이다. 이를 최신 성공과 합쳐 성공으로 계산하지 않는다.
+최종 검증 수치는 PR의 최종 HEAD 로그를 따른다. 집중/전체 pass 수는 중복이므로 합산하지 않는다.
 
 ## 이번 결과가 인증하지 않는 것
 
@@ -76,6 +101,8 @@ CI는 Python/SQLite/Windows 버전과 pytest 요약을 로그에 출력한다.
   획득 이전 경쟁, 미관측 sidecar 출처, 악의적 관리자/커널 actor, 모든 mapping 형태를 포괄하지 않는다.
 - working은 SQLite가 writable로 열어야 하므로 파일 handle을 계속 exclusive로 잡을 수 없다.
   작업 공간의 비협조적 쓰기·순간 교체·최종 검사 후 변경을 일반적으로 배제하는 운영 격리는 아직 없다.
+- 일부 경합 회귀는 순차 hook 주입이다. 자식 프로세스 접근 시험을 모든 동시 interleaving 검증으로 확대하지 않는다.
+  8.3 경로 alias 정규화와 볼륨 root까지의 디렉터리 pin 부수효과도 운영 실측 완료가 아니다.
 - stream read/write 계수는 source streaming과 destination write만 센다.
   SQLite 내부 I/O와 일부 evidence 재해시는 제외된다. 총 물리 디스크 I/O 계수·50.6 GB 처리 예산이 아니다.
 - 20초 제한은 협조적 checkpoint 검사다. 강제 프로세스 종료/전원 장애/fsync 실패/디스크 full까지

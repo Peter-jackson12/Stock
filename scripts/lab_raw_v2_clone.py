@@ -34,6 +34,8 @@ SCHEMA = "raw_v2_clone_lab_v1"
 CHUNK = 64 * 1024
 MAX_IO_BYTES = 16 * lab.MAX_DB_BYTES
 MAX_SECONDS = 20
+MAX_ERROR_CHARS = 1024
+MAX_TRACEBACK_CHARS = 16 * 1024
 DIRECTORY_ACCESS = 1  # FILE_LIST_DIRECTORY: metadata-only access=0 is not a pin.
 
 
@@ -43,6 +45,18 @@ class Fixture:
     files: dict
     logical: dict
     qualification: dict
+
+
+def _error_record(exc):
+    """각 실패를 별도 보존한다. 출력 크기 제한은 traceback 생성의 시간 상한이 아니다."""
+    message = str(exc)
+    trace = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__, chain=False))
+    return {
+        "summary": f"{type(exc).__name__}: {message[:MAX_ERROR_CHARS]}",
+        "message_truncated": len(message) > MAX_ERROR_CHARS,
+        "traceback": trace[:MAX_TRACEBACK_CHARS],
+        "traceback_truncated": len(trace) > MAX_TRACEBACK_CHARS,
+    }
 
 
 def make_fixture(root, *, unsigned=False, finish=True):
@@ -208,17 +222,22 @@ def clone_fixture(root, fixture, *, hook=None):
         "schema": SCHEMA, "status": "running", "synthetic_copy_verified": False,
         "production_approved": False, "research_eligible": False,
         "source": str(source), "working_copy": str(working / source.name),
-        "source_unchanged": None, "source_sqlite_reopened": False,
-        "source_after": None, "error": None,
+        "source_unchanged": None,
+        # 선언된 동작 계약이다. 실제 호출 계측값처럼 보이는 boolean을 발행하지 않는다.
+        "declared_source_sqlite_policy": "no_reopen_during_clone",
+        "source_after": None, "error": None, "source_verification_error": None,
+        "terminal_error": None,
         "protection": "exclusive main/WAL/SHM; existing ancestor names pinned",
         "namespace_limit": "new child creation is detected, not universally excluded",
         "limits": {"file_bytes": lab.MAX_DB_BYTES, "total_bytes": lab.MAX_TOTAL_BYTES,
+                   "file_bytes_scope": "source main/WAL/SHM and destination copies, not every report file",
                    "tracked_stream_io_bytes": MAX_IO_BYTES, "cooperative_seconds": MAX_SECONDS},
         "io": {"read_bytes": 0, "written_bytes": 0},
         "io_tracking_scope": "source streaming reads and destination writes; excludes SQLite/evidence rehash I/O",
     }
     lab._write_json(result_path, result)
     deadline = time.monotonic() + MAX_SECONDS
+    primary_error = None
 
     def notify(stage):
         if hook is not None:
@@ -342,9 +361,26 @@ def clone_fixture(root, fixture, *, hook=None):
                     raise ValueError("qualification changed working main bytes")
                 result["qualification"] = qualified
                 result["raw_evidence"] = raw_before
+            except BaseException as exc:
+                primary_error = exc
+                raise
             finally:
-                result["source_after"] = verify_source()
-                result["source_unchanged"] = True
+                try:
+                    result["source_after"] = verify_source()
+                    if "source_before" in result:
+                        result["source_unchanged"] = result["source_before"] == result["source_after"]
+                        if not result["source_unchanged"]:
+                            raise ValueError("source before/after records differ")
+                except BaseException as verify_error:
+                    result["source_unchanged"] = None  # 검증 실패를 변경/불변의 확정값으로 바꾸지 않는다.
+                    result["source_verification_error"] = _error_record(verify_error)
+                    if primary_error is None:
+                        raise
+                    # 새 사용자 취소는 전달하되 원래 작업 오류도 결과에 유지한다.
+                    if (isinstance(verify_error, (KeyboardInterrupt, SystemExit))
+                            and not isinstance(primary_error, (KeyboardInterrupt, SystemExit))):
+                        raise
+                    # 원래 예외가 계속 전파된다. 원본 검증 오류로 덮어쓰지 않는다.
             lab.enforce_budget(root)
             result["status"] = "synthetic_verified"
             result["synthetic_copy_verified"] = True
@@ -353,8 +389,13 @@ def clone_fixture(root, fixture, *, hook=None):
         result["status"] = "failed"
         result["synthetic_copy_verified"] = False
         result["research_eligible"] = False
-        result["error"] = f"{type(exc).__name__}: {exc}"
-        result["traceback"] = traceback.format_exc()
+        failure = _error_record(primary_error if primary_error is not None else exc)
+        result["error"] = failure["summary"]
+        result["traceback"] = failure["traceback"]
+        result["error_truncated"] = failure["message_truncated"]
+        result["traceback_truncated"] = failure["traceback_truncated"]
+        if primary_error is not None and exc is not primary_error:
+            result["terminal_error"] = _error_record(exc)
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             lab._replace_json(result_path, result)
             raise

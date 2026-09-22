@@ -1,4 +1,5 @@
 """운영 파일 없이 Windows의 보호된 acquisition과 실패 경계를 검증한다."""
+import hashlib
 import json
 import mmap
 import os
@@ -48,7 +49,10 @@ def test_clone_preserves_bytes_full_stream_and_quality(unsigned):
     assert result["status"] == "synthetic_verified", result["error"]
     assert result["synthetic_copy_verified"] is True
     assert result["source_unchanged"] is True
-    assert result["source_sqlite_reopened"] is False
+    assert result["source_before"] == result["source_after"] == fixture.files
+    assert "source_sqlite_reopened" not in result
+    assert result["declared_source_sqlite_policy"] == "no_reopen_during_clone"
+    assert result["source_verification_error"] is None and result["terminal_error"] is None
     assert result["production_approved"] is False
     assert lab.db_snapshot(fixture.path) == before
     qualified = result["qualification"]
@@ -65,6 +69,10 @@ def test_clone_preserves_bytes_full_stream_and_quality(unsigned):
     for name, record in fixture.files.items():
         assert lab.file_snapshot(evidence / name)["sha256"] == record["sha256"]
         assert (evidence / name).stat().st_ino != (fixture.path.parent / name).stat().st_ino
+        # 작은 fixture 한정: 공유 snapshot helper 밖에서도 실제 바이트를 대조한다.
+        source_bytes = (fixture.path.parent / name).read_bytes()
+        assert (evidence / name).read_bytes() == source_bytes
+        assert hashlib.sha256(source_bytes).hexdigest() == record["sha256"]
     assert not any(os.path.lexists(str(working / "raw.db") + s) for s in lab.SIDECARS)
     assert lab.enforce_budget(root) <= lab.MAX_TOTAL_BYTES
     print(f"CLONE_LAB unsigned={unsigned} source_preserved=true stream_integrity=true "
@@ -105,7 +113,6 @@ def test_existing_sqlite_reader_is_not_mistaken_for_quiescence(source):
 
 def test_late_child_reader_writer_and_file_mutations_are_blocked(source):
     root, fixture = source
-    # 권한 자체가 없는 파일을 잠금 성공으로 착각하지 않는다.
     for name in fixture.files:
         with (fixture.path.parent / name).open("r+b"):
             pass
@@ -122,7 +129,6 @@ for suffix in ("", "-wal", "-shm"):
                 pass
             results.append("unexpected-open")
         except PermissionError as exc:
-            # Python CRT open은 WinError가 아니라 errno=EACCES를 노출할 수 있다.
             assert exc.errno == errno.EACCES, repr(exc)
             results.append("permission-denied")
 for readonly in (False, True):
@@ -314,3 +320,109 @@ def test_stream_budget_failure_preserves_source(source, monkeypatch, limit, valu
     result = failed(root, fixture)
     assert "budget" in result["error"]
     assert "qualification" not in result
+
+
+@pytest.mark.parametrize("stage", ["sealed", "copy_chunk"])
+@pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt, SystemExit])
+def test_primary_failure_survives_failing_final_source_check(source, stage, error_type):
+    root, fixture = source
+    before = {name: (fixture.path.parent / name).read_bytes() for name in fixture.files}
+    primary = error_type("primary-clone-failure")
+    runs = []
+    def hook(at, path, run):
+        if at == stage:
+            runs.append(run)
+            Path(str(path) + "-journal").write_bytes(b"secondary-source-check-failure")
+            raise primary
+    if error_type is RuntimeError:
+        report_path = clone.clone_fixture(root, fixture, hook=hook)
+    else:
+        with pytest.raises(error_type) as caught:
+            clone.clone_fixture(root, fixture, hook=hook)
+        assert caught.value is primary
+        report_path = runs[0] / "result.json"
+    result = read_result(report_path)
+    assert result["status"] == "failed"
+    assert result["error"] == f"{error_type.__name__}: primary-clone-failure"
+    assert "primary-clone-failure" in result["traceback"]
+    assert "rollback journal" in result["source_verification_error"]["summary"]
+    assert result["source_unchanged"] is None
+    assert result["synthetic_copy_verified"] is result["research_eligible"] is False
+    assert result["production_approved"] is False
+    assert Path(str(fixture.path) + "-journal").read_bytes() == b"secondary-source-check-failure"
+    for name, expected in before.items():
+        assert (fixture.path.parent / name).read_bytes() == expected
+        with (fixture.path.parent / name).open("r+b"):
+            pass  # 예외 후에도 합성 source handle이 해제됐는지 확인한다.
+
+
+def test_final_source_check_alone_can_reject_completed_working_qualification(source):
+    root, fixture = source
+    before = {name: (fixture.path.parent / name).read_bytes() for name in fixture.files}
+    def hook(stage, path, run):
+        if stage == "before_qualification":
+            Path(str(path) + "-journal").write_bytes(b"late-final-check-failure")
+    result = read_result(clone.clone_fixture(root, fixture, hook=hook))
+    assert result["qualification"]["stream_integrity_verified"] is True
+    assert result["status"] == "failed" and "rollback journal" in result["error"]
+    assert result["source_verification_error"] is not None
+    assert result["source_unchanged"] is None
+    assert result["synthetic_copy_verified"] is result["research_eligible"] is False
+    assert result["production_approved"] is False
+    for name, expected in before.items():
+        assert (fixture.path.parent / name).read_bytes() == expected
+
+
+@pytest.mark.parametrize("suffix", ["", "-wal", "-shm"])
+def test_inventory_limits_every_source_member_before_open(source, monkeypatch, suffix):
+    root, fixture = source
+    target = Path(str(fixture.path) + suffix)
+    with target.open("r+b") as stream:
+        stream.truncate(lab.MAX_DB_BYTES + 1)
+    def forbidden(*args, **kwargs):
+        pytest.fail("oversized synthetic source must fail before handle/SQLite open")
+    monkeypatch.setattr(clone, "_exclusive_source", forbidden)
+    monkeypatch.setattr(sqlite3, "connect", forbidden)
+    result = read_result(clone.clone_fixture(root, fixture))
+    assert result["status"] == "failed"
+    assert "source file exceeds lab byte budget" in result["error"]
+    assert result["synthetic_copy_verified"] is False
+    assert result["production_approved"] is False
+    assert target.stat().st_size == lab.MAX_DB_BYTES + 1
+
+
+@pytest.mark.parametrize("cancel_type", [KeyboardInterrupt, SystemExit])
+def test_new_cancellation_during_verification_keeps_primary_report(source, monkeypatch, cancel_type):
+    root, fixture = source
+    primary = RuntimeError("original-work-error")
+    cancellation = cancel_type("cancel-in-final-check")
+    original_inventory = clone._inventory
+    runs = []
+    def inventory(*args, **kwargs):
+        if runs:
+            raise cancellation
+        return original_inventory(*args, **kwargs)
+    def hook(stage, path, run):
+        if stage == "sealed":
+            runs.append(run)
+            raise primary
+    monkeypatch.setattr(clone, "_inventory", inventory)
+    with pytest.raises(cancel_type) as caught:
+        clone.clone_fixture(root, fixture, hook=hook)
+    assert caught.value is cancellation
+    result = read_result(runs[0] / "result.json")
+    assert result["error"] == "RuntimeError: original-work-error"
+    assert "cancel-in-final-check" in result["source_verification_error"]["summary"]
+    assert "cancel-in-final-check" in result["terminal_error"]["summary"]
+    assert result["status"] == "failed" and result["source_unchanged"] is None
+
+
+def test_failure_text_is_bounded_without_hiding_truncation(source):
+    root, fixture = source
+    def hook(stage, path, run):
+        if stage == "sealed":
+            raise RuntimeError("x" * (clone.MAX_TRACEBACK_CHARS + 100))
+    result = failed(root, fixture, hook=hook)
+    assert result["error_truncated"] and result["traceback_truncated"]
+    assert len(result["error"]) <= clone.MAX_ERROR_CHARS + len("RuntimeError: ")
+    assert len(result["traceback"]) <= clone.MAX_TRACEBACK_CHARS

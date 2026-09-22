@@ -60,6 +60,8 @@ from collector.kiwoom.session_transition import SessionTransition, write_transit
 from collector.kiwoom.subscription_plan import MODE_NXT, build_plan  # noqa: E402
 from collector.kiwoom.tick_writer import TickWriter  # noqa: E402
 from collector.kiwoom.live_capture import LiveRawCapture, TRADE_FIDS, QUOTE_FIDS  # noqa: E402
+from collector.kiwoom.ocx_teardown import OcxTeardown, record_phase  # noqa: E402
+from collector.kiwoom.capture_telemetry import CaptureTelemetry, observe  # noqa: E402
 
 
 class KiwoomUniverseLogger:
@@ -80,9 +82,19 @@ class KiwoomUniverseLogger:
         aftermarket_duration_seconds=None,
         aftermarket_transition_at=None,
         aftermarket_transition_after_seconds=None,
+        explicit_ocx_teardown=False,
+        capture_telemetry=False,
     ):
         if storage not in ("raw-v1", "raw-v2"):
             raise ValueError("unsupported storage backend")
+        if type(explicit_ocx_teardown) is not bool:
+            raise ValueError("explicit OCX teardown flag must be bool")
+        if explicit_ocx_teardown and aftermarket_plan is not None:
+            raise ValueError("explicit OCX teardown is not verified for session transitions")
+        if type(capture_telemetry) is not bool:
+            raise ValueError("capture telemetry flag must be bool")
+        if capture_telemetry and (storage != "raw-v2" or aftermarket_plan is not None):
+            raise ValueError("capture telemetry supports a single raw-v2 session only")
         self.storage = storage
         self.managed = managed
         self.diagnostics = diagnostics
@@ -163,6 +175,14 @@ class KiwoomUniverseLogger:
         # OCX(ActiveX) 는 이 스레드에 묶인다 — run_aftermarket_transition() 이 다른
         # 스레드에서 불리면 OCX 호출 전에 거부한다(_stats_worker 는 플래그만 세운다).
         self._main_thread_ident = threading.get_ident()
+        self._ocx_teardown = OcxTeardown(owner_thread=self._main_thread_ident,
+                                       enabled=explicit_ocx_teardown)
+        self.telemetry = None
+        if capture_telemetry:
+            try:
+                self.telemetry = CaptureTelemetry()
+            except Exception as exc:
+                record_phase(diagnostics, "telemetry_init_failed", error=type(exc).__name__)
         self.app = QApplication(sys.argv)
 
         # 파이썬 인터프리터가 Ctrl+C를 감지할 수 있도록 0.2초 주기 타이머 가동
@@ -212,18 +232,101 @@ class KiwoomUniverseLogger:
             RAW_DIR.mkdir(parents=True, exist_ok=True)
             self.writer = TickWriter(self.db_path, self.trade_queue, self.quote_queue)
 
-        # 키움 OCX 초기화
+        # 키움 OCX 초기화. 신호 연결 실패도 부분 생성된 컨트롤의 종료 대상이다.
+        self.ocx = None
         try:
             self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
+            self.ocx.OnEventConnect.connect(self._on_login)
+            self.ocx.OnReceiveRealData.connect(self._on_receive_real_data)
+            self.app.aboutToQuit.connect(lambda: self._shutdown("Qt 종료"))
         except Exception as e:
+            self.accepting_events = self.is_running = False
+            self._shutdown_done = True
+            self.timer.stop()
+            self._phase("ocx_init_failed", error=type(e).__name__)
+            self._release_ocx_if_stopped()
             self.log.emit(f"❌ 키움 OCX 로드 실패 (32비트 가상환경인지 확인하세요): {e}")
+            self.log.close()
             sys.exit(1)
 
-        # 이벤트 시그널 연결
-        self.ocx.OnEventConnect.connect(self._on_login)
-        self.ocx.OnReceiveRealData.connect(self._on_receive_real_data)
+    def _phase(self, phase, **details):
+        capture = self.raw_capture
+        identity = getattr(capture, "identity", None)
+        record_phase(self.diagnostics, phase,
+                     session_id=getattr(identity, "session_id", None), **details)
 
-        self.app.aboutToQuit.connect(lambda: self._shutdown("Qt 종료"))
+    def _release_ocx_if_stopped(self):
+        """입력 차단과 워커 종료를 모두 요구한다. closed 문자열만으로 해제하지 않는다."""
+        if threading.get_ident() != self._main_thread_ident:
+            raise RuntimeError("OCX release requires its owning Qt thread")
+        if self._ocx_teardown.enabled and (
+                not self._shutdown_done or self.accepting_events or self._transition_active):
+            self._phase("ocx_clear_blocked_active")
+            return False
+        if not self._ocx_teardown.enabled:
+            stopped = False
+        elif self.raw_capture is not None:
+            stopped = bool(self.raw_capture.queue.wait(0))
+        else:
+            worker = getattr(self, "db_thread", None)
+            stopped = worker is None or not worker.is_alive()
+        ok = self._ocx_teardown.release(self.ocx, writer_stopped=stopped,
+                                        diagnostics=self.diagnostics)
+        # deferred/clearing은 아직 최종 실패가 아니다. 실제 clear 실패만
+        # 프로세스의 예정 종료 코드를 비정상으로 올린다.
+        if not ok and self._ocx_teardown.state == "failed":
+            self.exit_code = 2
+        return ok
+
+    def _finish_qt_shutdown(self):
+        # 저장을 먼저 마친 뒤에만 선택적 native teardown을 시도한다.
+        # clear 중 재진입은 _shutdown_done / accepting_events 가드로 차단한다.
+        observe(self.telemetry, "flush", force=True)
+        self._release_ocx_if_stopped()
+        self._phase("log_close_enter")
+        try:
+            self.log.close()
+        except Exception as exc:
+            self.exit_code = 2
+            self._phase("log_close_failed", error=type(exc).__name__)
+        else:
+            self._phase("log_close_returned")
+        self._phase("qt_quit_enter", teardown_state=self._ocx_teardown.state)
+        self.app.quit()
+        self._phase("qt_quit_returned")
+
+    def _close_telemetry(self):
+        if self.telemetry is None:
+            return True
+        result = observe(self.telemetry, "close")
+        closed = bool(getattr(self.telemetry, "closed", False))
+        if result is True and closed:
+            self._phase("telemetry_close_returned", diagnostic_error=getattr(self.telemetry, "error", None))
+            return True
+        self._phase("telemetry_close_pending", result=result, closed=closed,
+                    diagnostic_error=getattr(self.telemetry, "error", None))
+        return False
+
+    def _finish_process_resources(self, failure=None):
+        """예외 종료에서도 입력 가드와 drain을 유지한다. 강제 종료/재접속은 없다."""
+        if threading.get_ident() != self._main_thread_ident:
+            raise RuntimeError("process cleanup requires its owning Qt thread")
+        was_shutdown = self._shutdown_done
+        self.accepting_events = self.is_running = False
+        self._shutdown_done = True
+        self.timer.stop()
+        if self.raw_capture is not None:
+            if not was_shutdown:
+                self.raw_capture.queue.abort(failure or "unexpected collector exit")
+            while not self.raw_capture.queue.wait(5):
+                print("raw v2 저장 워커 종료 대기 중", flush=True)
+        elif self.writer is not None:
+            self.writer.stop.set()
+            worker = getattr(self, "db_thread", None)
+            if worker is not None:
+                worker.join()
+        self._release_ocx_if_stopped()
+        self._close_telemetry()
 
     @property
     def total_trades(self):
@@ -234,6 +337,21 @@ class KiwoomUniverseLogger:
         return self.writer.total_quotes if self.storage == "raw-v1" else self.raw_capture.received_quotes
 
     def _poll_control(self):
+        if self._shutdown_done:
+            return
+        if self.telemetry is None:
+            return self._poll_control_impl()
+        token = observe(self.telemetry, "poll_enter")
+        outcome = "returned"
+        try:
+            return self._poll_control_impl(token)
+        except BaseException:
+            outcome = "raised"
+            raise
+        finally:
+            observe(self.telemetry, "poll_return", token, outcome=outcome)
+
+    def _poll_control_impl(self, telemetry_token=None):
         # OCX calls and shutdown run on the Qt thread, between event callbacks.
         # In particular, SIGINT must not drain while a callback is about to put().
         if self._shutdown_done:
@@ -254,7 +372,9 @@ class KiwoomUniverseLogger:
         if self.raw_capture is not None:
             try:
                 self.raw_capture.write_status()
-                if int(self.ocx.dynamicCall("GetConnectState()")) != 1:
+                connection_state = self.ocx.dynamicCall("GetConnectState()")
+                observe(self.telemetry, "connection_observed", telemetry_token, connection_state)
+                if int(connection_state) != 1:
                     self.raw_capture.queue.abort("OCX connection lost")
                     self._shutdown_requested = "OCX 연결 끊김"
             except Exception as exc:
@@ -285,11 +405,17 @@ class KiwoomUniverseLogger:
             self.log.emit(f"🧩 충돌/침묵 진단: {self.diagnostics.path}")
         self.log.emit("=" * 65)
         self.log.emit("🔑 키움 OpenAPI+ 서버 접속 시도 중...")
-        self.ocx.dynamicCall("CommConnect()")
+        self._phase("event_loop_enter")
         try:
-            self.app.exec_()
+            self.ocx.dynamicCall("CommConnect()")
+            result = self.app.exec_()
+            self._phase("event_loop_returned", qt_exit_code=result)
         finally:
-            self._shutdown("이벤트 루프 종료")
+            self._phase("event_loop_unwinding")
+            try:
+                self._shutdown("이벤트 루프 종료")
+            finally:
+                self._close_telemetry()
         return self.exit_code
 
     def _on_login(self, err_code: int):
@@ -332,6 +458,13 @@ class KiwoomUniverseLogger:
                 if self.managed is not None and server != self.managed.plan["server"]:
                     raise ValueError("observed server does not match requested server")
                 self.raw_capture = LiveRawCapture(PROJECT_ROOT, server=server, code_revision=self.code_revision)
+                if self.telemetry is not None:
+                    bound = observe(self.telemetry, "bind", self.raw_capture.directory,
+                                    session_id=self.raw_capture.identity.session_id,
+                                    code_revision=self.code_revision)
+                    self.raw_capture.telemetry = self.telemetry
+                    self._phase("telemetry_bind", bound=bool(bound),
+                                diagnostic_error=getattr(self.telemetry, "error", None))
                 if self.managed is not None:
                     self.managed.bind(self.raw_capture.report)
                 self.writer = self.raw_capture
@@ -492,7 +625,7 @@ class KiwoomUniverseLogger:
             self.db_path = self.raw_capture.path
             self.plan = plan                       # 이후 기록은 애프터마켓 계획을 따른다
             # 새 세션에는 새 감시 상태를 쓴다 — 정규장의 수신 시각·침묵 권고·카운터를
-            # 이어받지 않도록 인스턴스 자체를 교체한다.
+            # 이어받으면 안 되므로 인스턴스 자체를 교체한다.
             self.monitor = SessionMonitor(
                 sessions=resolve_profile(plan.market_profile),
                 gap_threshold_sec=self._gap_threshold_sec,
@@ -600,6 +733,8 @@ class KiwoomUniverseLogger:
 
     def _on_receive_real_data(self, code: str, real_type: str, real_data: str):
         """Capture entry clocks before extracting raw FIDs on the Qt thread."""
+        if self._shutdown_done:
+            return  # clear() 중 재진입도 추가 FID 조회·저장을 하지 않는다.
         if not self.accepting_events:
             # 전환 중이면 저장 파일 대신 전환 기록에 보존한다. 조용히 버리지 않는다.
             if self.transition is not None and self.transition.in_progress:
@@ -722,6 +857,7 @@ class KiwoomUniverseLogger:
 
             if self.resources is not None:
                 self.resources.sample()
+            observe(self.telemetry, "flush")
 
             # 장중 침묵이 한도를 넘으면 종료를 '시도' 한다. 파일 닫힘을 보장하지는 않는다 —
             # Qt/OCX 가 멈춘 경우 기존 종료 경로 자체가 돌지 않을 수 있다.
@@ -742,12 +878,13 @@ class KiwoomUniverseLogger:
                         self.log.emit(
                             f"   종료 직전 메모리: 커밋 {sample.commit/1048576:,.0f} MiB "
                             f"(최대 {sample.peak_commit/1048576:,.0f} MiB) — 단서일 뿐 원인 판정이 아님")
+                observe(self.telemetry, "flush", force=True)
                 self.exit_code = 2          # 수신 결손 상태의 종료는 정상 종료가 아니다
                 self._shutdown_requested = "장중 침묵 한도 초과 (수신 결손)"
                 break
 
             # 명시적 전환 트리거 감지. 실제 OCX 호출(run_aftermarket_transition)은
-            # Qt 스레드의 _poll_control 에서만 한다 — 여기서는 조건만 세운다.
+            # Qt 스레드에서 한 번만 한다 — 여기서는 조건만 세운다.
             # self.transition is None 가드가 한 번만 세우는 것을 보장한다: 전환이
             # 시작되면(성공이든 실패든) 바로 채워지고, 트리거는 다시 세워지지 않는다.
             if (self.aftermarket_plan is not None and self.transition is None
@@ -796,6 +933,8 @@ class KiwoomUniverseLogger:
         임계를 넘었으면 '정상 종료' 라고 말하지 않는다 — 2026-09-14 에
         54분치 결손을 정상 종료로 보고했던 일의 재발 방지다.
         """
+        if threading.get_ident() != self._main_thread_ident:
+            raise RuntimeError("collector shutdown requires its owning Qt thread")
         if self._transition_active:
             self._shutdown_requested = reason
             return
@@ -807,9 +946,13 @@ class KiwoomUniverseLogger:
         self.accepting_events = False
         self.is_running = False
         self.timer.stop()
+        self._phase("shutdown_enter", reason=str(reason)[:256])
+        self._phase("unregister_enter")
         try:
             self.ocx.dynamicCall("SetRealRemove(QString, QString)", "ALL", "ALL")
+            self._phase("unregister_returned")
         except Exception as e:
+            self._phase("unregister_failed", error=type(e).__name__)
             self.log.emit(f"⚠️ 실시간 등록 해제 실패: {e}")
 
         stats = getattr(self, "stats_thread", None)
@@ -825,9 +968,11 @@ class KiwoomUniverseLogger:
                     f"마지막 {summary['commit']/1048576:,.0f} MiB / 최대 {summary['peak_commit']/1048576:,.0f} MiB "
                     f"— 이력 {summary['history_path']}"))
         self.log.emit("💾 수신을 멈추고 남은 체결/호가의 DB 커밋을 기다립니다.")
+        self._phase("storage_finish_enter", storage=self.storage)
         if self.storage == "raw-v2":
             command = self.managed.stop[1] if self.managed is not None and self.managed.stop else None
             clean = self.raw_capture is not None and self.raw_capture.finish(reason, command=command)
+            self._phase("storage_finish_returned", clean=bool(clean))
             if not clean:
                 cancelled_before_capture = self.raw_capture is None and self.managed is not None and self.managed.stop
                 if not cancelled_before_capture:
@@ -839,8 +984,9 @@ class KiwoomUniverseLogger:
                 self.log.emit("데이터 방향·venue·무누락 품질은 미검증입니다.")
                 self.log.emit(report.headline)
             self.log.emit_all(report.lines())
-            self.log.close()
-            self.app.quit()
+            self._phase("telemetry_summary", diagnostic_error=getattr(self.telemetry, "error", None),
+                        samples_dropped=getattr(self.telemetry, "samples_dropped", 0))
+            self._finish_qt_shutdown()
             return
         self.writer.stop.set()
         worker = getattr(self, "db_thread", None)
@@ -851,6 +997,7 @@ class KiwoomUniverseLogger:
                     self.log.emit(f"💾 종료 저장 중: 미커밋 약 {self.writer.pending:,}건")
         pending = self.writer.pending
         storage_failed = bool(self.writer.error or pending)
+        self._phase("storage_finish_returned", clean=not storage_failed)
         report.extra.extend([
             ("DB 반영 건수  ", f"체결 {self.total_trades:,} 건 / 호가 {self.total_quotes:,} 건"),
             ("종료 후 미커밋", f"{pending:,} 건"),
@@ -862,8 +1009,7 @@ class KiwoomUniverseLogger:
         else:
             self.log.emit(report.headline)
         self.log.emit_all(report.lines())
-        self.log.close()
-        self.app.quit()
+        self._finish_qt_shutdown()
 
     def _install_sigint_handler(self):
         """
@@ -874,6 +1020,8 @@ class KiwoomUniverseLogger:
         """
         def _handler(signum, frame):
             signal.signal(signal.SIGINT, signal.SIG_DFL)   # 다음 번엔 강제 종료
+            if self._shutdown_done:
+                return  # 종료/clear 중 재진입으로 이미 닫은 로그에 쓰지 않는다.
             self.log.end_status_line()
             self.log.emit("🛑 사용자에 의해 수집이 중단되었습니다 (Ctrl+C).")
             self._shutdown_requested = "사용자 중단 (Ctrl+C)"
@@ -888,6 +1036,10 @@ def parse_collector_args(argv=None):
     parser.add_argument("--codes", help="explicit comma-separated common-stock codes for a small run")
     parser.add_argument("--duration-seconds", type=int)
     parser.add_argument("--preflight", action="store_true", help="read-only environment check; no OCX instance/login")
+    parser.add_argument("--explicit-ocx-teardown", action="store_true",
+                        help="선택적 종료 순서 실측: 워커 종료 후 Qt 스레드에서 ActiveX clear. 기본 꺼짐")
+    parser.add_argument("--capture-telemetry", action="store_true",
+                        help="단일 raw-v2의 저빈도 폴링/기존 FID 시각 진단. 기본 꺼짐, 추가 OCX 조회 없음")
     parser.add_argument("--managed-launch", help=argparse.SUPPRESS)
     nxt = parser.add_argument_group(
         "NXT 구독 계획", "명시적 NXT 모드. 독립 raw-v2 검증 실행이며 제한 시간이 필요하다")
@@ -919,6 +1071,8 @@ def parse_collector_args(argv=None):
     after.add_argument("--aftermarket-transition-after-seconds", type=int,
                        help="정규장 구독 등록 완료 후 몇 초 뒤 전환할지 (전환 시각 트리거와 함께 줄 수 없다)")
     args = parser.parse_args(argv)
+    if args.capture_telemetry and args.storage != "raw-v2":
+        parser.error("capture telemetry supports a single raw-v2 session only")
     codes = None if args.codes is None else list(dict.fromkeys(args.codes.split(",")))
     if codes is not None and (not 1 <= len(codes) <= 10 or any(len(c) != 6 or not c.isdigit() for c in codes)):
         parser.error("--codes requires 1..10 six-digit codes")
@@ -956,6 +1110,10 @@ def parse_collector_args(argv=None):
         args.aftermarket_nxt_eligibility_confirmed, args.aftermarket_list_note is not None,
         args.aftermarket_market_profile is not None))
     if aftermarket_given:
+        if args.capture_telemetry:
+            parser.error("capture telemetry supports a single raw-v2 session only")
+        if args.explicit_ocx_teardown:
+            parser.error("explicit OCX teardown is not verified for session transitions")
         # 상충 인자는 OCX(QApplication/OCX 컨트롤) 를 만들기 전에 거부한다.
         if plan is not None:
             parser.error("--nxt-codes 계획과 애프터마켓 전환을 함께 줄 수 없다")
@@ -1012,7 +1170,9 @@ if __name__ == "__main__":
                 duration_seconds=args.duration_seconds, managed=managed, diagnostics=diagnostics,
                 aftermarket_plan=aftermarket_plan, aftermarket_duration_seconds=aftermarket_duration_seconds,
                 aftermarket_transition_at=aftermarket_transition_at,
-                aftermarket_transition_after_seconds=aftermarket_transition_after_seconds)
+                aftermarket_transition_after_seconds=aftermarket_transition_after_seconds,
+                explicit_ocx_teardown=args.explicit_ocx_teardown,
+                capture_telemetry=args.capture_telemetry)
             logger.start()
         except KeyboardInterrupt:
             if logger is not None:
@@ -1021,12 +1181,10 @@ if __name__ == "__main__":
             failure = f"{type(exc).__name__}: {exc}"
             raise
         finally:
-            # Keep the lease while any accepted data is still being drained.
-            if logger is not None and logger.raw_capture is not None:
-                if not logger._shutdown_done:
-                    logger.raw_capture.queue.abort(failure or "unexpected collector exit")
-                while not logger.raw_capture.queue.wait(5):
-                    print("raw v2 저장 워커 종료 대기 중", flush=True)
+            record_phase(diagnostics, "main_finally_enter", failure=failure)
+            # 기존 drain 대기 동안 lease와 진단기를 유지한다.
+            if logger is not None:
+                logger._finish_process_resources(failure)
             if managed is not None and not managed.finished:
                 capture = logger.raw_capture if logger is not None else None
                 report = capture.report if capture is not None and capture.report.state == "closed" else None
@@ -1034,4 +1192,5 @@ if __name__ == "__main__":
                 if error is None and logger is not None and logger.exit_code:
                     error = f"collector exited with code {logger.exit_code}; see capture log"
                 managed.finish(report, error)
+            record_phase(diagnostics, "main_finally_returned")
         sys.exit(logger.exit_code)
