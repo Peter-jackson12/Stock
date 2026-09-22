@@ -27,8 +27,9 @@ RES-1 one-pass retry와 CLK-1 advance 호출열 정책은 유지한다.
   poll age의 음수값은 수치로 발행하지 않고, 표본 slot이 성공이 아닌 선택 시도 기준임을 문서·회귀로 고정했다.
   CI #156의 flush 예외 close 누락과 #162의 일회성 raw startup 실패 이력은 지우지 않는다.
   startup 실패에는 ready/state/error/writer_done을 남기고 기본 시작·종료 회귀를 4회 반복한다.
-  master 재동기화 전 CI #183은 telemetry/통합 57 passed, teardown 69 passed,
-  전체 1,516 passed / 6 deselected였다. 최종 master-base HEAD/run/job는 다시 확인한다.
+  PR #16 병합 master를 정상 merge parent로 동기화한 CI #189에서 telemetry/통합 57 passed,
+  teardown 69 passed, 전체 1,516 passed / 6 deselected를 decoded 로그로 확인했다.
+  이 인계 문서-only 커밋 뒤 최종 Actions 상태는 PR 본문에서 한 번 더 확인한다.
 
 두 PR은 실제 32비트 키움/Qt/보안 모듈 동작, native 오류 재발 방지, 수신 처리량을 인증하지 않는다.
 저부하는 설계 목표이며 실측 완료가 아니다. 로컬 설치·동기화·수집 실행·운영 적용은 하지 않았다.
