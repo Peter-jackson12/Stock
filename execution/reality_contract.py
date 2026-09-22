@@ -46,7 +46,7 @@ def simulation_contract(sim: "TickSimulator") -> dict:
         "order_response_latency_model": {
             "status": "not_modeled",
             "account_and_fill_update": "during_match",
-            "strategy_fill_observation": "poll_at_start_of_next_market_event_callback",
+            "strategy_fill_observation": "poll_at_start_of_market_event_callback",
             "timer_fill_callback": False,
         },
         "cancel_latency_model": {
@@ -64,7 +64,7 @@ def simulation_contract(sim: "TickSimulator") -> dict:
         },
         "slippage_model": {
             "status": "not_modeled_separately",
-            "price_effects_already_present": ["bid_ask_spread", "quote_at_order_ready_time"],
+            "price_effects_already_present": ["bid_ask_spread", "quote_at_each_matching_attempt_on_or_after_order_ready"],
         },
         "stale_quote_policy": {
             "max_age_ns": sim.replay.max_quote_age_ns,
