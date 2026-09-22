@@ -25,7 +25,12 @@ RES-1 one-pass retry와 CLK-1 advance 호출열 정책은 유지한다.
 - PR #17: [Qt 폴링·기존 FID 제한 표본 진단](docs/COLLECTOR_TELEMETRY.md).
   `codex/collector-teardown-20260922` 위에 stack한 별도 변경이다. master 직접 병합 대상으로
   오해하지 않는다. `--capture-telemetry`는 기본 꺼짐이며 해제 옵션과 독립이다.
-  최종 HEAD/run/job와 실제 회귀 결과는 각 PR 본문에서 다시 확인한다.
+  중단된 작업을 원격에서 재확인해 이어갔으며 새 중복 PR은 만들지 않았다.
+  두 옵션의 4가지 조합과 실패 비간섭을 확인하는 11개 통합 회귀를 추가했다.
+  CI #156의 1 failed / 53 passed는 최종 flush 예외로 진단 파일 close가 생략되는 반례였다.
+  `db2b18e9292a0be257a01e855faf1b7958562cbe`에서 해당 경계를 수정했고 기대를 완화하지 않았다.
+  이 결함은 새 진단 경로의 정리 문제이며 운영 수신 장애의 원인 규명과 다르다.
+  최종 HEAD/run/job와 수정 후 실제 회귀 결과는 각 PR 본문에서 다시 확인한다.
 
 두 PR은 실제 32비트 키움/Qt/보안 모듈 동작, native 오류 재발 방지, 수신 처리량을 인증하지 않는다.
 저부하는 설계 목표이며 실측 완료가 아니다. 로컬 설치·동기화·수집 실행·운영 적용은 하지 않았다.
@@ -75,9 +80,13 @@ PR #15 합성 경로도 운영 namespace/동시 접근/실제 출처의 충분 �
 
 ## 다음 작업과 승인 경계
 
-종료·진단 PR의 GitHub 합성 검증/코드 검토를 먼저 완료한다. 신규 로그인·재수집은 자동 실행하지 않는다.
-실제 적용에는 대상 identity·사전 상태·장외 시각·동시 접근 배제·경로 보호·free space·
-I/O/time 예산과 별도 사용자 승인이 필요하다. 합성 통과를 native 오류 해결/운영 승인으로 읽지 않는다.
+정확한 PR HEAD의 최종 CI와 별도 코드 검토 뒤 병합 판단을 한다. 구현자의 자체 검토와 독립
+검토를 구별한다. #16을 먼저 병합하는 경우 #17의 base를 master로 바꾸고 변경 diff와 CI를 다시
+확인한다. #15와 공통 문서/CI 충돌은 별도로 조정하며 이력 재작성으로 덮지 않는다.
+
+신규 로그인·재수집은 자동 실행하지 않는다. 실제 적용에는 대상 identity·사전 상태·장외 시각·
+동시 접근 배제·경로 보호·free space·I/O/time 예산과 별도 사용자 승인이 필요하다.
+합성 통과를 native 오류 해결/운영 승인으로 읽지 않는다.
 
 closed != data quality pass; sample clean != whole-file clean;
 stream integrity != research eligibility; parse_error != file corruption;
