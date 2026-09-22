@@ -19,10 +19,13 @@ RES-1 one-pass retry와 CLK-1 advance 호출열 정책은 유지한다.
   `257e8f1ea0e54e926466e8094d69865e9c6c4d37`, 1,454 passed / 6 deselected.
   운영 복제·sidecar 정리 승인이 아니다. 해당 PR과 이번 종료 변경은 독립이다.
 - PR #16: 종료 단계 기록과 `--explicit-ocx-teardown` 선택적 해제.
-  [종료 계약](docs/COLLECTOR_TEARDOWN.md)을 읽는다. 기본 해제 옵션은 꺼짐이며 원격 합성 검증만 한다.
-  최종 HEAD/run/job와 decoded CI 로그는 PR 본문을 기준으로 다시 확인한다.
-- 다음 별도 PR은 Qt 폴링 실제 반환값과 이미 읽은 FID 시각의 저부하 관측이다.
-  같은 collector 파일을 바꾸므로 PR #16 위에 stack하고 diff/CI를 구분한다.
+  [종료 계약](docs/COLLECTOR_TEARDOWN.md)을 읽는다. 기본 해제 옵션은 꺼짐이다.
+  독립 감사에서 발견한 teardown 보류의 exit_code 오판과 log close 실패 시 Qt quit 누락을 수정했다.
+  raw-v2 기본 시작/종료 경로는 반복 회귀로 넓히고 startup 실패 시 ready/state/error/writer_done을 남긴다.
+  수정 직전 최종 코드 CI #178은 집중 69 passed, 전체 1,459 passed / 6 deselected였다.
+  이 문서 커밋 뒤 최종 HEAD/run/job는 PR 본문과 Actions 실제 로그로 다시 확인한다.
+- PR #17: Qt 폴링 실제 반환값과 이미 읽은 FID 시각의 저부하 관측. PR #16 위 stacked 상태이며
+  telemetry close 경합 high finding을 수정했다. #16 병합 뒤 base를 master로 옮겨 diff/CI를 다시 확인한다.
 
 ## 2026-09-22 수집 장애 — 첨부 사본 및 사용자 관측
 
