@@ -31,7 +31,9 @@ jobs:
         run: uv sync --locked --group dev --python 3.14
       - name: Audit telemetry sampling and raw noninterference
         timeout-minutes: 2
-        run: uv run --locked --offline python -m pytest -q -ra tests/test_capture_telemetry.py
+        run: >-
+          uv run --locked --offline python -m pytest -q -ra
+          tests/test_capture_telemetry.py tests/test_collector_diagnostics_integration.py
       - name: Audit collector teardown boundaries
         timeout-minutes: 2
         run: >-
