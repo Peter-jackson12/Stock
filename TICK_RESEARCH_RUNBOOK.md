@@ -289,6 +289,120 @@ prototype_2의 접속 중단·파싱 오류·overflow 제어 기록은 연구 �
 취소 지연 동안 체결 가능하고, 마감 잔여 주문은 만료한다. 보유분을 허위 청산하지 않는다.
 실거래 주문 전송 기능은 없으며 기존 대시보드의 Trade/수익률 형식에 아직 연결하지 않았다.
 
+## Simulation Reality Contract v1
+
+[계약 생성기](execution/reality_contract.py)는 기존 모델을 기술하며 실행 모델 선택기가 아니다.
+[run_research/run_raw_v2](engine/tick_research_run.py)의 새 결과에는 다음 세 필드가 추가된다.
+`running`, 완료, `failed` 모두 같은 계약을 보존하며 기존 `tick_research_result_v1`은 유지한다.
+과거 파일은 수정하지 않는다. 필드 없는 과거 결과에 현재 가정을 소급해서 인증하지 않는다.
+
+| 결과 JSON 경로 | 읽는 법 |
+|---|---|
+| `simulation_contract` | `simulation_reality_v1`: 실제 적용된 지연·비용·호가 나이와 고정 실행 규칙 |
+| `input_capabilities` | `input_capability_v1`: 형식 지원 범위. 실제 데이터의 필드 충족·무누락 인증이 아님 |
+| `contract_sha256` | 위 두 객체만 canonical JSON으로 직렬화한 SHA-256. 결과 파일 전체의 해시가 아님 |
+
+`quote_depth_used_by_execution=1`은 한쪽당 최우선 호가만 체결에 쓴다는 뜻이다.
+정규화 `bid_sizes/ask_sizes`의 top3는 전략 진입 피처용이며 깊은 가격대 소진을 허용하지 않는다.
+원문 10호가 보존, 정규화 잔량 tuple, L3/MBO 주문별 정보는 서로 다른 능력이다.
+`trade_ticks.supported=true`/`quote_snapshots.supported=true`는 형식 지원일 뿐 빈 입력에도 그대로다.
+관측 건수는 기존 결과의 `processed_event_counts` 등과 별도로 읽는다.
+
+`queue_position_model=none`, `market_impact_model=not_modeled`,
+`order_response_latency_model.status=not_modeled`는 미구현을 숨기지 않는다.
+`slippage_model.status=not_modeled_separately`도 총 실행 비용이 0이라는 뜻이 아니다.
+매수 ask/매도 bid 스프레드와 주문 도착 시점의 호가 선택은 이미 가격에 반영되며 별도 가격 충격은 없다.
+수수료는 양방향 체결 금액에 설정 비율을 각각 적용한다. 실제 증권사·세금·시장별 요율 인증은 아니다.
+
+`feed_latency_model.status=not_calibrated`를 숫자 0으로 해석하지 않는다.
+[정규화기](collector/kiwoom/tick_normalizer.py)의 trade FID20/quote FID21은 유효한 HHMMSS일 때만
+초 정밀도이며 날짜·세부 정밀도·시계 동기화를 증명하지 않는다. `market_second`는 이 정규화기에서
+UTC 수신 시각을 KST로 바꾼 초이고 FID20이 아니다. `received_ns`는 로컬 단조 시각이다.
+[raw-v2 envelope](collector/raw_v2.py)의 UTC 수신 시각과 선택적인 원천 시각 원문은 실행 입력
+`OrderedTick`에는 전달되지 않는다. 두 시각의 차이로 실제 feed latency를 추정하지 않는다.
+`upstream_format_support`는 형식 설명이지 해당 실행이 그 정규화기/raw-v2를 사용했다는 주장이 아니다.
+실제 출처는 `input_provenance`에서 따로 읽되 호출자 주장도 독립 인증으로 승격하지 않는다.
+방향 정책은 raw record별 원문에 있으며 이 계약은 검사하지 않는다. venue 문자열도 인증하지 않는다.
+
+### 순서와 재현성 경계
+
+[TickSimulator](execution/tick_simulator.py)의 순서는 **입력 identity/순서 검사 → 기존 호가로
+현재 시각까지의 타이머 처리 → 새 이벤트/호가 잔량 반영 → 기존 주문 매칭 → 전략 콜백**이다.
+콜백 안의 지연 0 주문은 `submit()` 후 즉시 매칭한다. 같은 timestamp의 외부 이벤트도 공통 seq별로
+처리하며 뒤의 호가를 앞 신호에 소급하지 않는다. 취소 도착과 체결 가능 시점의 tie는 취소 우선이나,
+전략 콜백에서 뒤늦게 요청한 취소는 그 콜백 전에 확정된 체결을 되돌리지 않는다.
+마지막 tick 뒤에도 마감 전 타이머는 신선한 기존 호가로 실행한다. `close(t)`는 `t-1`까지만 진행한 뒤
+잔여 주문을 만료하고 보유분을 남긴다. timer/close가 새 전략 콜백이나 가짜 청산을 만들지 않는다.
+
+동일 코드·입력·설정뿐 아니라 Decimal context도 유지해야 한다. `decimal_context`에 precision,
+rounding, 지수 범위, traps 등을 기록하며 계산 결과를 바꾸지 않는 sticky flags는 제외한다.
+실행 도중 호출자가 context를 바꾸지 않아야 한다는 전제이며 이를 격리/강제하는 새 실행기는 아니다.
+계약은 `_json()`과 같은 `sort_keys=True`, `ensure_ascii=False`, `allow_nan=False` 직렬화를 사용한다.
+새 계약 코드도 `code_sha256`에 들어가고 두 계약의 해시는 `reproducibility_key`의 `contracts` 입력에
+명시적으로 포함된다. 이는 관련 파일 7개의 바이트 식별과 조합 키이지 전체 저장소/런타임의 인증이 아니다.
+이 변경 전후의 재현성 키는 달라지지만 기존 결과 조회 형식은 유지한다.
+[기존 inspect](scripts/inspect_tick_research.py)는 새 필드를 요구하거나 검증하지 않고 이전 요약을 유지한다.
+계약 원문은 결과 JSON에서 읽는다. 계약 해시·재현성 키를 경제적 결과 해시나 외부 서명으로 쓰지 않는다.
+
+v1은 queue/L3/시장 충격 등의 새 설정을 받지 않는다. `simulator_config`에 미지원 keyword를 넣으면
+기존 `TickSimulator` 생성자가 입력 소비·출력 폴더 생성 전에 거부한다. 새 모델을 선택하는 API나
+범용 미사용 validator를 추가하지 않았다. 향후 모델을 추가할 때는 요구 capability, 부족 시 거부,
+계약 버전 및 재현성 identity를 함께 변경해야 한다.
+[계약 회귀](tests/test_reality_contract.py)와 [순서 경계 회귀](tests/test_tick_execution_boundaries.py)는
+이를 작은 메모리 이벤트/합성 raw로 고정한다. GitHub CI는 관련 묶음 후 전체 Git-only 테스트를 실행한다.
+
+### 기존 구현 감사
+
+분류 기준은 변경 전 `6a6d6076649befc767e5d8d59151cbcfb2f27c34`의 실제 코드와 회귀다.
+새 계약은 이 상태를 구조화한 것이며 아래의 미구현을 새로 구현했다는 뜻이 아니다.
+
+| 항목 | 분류 | 코드·회귀 근거 / 한계 |
+|---|---|---|
+| 입력 granularity·quote depth | `implemented_and_explicit` | `OrderedTick`, `normalize_tick`, `check_ordered_quote`; 체결은 top1, 전략은 top3 잔량 |
+| fill·displayed liquidity 소비 | `implemented_and_explicit` | `TickSimulator._match`, `test_partial_fifo_no_refill_on_trade_or_timer_new_quote_replenishes` |
+| 유동성 재충전 | `implemented_and_explicit` | `TickSimulator.on_event`; 새 quote seq마다 reset, trade/timer는 복구하지 않음 |
+| partial fill·자금/보유 부족 | `implemented_and_explicit` | `_match`, `test_cash_fees_and_no_short_sales`; 잔여 주문은 계속 살아 있음 |
+| queue position | `intentionally_not_modeled` | simulator 문서와 시장가 주문 API; 로컬 주문 접수 순서는 거래소 큐가 아님 |
+| L3/MBO 주문별 정보 | `unsupported_by_current_data` | `OrderedTick`에 거래소 order ID/개별 주문 이벤트 없음; opaque raw dict로 인증하지 않음 |
+| market impact | `intentionally_not_modeled` | `_match`는 로컬 잔량만 소비하고 외부 재생 스트림을 변경하지 않음 |
+| feed latency 실측 | `unsupported_by_current_data` | `NormalizedTick`의 HHMMSS/precision과 로컬 시각만으로 동기화/네트워크 지연을 증명 못 함 |
+| order entry latency | `implemented_and_explicit` | `submit`, `advance`, `test_both_sides_wait_and_timers_work_without_trades` |
+| order response/fill notification latency | `intentionally_not_modeled` | `_match`에서 계좌/체결 갱신, 전략 `_sync`는 시장 이벤트 콜백에서 조회; 별도 지연 큐 없음 |
+| cancel latency | `implemented_and_explicit` | `cancel`, `_match`; `test_cancellation_latency_allows_fills_before_ack`, tie 회귀 |
+| fee | `implemented_and_explicit` | `_match`의 gross × rate; `run_research`는 fee_rate 명시 필수, 직접 simulator 기본 0과 구분 |
+| 별도 slippage model | `intentionally_not_modeled` | 별도 가격 가산/충격 함수 없음 |
+| spread·도착 시점 가격 효과 | `implemented_but_implicit` | ask/bid와 ready 시점 호가 선택에 내재; 기존 결과에는 독립 가정 분류가 없었음 |
+| stale quote | `implemented_and_explicit` | `ReceiveOrderReplay`, `_match`; age > max일 때 거부, 가격 fallback 없음 |
+| same-timestamp event/order/timer | `implemented_and_explicit` | `on_event`, `advance`, `_match`; 기존 `test_quote_at_deadline_is_not_used_early` 등 |
+| session close ordering | `implemented_and_explicit` | `close`, `test_close_expires_at_boundary_without_forced_liquidation` |
+| deterministic replay | `implemented_and_explicit` | 수신 순서 검사·접수 순서·chunk/future suffix 불변 회귀; 실피드 정확성 인증과 다름 |
+| Decimal 계산 context | `implemented_but_implicit` | 기존 `_match`는 호출자 context 사용. 이번 결과부터 context를 기록하며 동작은 유지 |
+| provenance·관련 code hash | `implemented_and_explicit` | `run_raw_v2`의 manifest/reader hash, `run_research._code_identity`, 입력 변경 identity 회귀 |
+| configuration hash | `implemented_but_implicit` | 별도 config 해시 필드는 없지만 settings 전체가 기존 reproducibility_key에 포함 |
+| 경제적 result hash | `future_candidate` | 기존 event hash/재현성 키는 결과 hash가 아님. 이번 contract_sha256도 결과 무결성 인증 아님 |
+
+### 외부 설계 검토 근거
+
+2026-09-22에 아래 공식 문서를 비교했다. `latest`/`nightly`는 이동하는 문서이고 hftbacktest 큐/체결
+설명은 명시한 v1.8.4 기준이다. 코드 복사·프레임워크 호환 API·동일 체결 결과를 주장하지 않는다.
+
+- hftbacktest [지연 분리](https://hftbacktest.readthedocs.io/en/latest/latency_models.html),
+  [queue model](https://hftbacktest.readthedocs.io/en/v1.8.4/reference/queue_models.html),
+  [부분체결과 재생 한계](https://hftbacktest.readthedocs.io/en/v1.8.4/order_fill.html):
+  feed/entry/response를 구분하고 큐·유동성 가정을 명시하는 개념을 참고했다.
+  MBP에서도 가정 기반 queue 추정은 가능하므로 MBO 부재가 모든 모델의 수학적 불가능을 뜻하지 않는다.
+  다만 현재 Stock은 시장가/top1 모델이며 수동 지정가·큐 가정의 보정/검증이 없어 이번 범위에 넣지 않는다.
+- NautilusTrader [입력과 venue](https://nautilustrader.io/docs/latest/concepts/backtesting/data-and-venues/),
+  [실행 순서](https://nautilustrader.io/docs/nightly/concepts/backtesting/execution-flow/),
+  [시각 의미](https://nautilustrader.io/docs/latest/concepts/data/),
+  [재현/무결성](https://nautilustrader.io/docs/nightly/concepts/event_sourcing/):
+  데이터 깊이와 실행 충실도, clock 의미, 무결성과 capture completeness의 분리를 참고했다.
+  Stock의 기존 호가 우선 timer와 exclusive close는 그대로 유지하며 그 엔진의 shutdown drain을 이식하지 않는다.
+- LEAN [reality model 분리](https://www.quantconnect.com/docs/v2/writing-algorithms/reality-modeling/key-concepts),
+  [fill](https://www.quantconnect.com/docs/v2/writing-algorithms/reality-modeling/trade-fills/key-concepts),
+  [slippage](https://www.quantconnect.com/docs/v2/writing-algorithms/reality-modeling/slippage/key-concepts):
+  fill·slippage·fee·brokerage 가정을 따로 드러내는 개념을 참고했다. 별도 brokerage/충격 모델을 추가하지 않는다.
+
 ## 운영 화면에서 조회/계획 저장
 
 [컨트롤 타워](CONTROL_TOWER.md)에 `research_runs/<run-id>/result.json` 조회 요청을 저장하면
