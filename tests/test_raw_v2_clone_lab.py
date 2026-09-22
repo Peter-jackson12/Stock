@@ -105,9 +105,13 @@ def test_existing_sqlite_reader_is_not_mistaken_for_quiescence(source):
 
 def test_late_child_reader_writer_and_file_mutations_are_blocked(source):
     root, fixture = source
+    # 권한 자체가 없는 파일을 잠금 성공으로 착각하지 않는다.
+    for name in fixture.files:
+        with (fixture.path.parent / name).open("r+b"):
+            pass
     observed = []
     code = r'''
-import json, pathlib, sqlite3, sys
+import errno, json, pathlib, sqlite3, sys
 p = pathlib.Path(sys.argv[1])
 results = []
 for suffix in ("", "-wal", "-shm"):
@@ -117,8 +121,10 @@ for suffix in ("", "-wal", "-shm"):
             with path.open(mode):
                 pass
             results.append("unexpected-open")
-        except OSError as exc:
-            results.append(exc.winerror)
+        except PermissionError as exc:
+            # Python CRT open은 WinError가 아니라 errno=EACCES를 노출할 수 있다.
+            assert exc.errno == errno.EACCES, repr(exc)
+            results.append("permission-denied")
 for readonly in (False, True):
     conn = None
     try:
@@ -126,7 +132,8 @@ for readonly in (False, True):
                                uri=True, timeout=0)
         conn.execute("SELECT value FROM metadata" if readonly else "BEGIN IMMEDIATE").fetchone()
         results.append("unexpected-sqlite")
-    except sqlite3.Error:
+    except sqlite3.OperationalError as exc:
+        assert exc.sqlite_errorcode == sqlite3.SQLITE_CANTOPEN, repr(exc)
         results.append("sqlite-blocked")
     finally:
         if conn is not None:
@@ -136,7 +143,6 @@ print(json.dumps(results))
     def hook(stage, path, run):
         if stage != "sealed":
             return
-        print("CLONE_PROBE child_start", flush=True)
         process = subprocess.run([sys.executable, "-c", code, str(path)],
                                  capture_output=True, text=True, timeout=lab.CHILD_TIMEOUT_SECONDS)
         print("CLONE_PROBE child_result", process.returncode, process.stdout, process.stderr, flush=True)
@@ -144,20 +150,41 @@ print(json.dumps(results))
         observed.extend(json.loads(process.stdout))
         for suffix in ("", "-wal", "-shm"):
             target = Path(str(path) + suffix)
-            print("CLONE_PROBE unlink", target.name, flush=True)
-            with pytest.raises(OSError):
+            with pytest.raises(PermissionError):
                 target.unlink()
-            print("CLONE_PROBE rename_file", target.name, flush=True)
-            with pytest.raises(OSError):
+            with pytest.raises(PermissionError):
                 target.rename(target.with_name(target.name + ".replaced"))
         for directory in (path.parent, root, run / "working"):
-            print("CLONE_PROBE rename_directory", directory.name, flush=True)
-            with pytest.raises(OSError):
+            with pytest.raises(PermissionError):
                 directory.rename(directory.with_name(directory.name + "_moved"))
     result = read_result(clone.clone_fixture(root, fixture, hook=hook))
-    print("CLONE_PROBE end", result["error"], sorted(p.name for p in root.iterdir()), flush=True)
     assert result["synthetic_copy_verified"] is True, result["error"]
-    assert observed == [32] * 6 + ["sqlite-blocked"] * 2
+    assert observed == ["permission-denied"] * 6 + ["sqlite-blocked"] * 2
+    for name in fixture.files:
+        with (fixture.path.parent / name).open("r+b"):
+            pass
+    assert lab.db_snapshot(fixture.path) == fixture.files
+
+
+@pytest.mark.parametrize("access", [0, 1])
+def test_empty_directory_metadata_handle_is_not_a_namespace_pin(source, monkeypatch, access):
+    root, _ = source
+    empty = root / "empty_pin_probe"
+    moved = root / "empty_pin_probe_moved"
+    empty.mkdir()
+    monkeypatch.setattr(clone, "DIRECTORY_ACCESS", access)
+    with clone._pinned_directory(empty) as check:
+        if access == 0:
+            empty.rename(moved)
+            assert moved.is_dir()
+            with pytest.raises(FileNotFoundError):
+                check()
+        else:
+            with pytest.raises(PermissionError):
+                empty.rename(moved)
+            check()
+            assert empty.is_dir() and not moved.exists()
+    print(f"CLONE_DIRECTORY access={access} rename_blocked={access == 1}")
 
 
 def test_clone_never_opens_source_with_sqlite(source, monkeypatch):
