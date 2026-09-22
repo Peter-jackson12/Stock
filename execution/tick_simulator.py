@@ -4,12 +4,87 @@ Timers precede external events at the same timestamp; cancellation wins ties.
 Zero-latency submissions execute after the triggering event, never before it.
 Each new quote sequence replenishes displayed liquidity (an explicit simulation
 assumption); trades/timers do not replenish it. No queue position or market impact.
+Money uses exact finite-decimal integer coefficients, not ambient Decimal rounding.
+The bounded numeric envelope is descriptive research policy, not currency rules.
 """
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from engine.tick_ordering import ReceiveOrderReplay
 from execution.quote_validation import check_ordered_quote
+
+
+MAX_INPUT_DIGITS = 64
+MAX_INPUT_EXPONENT = 64
+MAX_LEDGER_DIGITS = 512
+MAX_LEDGER_EXPONENT = 128
+MAX_QUANTITY = 10 ** 18
+
+
+def _bounded_decimal(value, name, *, ledger=False):
+    """Check representation bounds without normalize()/ambient rounding."""
+    digits = MAX_LEDGER_DIGITS if ledger else MAX_INPUT_DIGITS
+    exponent = MAX_LEDGER_EXPONENT if ledger else MAX_INPUT_EXPONENT
+    parts = value.as_tuple()
+    if (not value.is_finite() or len(parts.digits) > digits
+            or not -exponent <= parts.exponent <= exponent):
+        raise ValueError(f"{name} outside exact numeric envelope ({digits} digits, exponent +/-{exponent})")
+
+
+def _parts(value):
+    sign, digits, exponent = value.as_tuple()
+    coefficient = int("".join(map(str, digits)))
+    return (-coefficient if sign else coefficient), exponent
+
+
+def _from_parts(coefficient, exponent):
+    # Decimal(tuple) preserves all digits/exponent independently of context.
+    return Decimal((int(coefficient < 0), tuple(map(int, str(abs(coefficient)))), exponent))
+
+
+def _money_add(left, right):
+    a, ae = _parts(left)
+    b, be = _parts(right)
+    exponent = min(ae, be)
+    return _from_parts(a * 10 ** (ae - exponent) + b * 10 ** (be - exponent), exponent)
+
+
+def _money_mul(left, right):
+    a, ae = _parts(left)
+    b, be = _parts(right)
+    return _from_parts(a * b, ae + be)
+
+
+def _money_floor_ratio(numerator, denominator):
+    a, ae = _parts(numerator)
+    b, be = _parts(denominator)
+    exponent = min(ae, be)
+    return (a * 10 ** (ae - exponent)) // (b * 10 ** (be - exponent))
+
+
+def _quote_numeric_envelope(event):
+    """Reject unsupported finite quote magnitudes before replay/timer mutation.
+
+    Missing/nonpositive/nonfinite/malformed quotes still use the existing
+    withhold-fill policy. Trade payloads are not executable quote prices.
+    """
+    if event.kind != "quote":
+        return
+    for name in ("bid", "ask", "bid_size", "ask_size"):
+        value = getattr(event, name)
+        if type(value) not in (str, int, float, Decimal):
+            continue
+        try:
+            number = Decimal(str(value))
+        except InvalidOperation:
+            continue
+        if not number.is_finite() or number <= 0:
+            continue
+        if name.endswith("_size"):
+            if number > MAX_QUANTITY:
+                raise ValueError(f"{name} outside exact numeric envelope (maximum {MAX_QUANTITY})")
+        else:
+            _bounded_decimal(number, name)
 
 
 @dataclass
@@ -54,6 +129,8 @@ class TickSimulator:
             raise ValueError("invalid cash")
         if not self.fee_rate.is_finite() or not 0 <= self.fee_rate < 1:
             raise ValueError("invalid fee rate")
+        _bounded_decimal(self.cash, "cash")
+        _bounded_decimal(self.fee_rate, "fee_rate")
         self.latency = {"buy": _ns(buy_latency_ns), "sell": _ns(sell_latency_ns)}
         self.cancel_latency = _ns(cancel_latency_ns)
         self.now = 0
@@ -73,6 +150,8 @@ class TickSimulator:
             raise ValueError("unique nonempty order id required")
         if side not in self.latency or type(quantity) is not int or quantity <= 0:
             raise ValueError("valid side and positive integer quantity required")
+        if quantity > MAX_QUANTITY:
+            raise ValueError(f"quantity outside exact numeric envelope (maximum {MAX_QUANTITY})")
         order = SimOrder(order_id, side, quantity, quantity, self.now + self.latency[side])
         self.orders[order_id] = order
         self.audit.append((self.now, order_id, "submitted"))
@@ -110,15 +189,25 @@ class TickSimulator:
             if order.status in ("filled", "cancelled", "expired") or order.ready_ns > self.now:
                 continue
             price = book.ask if order.side == "buy" else book.bid
-            capacity = (int(self.cash // (price * (1 + self.fee_rate)))
-                        if order.side == "buy" else self.position)
+            buying = order.side == "buy"
+            capacity = (_money_floor_ratio(self.cash, _money_mul(price, _money_add(Decimal(1), self.fee_rate)))
+                        if buying else self.position)
             quantity = min(order.remaining, self._left[order.side], capacity)
             if quantity <= 0:
                 continue
-            gross = quantity * price
-            fee = gross * self.fee_rate
-            self.cash += -gross - fee if order.side == "buy" else gross - fee
-            self.position += quantity if order.side == "buy" else -quantity
+            gross = _money_mul(Decimal(quantity), price)
+            fee = _money_mul(gross, self.fee_rate)
+            cost = _money_add(gross, fee if buying else fee.copy_negate())
+            # All arithmetic/validation precedes committing this fill. Never clamp
+            # negative cash or repair a fill after consuming quantity/liquidity.
+            if buying and cost > self.cash:
+                raise ArithmeticError("exact buy cost exceeds pre-fill cash")
+            next_cash = _money_add(self.cash, cost.copy_negate() if buying else cost)
+            _bounded_decimal(next_cash, "resulting cash", ledger=True)
+            if next_cash < 0:
+                raise ArithmeticError("exact fill would violate cash solvency")
+            self.cash = next_cash
+            self.position += quantity if buying else -quantity
             self._left[order.side] -= quantity
             order.remaining -= quantity
             order.status = "filled" if order.remaining == 0 else "partial"
@@ -144,6 +233,7 @@ class TickSimulator:
             raise ValueError("closed session or event behind replay clock")
         if (event.code, event.venue) != (self.code, self.venue):
             raise ValueError("single-instrument simulator cannot merge instruments/venues")
+        _quote_numeric_envelope(event)
         # Validate source/order before processing any pending deadlines.
         view = self.replay.accept(event)
         self.advance(event.received_ns)
