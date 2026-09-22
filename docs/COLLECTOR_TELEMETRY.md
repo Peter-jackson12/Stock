@@ -36,11 +36,14 @@ header는 session_id, code_revision, 표본 간격과 저장 예산을 담는다
 아니며, 전체 지연 분포의 평균/백분위수나 시장 coverage를 추정하는 자료로 쓰지 않는다.
 이미 원본 저장을 위해 읽은 FID20(체결) 또는 FID21(호가)만 가져온다.
 code, 원문 시각, 콜백 진입 UTC/perf ns, 큐 submit 반환까지의 처리 ns, accepted를 담는다.
+표본 slot은 FID/submit 성공 여부 전에 선택하므로 실패 콜백도 해당 종류의 5초 slot을 소비할 수 있다.
+이는 성공 콜백 표본이 아니라 **선택 시도 기반 표본**이며 테스트로 고정한다.
 표본 처리를 위해 추가 clock 호출은 선택된 표본에서만 한다. 추가 GetCommRealData 호출은 없다.
 
 원문 HHMMSS와 콜백 UTC의 차이는 **같은 KST 날짜라는 미검증 가정**으로 계산한 signed 시계 차이다.
 시계 동기화·장 구간·초 정밀도·날짜 모호성이 있어 순수 네트워크 지연이나 feed latency 보정값이 아니다.
 음수나 자정 경계를 0으로 clamp하거나 +/-24시간 보정하지 않는다. 잘못된/잘린 시각은 null+이유다.
+내부 monotonic 관측의 age/duration이 시계 역행으로 음수가 되면 수치로 발행하지 않고 null로 둔다.
 이 진단 숫자는 raw의 received_ns/exchange_ts, 정규화 값, 연구 입력 승인에 사용하지 않는다.
 
 ## 부하와 실패 보존
@@ -56,8 +59,10 @@ stats의 기존 1초 루프에서 flush 여부를 확인하고 보통 60초에 �
 부분 write/강제 종료/전원 장애의 마지막 행과 아직 flush하지 않은 표본은 유실될 수 있다.
 일반 flush는 디스크 I/O의 실시간 상한을 보장하지 않는다. 저부하는 설계 목표이며 실부하 벤치마크 결과가 아니다.
 
-최종 flush의 예외도 기록하되 파일 닫기 시도를 건너뛰지 않는다. 첫 진단 오류를 보존하며,
-파일 close 자체가 실패하거나 다른 flush가 잠금을 소유하면 closed 성공으로 표시하지 않는다.
+최종 flush의 예외도 기록하되 파일 닫기 시도를 건너뛰지 않는다. 첫 진단 오류를 보존한다.
+다른 thread가 flush lock을 소유한 순간 close가 호출되면 close 요청을 남기고 그 active flush의 finally가
+stream close를 인계받는다. 호출 시점에 아직 닫히지 않았으면 pending phase를 남기며 main 정리 단계가
+다시 확인한다. 파일 close 자체 실패나 영구 hang에서는 closed 성공으로 표시하지 않는다.
 이는 모든 OS/파일시스템 장애에서의 닫힘 보장이 아니다. 실패한 최종 표본을 성공 기록으로 꾸미지 않는다.
 
 `telemetry_bind`/`telemetry_summary` phase는 진단 상태의 제한된 단서다. 파일 누락이나 비어 있는
