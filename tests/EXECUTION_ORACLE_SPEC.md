@@ -1,10 +1,16 @@
 # Execution oracle 감사 명세와 반례
 
-기준: `98725431ca84f6fc88efb293e126b915799f0a28` (PR #10 병합).
+감사 기준: `98725431ca84f6fc88efb293e126b915799f0a28` (PR #10 병합).
 [실행 계약](../TICK_RESEARCH_RUNBOOK.md#simulation-reality-contract-v1) ·
 [시뮬레이터](../execution/tick_simulator.py) · [현재 인계](../HANDOFF.md).
 이 파일은 **테스트 명세·감사 한계·반례**를 담당한다. 기계적 실행 설명은
 `execution/reality_contract.py`, 연구 사용 안내는 기존 런북이 담당한다.
+
+**후속 수정 이력:** PR #11은 `d9d4e5d8b8639e99c8e2c14846023552e9cb5dac`에 병합됐다.
+[PR #12 NUM-1](https://github.com/Peter-jackson12/Stock/pull/12)과
+[PR #13 RUN-1](https://github.com/Peter-jackson12/Stock/pull/13)은 그 master에서 독립 분기한다.
+아래 발견 기록은 PR #11 당시 사실이다. 각 수정의 적용 여부는 해당 branch/revision으로 구별하며
+독립 PR의 상대 결함 xfail을 삭제하지 않는다. 두 수정 통합 결과는 별도 비병합 검증 로그를 따른다.
 
 ## 1. 구현 관찰과 독립적인 기대를 분리
 
@@ -21,7 +27,7 @@
 독립 ledger의 수량 n은 `0 <= n <= remaining`, `n <= 해당 방향 budget`,
 buy이면 `n * ask * (1 + fee) <= cash`, sell이면 `n <= position`을 만족하는 최대 정수다.
 매수 현금 변화는 `-n*ask-fee`, 매도는 `n*bid-fee`다. fee는 각 fill 금액에 적용한다.
-이 부등식은 production의 `Decimal //` 계산과 독립적이다.
+이 부등식은 production의 기존 `Decimal //` 계산과 독립적이다.
 
 ### production을 읽어 관찰한 구현
 
@@ -52,8 +58,9 @@ production helper, 계약 문자열, validator, replay clock 또는 production �
 [비교 경계](execution_audit_support.py)만 양쪽 구현을 호출한다.
 
 기본 수치 범위는 작은 정수 가격/수량, 유한 소수 fee/cash와 충분한 기본 Decimal 정밀도다.
-Fraction은 arbitrary Decimal context의 반올림을 복제하지 않는다. 낮은 정밀도는 별도의
-자원 보존 반례로 다룬다. 시간 구간 최대 32, 주문 수량 최대 8의 테스트 제한이 있다.
+Fraction은 arbitrary Decimal context의 반올림을 복제하지 않는다. 낮은 정밀도 반례는
+NUM-1 후속 수정의 동일 입력 회귀와 별도 numeric matrix로 확장한다.
+시간 구간 최대 32, 주문 수량 최대 8의 oracle 테스트 제한은 유지한다.
 실제 전략은 oracle에 이식하지 않는다. 합성 개장/손절 사례의 주문 의도만 손으로 지정해
 실제 세 전략 변형과 저장 실행기를 대조한다. 전략 전체의 독립 검증이라는 주장은 하지 않는다.
 
@@ -75,8 +82,16 @@ Fraction은 arbitrary Decimal context의 반올림을 복제하지 않는다. �
 조합 수는 pytest item 수나 unique reachable state 수가 아니다. 예를 들어 매도 seed,
 체결 불가 또는 빈 주문의 cancel no-op 때문에 경제적으로 동등한 조합이 있을 수 있다.
 실제 실행 checkpoint 수와 시간은 `ORACLE_MATRIX` CI 로그에 별도로 출력한다.
-추가로 실제 세 전략의 각 16개 chunk 분할(48개)과 저장 실행 3개를 수동 의도 oracle와 비교한다.
+기본 40,692 checkpoint를 유지한다. 실제 세 전략의 각 16개 chunk 분할(48개)과 저장 실행 3개도 비교한다.
 새 dependency는 없으며 Actions에서 작은 메모리/임시 합성 DB만 쓴다.
+
+NUM-1 추가 행렬은 precision `1,3,6,12,28` × rounding `HALF_EVEN,FLOOR,CEILING` ×
+가격쌍 3 × fee `0,0.005,0.2` × quantity `1,2,3` × 정확 비용 대비 `-1e-12,0,+1e-12` ×
+표시 잔량 `1,2`의 **2,430조합/21,870 checkpoint**다. 부분 매수, quote 갱신, 잔여 취소,
+부분 매도와 양방향 fee를 원래 Fraction oracle로 검증한다. 고정 buy의 fee 단조성은 별도
+108조합/324 checkpoint다. `NUMERIC_MATRIX` 로그에 실행 수를 출력한다.
+이는 모든 rounding/context 전수가 아니다. 수치 envelope 경계, 강한 traps/좁은 지수 context,
+범위 밖 입력의 변경 전 거부, 장부 한계 직전의 fill 비커밋도 작은 회귀로 분리한다.
 
 ## 4. 불변식과 변형 관계
 
@@ -117,7 +132,7 @@ B buy1(현금 0), S sell2. S가 cash=8을 공급해도 B는 그 submit 호출 �
 
 근거: `_match`의 한 번 순회, 런북의 잔여 주문 유지, 기존 cash/no-short 회귀.
 기존 테스트는 이 양방향 재공급 및 같은 호출 안의 재방문 여부를 명시하지 않았다.
-고정점 정책으로 바꾸면 시각/가격/수량이 달라진다. 이번에는 실행을 바꾸지 않고 구조화 설명만 보완한다.
+고정점 정책으로 바꾸면 시각/가격/수량이 달라진다. PR #11 및 후속 NUM-1/RUN-1은 이 실행 정책을 바꾸지 않는다.
 
 ### CLK-1 — 성립하지 않는 변형 관계 / 정책 경계
 
@@ -131,31 +146,75 @@ cash=3, q=(bid2,ask3,size2), age=1, buy delay=1, sell delay=0.
 metamorphic invariant에 넣지 않는다.** 청크 분할은 추가 advance/close 없이 호출열을 보존할 때만 불변이다.
 시계 진행 호출을 경제적으로 무관하게 만들려면 별도 정책 결정/behavior-change PR이 필요하다.
 
-### NUM-1 — production 수치/자원 보존 bug, 이번에 미수정
+### NUM-1 — production 수치/자원 보존 bug, 발견 이력과 후속 수정
 
-안정된 `Context(prec=3, ROUND_HALF_EVEN)`, cash=1.01, ask=1.01, bid=1,
+PR #11 당시: 안정된 `Context(prec=3, ROUND_HALF_EVEN)`, cash=1.01, ask=1.01, bid=1,
 fee=0.005, size=1, buy latency=0에서 quote 후 buy1을 제출한다.
 정확한 비용은 1.01505이므로 독립 oracle는 미체결/cash=1.01/position=0이다.
-production은 `1+fee`를 먼저 1.00으로 반올림하여 1주를 허용하고,
-실제 차감은 별도 반올림되어 cash=-0.01/position=1, fee=0.00505가 된다.
+당시 production은 `1+fee`를 먼저 1.00으로 반올림하여 1주를 허용하고,
+실제 차감은 별도 반올림되어 cash=-0.01/position=1, fee=0.00505가 됐다.
 
 근거: `_match`의 capacity 산식과 별도 gross/fee 차감, 생성자가 이 context/입력을 거부하지 않음.
 Python Decimal의 정밀도/반올림 설명: <https://docs.python.org/3/library/decimal.html#floating-point-notes>.
 context를 기록하고 안정적으로 유지하는 것만으로 solvency가 보장되지는 않는다.
-이는 oracle rounding 복제 누락으로 정상화할 문제가 아니라 **음수 cash라는 독립 불변식 위반**이다.
-경제적 영향이 있어 수정은 별도 PR로 분리한다. 정밀도/입력 규모의 지원 범위와 체결전 차감 검증을
-확정해야 하며, precision 28이면 모든 입력에 안전하다고 일반화하지 않는다.
-재현 증명 테스트와 의도된 불변식의 `strict xfail`을 모두 둔다. xfail은 해결/통과를 뜻하지 않는다.
+이는 oracle rounding 복제 누락이 아니라 **음수 cash라는 독립 불변식 위반**이었다.
 
-### RUN-1 — 연구 결과 종료 기록 bug, 이번에 미수정
+후속 PR #12의 production 수정 `d431308ecaab6fccfea97c65e49fc28180f59223`에서
+기존 expected-correctness strict xfail이 XPASS인 것을 먼저 확인했다
+([증거 job](https://github.com/Peter-jackson12/Stock/actions/runs/35683099153/job/106604272709)).
+그 뒤 동일 반례의 관측 assertion을 정상 미체결로 바꾸고 xfail marker를 제거했다.
+Fraction oracle 식/import 및 6,912 기본 행렬은 변경하지 않았다.
 
-빈 normalized iterator와 `input_provenance={"raw_manifest": None}`.
-해당 값은 JSON 직렬화가 가능하지만 종료 분류의 `.get()`에서 AttributeError가 발생한다.
-production은 `running` result만 남기고 `ResearchRunFailed`/완료 진단을 기록하지 못한다.
+선택 정책은 **bounded exact finite-decimal 전 구간 장부(C)**다. 부호 있는 정수 계수와 10진 지수로
+덧셈/곱셈/정수 floor를 계산하고 Decimal tuple로 정확히 반환한다. 입력 Decimal 생성은 여전히
+`Decimal(str(value))`다. capacity만 정확하게 만들지 않고 gross/fee/양방향 cash도 같은 자원 계약을 따른다.
+`cost <= pre-fill cash`와 새 cash의 비음수/장부 envelope를 모두 확인한 뒤에만 fill을 커밋한다.
+clamp나 이미 커밋한 fill의 사후 보정은 없다. 실패한 fill 앞의 성공한 fill까지 rollback하지는 않는다.
+
+입력 cash/fee/유한 양수 bid/ask의 **표현**은 coefficient 64자리 이하, exponent [-64,64],
+order quantity/표시 side size는 최대 10^18이다. cash>=0, 0<=fee<1, 정수 양수 수량/호가 검증은 유지한다.
+trailing zero를 normalize하여 범위 밖 표현을 몰래 허용하지 않는다. 누적 cash는 512자리/지수 [-128,128]이며
+한계를 넘으면 해당 fill의 현금/보유/잔량 변경 전에 ValueError다. 주문 한계는 submit 전에, 호가 한계는
+replay/timer 전에 거부한다. 이는 무제한 크기/실행 기간/악의적 임의 타입 입력의 인증이 아니다.
+전략 계산은 ambient Decimal context를 계속 사용하므로 전체 연구 재현성의 context 기록은 유지한다.
+
+A(지원 context 제한만)나 고정 precision28은 모든 중간 결과와 누적 자릿수의 충분성을 보장하지 못한다.
+B(affordability만 exact)는 fee/장부 rounding을 남긴다. D(adaptive private context)는 각 연산의
+자리 정렬·누적 잔액·지수/traps 경계를 별도로 추론해야 한다. E(후보 solvency 검증만)는 정확한 최대
+부분체결 수량/fee를 대신하지 못한다. C에 **커밋 전** E형 검증을 방어적으로 더했다. 정수 변환 비용은
+있으며 합성 CI 시간만 관측하고 운영 처리량을 인증하지 않는다.
+
+기존 precision28의 정확하게 표현되던 golden/기본 trace는 유지한다. 반대로 price=
+`1.0000000000000000000000000001`, cash=1, fee=0은 precision28에서도 옛 capacity가
+단가를 1로 축소하는 경계다. 새 구현이 미체결로 거부하는 것은 의도된 exact-affordability 수정이다.
+모든 precision28 입력의 경제 결과가 동일하다고 주장하지 않는다. 계약 schema/version 1과 기존 필드 타입은
+유지하며 numeric policy 값/추가 envelope만 실제 동작에 맞춘다. currency 단위·시장별 tick·세금은 미인증이다.
+
+### RUN-1 — 연구 결과 종료 기록 bug, 발견 이력과 후속 수정
+
+PR #11 당시: 빈 normalized iterator와 `input_provenance={"raw_manifest": None}`.
+해당 값은 JSON 직렬화가 가능하지만 종료 분류의 `.get()`에서 AttributeError가 발생했다.
+당시 production은 `running` result만 남기고 `ResearchRunFailed`/완료 진단을 기록하지 못했다.
 기대는 예약 provenance 구조를 출력 생성 전에 ValueError로 거부하는 것이다.
 이는 unused metadata 불변성의 반례가 아니라 사용되는 예약 필드의 검증 결함이다.
 경제적 체결 결과는 없는 최소 사례다. 정상 run_raw_v2가 만드는 manifest의 결함을 뜻하지 않는다.
-입력 검증/진단 보완 후속으로 분리하고 재현 테스트와 별도 `strict xfail`로 추적한다.
+
+후속 PR #13의 production 수정 `4d073b480928a5f1de3640f37d7cf8b28ac7fee8`에서
+기존 normative strict xfail의 XPASS를 확인했다
+([증거 job](https://github.com/Peter-jackson12/Stock/actions/runs/35682966126/job/106603847038)).
+그 뒤 같은 입력을 ValueError + 새 output 부재의 일반 회귀로 전환했다.
+최소 계약은 top-level dict에 raw_manifest가 있으면 dict여야 하고, event_count가 있으면
+bool이 아닌 비음수 int여야 한다는 것이다. 누락 manifest/count는 분류상 0이다.
+None/빈 dict/arbitrary JSON metadata 및 기존 top-level JSON 값도 유지한다.
+reader/reader_sha256은 현재 run_raw_v2가 남기는 metadata이며 새 형식 검증/출처 인증을 강요하지 않는다.
+
+settings/provenance JSON 확인 후, contracts/hash/code identity 및 mkdir 전에 예약 값을 검증·고정한다.
+기존 dataset_label/close_ns/simulator/strategy 설정 검증도 출력 생성 전이다.
+32개 invalid provenance/root 조합, 11개 generic/예약 정상 조합, 설정·JSON 경계,
+synthetic run_raw_v2 무선택 완료와 late/early iterator 실패, caller mutation 후 snapshot을 검사한다.
+런타임 실패는 기존 failed/diagnostics_only/input_complete=false 마감을 유지한다.
+검증 실패를 catch하여 가짜 failed run을 만들지 않는다. 프로세스 중단/파일시스템 오류의 원자성까지
+새로 보증하지 않으며 실데이터를 읽어 manifest 적합성을 검증한 작업도 아니다.
 
 ### AUD-1 — 감사기 자체 오류, 수정
 
@@ -174,18 +233,18 @@ oracle의 수량 산식/상태전이, production 체결 행동을 이 실패에 
 
 ## 6. 변경/해석 한계와 다음 검증
 
-TickSimulator/ReceiveOrderReplay/quote validation/전략/연구 실행기의 행동은 바꾸지 않는다.
-계약 v1의 기존 필드 타입은 유지하고 `resource_retry_policy`, `same_timestamp_policy.matching_rounds`,
-공개 호출열 의존성과 `numeric_safety`를 additive로 보완한다. 음수 cash를 올바른 정책으로 허용하는 수정이 아니다.
+PR #11 감사에서는 실행 행동을 유지하고 계약 v1의 resource/round/numeric 설명을 보완했다.
+후속 PR #12/#13은 위 두 실제 결함만 수정하며 ReceiveOrderReplay/quote validation/전략/호출 순서는 유지한다.
 `input_capabilities`의 형식 지원과 관측 인증 구분은 유지한다. 응답 지연 미모델링, 부분체결,
 유동성 재충전 및 마감 설명도 읽고 대조했으며 새 기능을 주장하지 않는다.
 설명/관련 코드 hash가 달라져 contract_sha256 및 reproducibility_key가 바뀌지만
 과거 파일을 덮어쓰거나 v2로 자동 재발급하지 않는다. 고정 연구 실행기의 호출열은 해당 코드와 이벤트에서 결정된다.
 
-CI success는 유한 감사 회귀의 통과를 뜻한다. NUM-1/RUN-1의 예상 실패 두 건을 해결했다는 뜻이 아니다.
-최종 HEAD/run/job/실측 수치는 PR 본문에 남긴다. 지원 수치 범위의 solvency 검증을 첫 실제 연구 전에
-확정해야 한다. 자원 부족 양방향 주문을 쓰는 호출자는 advance 일정의 의미도 먼저 받아들여야 한다.
-실제 strategy 전체, 임의 타입, 극대 수량/지수, 실행 중 context 변경, 전 피드/전 날짜의 정확성은 미증명이다.
+PR #11의 CI success는 당시 미수정 strict xfail 두 건의 해결을 뜻하지 않았다.
+후속 각 PR의 독립 CI에는 상대 결함 xfail이 남는다. 양쪽을 합친 비병합 검증에서 두 xfail 모두 없어야 한다.
+최종 HEAD/run/job/실측 수치는 각 PR 본문에 남기고 pass/deselected/xfail은 따로 보고한다.
+자원 부족 양방향 주문을 쓰는 호출자는 advance 일정의 의미도 먼저 받아들여야 한다.
+실제 strategy 전체, 임의 타입/크기, 실행 중 context 변경을 포함한 전체 연구 동작, 전 피드/전 날짜는 미증명이다.
 
 queue, impact, L2/L3, MBO, response/feed latency는 모델링하지 않는다. top1 새 snapshot을
 실제 신규 유동성으로 재인식하는 가정은 특히 큰 한계다. 원천 정확성·실제 체결 가능성·수익성은 미인증이다.
