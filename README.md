@@ -36,6 +36,7 @@ LOB/초봉 변환과 기존 런 비교는 유지하는 레거시 경로이며 �
 | 어떤 코드가 무엇을 실행하는지·경로 간 차이·단순화 후속 항목 | [파이프라인 지도](docs/PIPELINE_MAP.md) |
 | 수집 시작/종료·저장·메타데이터·별도 확장 절차 | [수집 실행 안내](docs/COLLECTION_RUNBOOK.md#환경과-수집-시작) |
 | 종료 단계 증거·선택적 ActiveX 해제와 미검증 경계 | [종료 계약](docs/COLLECTOR_TEARDOWN.md) |
+| 선택적 Qt 폴링·기존 FID 시각 표본과 해석 한계 | [수신 진단 계약](docs/COLLECTOR_TELEMETRY.md) |
 | raw 표본·연구 실행·결과 상태와 한계 | [틱 연구 실행 안내](TICK_RESEARCH_RUNBOOK.md) |
 | 독립 execution oracle·유한 검증 범위·미해결 반례 | [실행 감사 명세](tests/EXECUTION_ORACLE_SPEC.md) |
 | 운영 화면·제어 계약·IPC·예약·권한 | [CONTROL_TOWER](CONTROL_TOWER.md) |
@@ -55,7 +56,7 @@ LOB/초봉 변환과 기존 런 비교는 유지하는 레거시 경로이며 �
 - [archive 안내](docs/archive/README.md): 날짜별 인계·후보 조사·이전 README. 원문 보존 위치와 당시 revision.
 - [커밋 ID 대응표](docs/COMMIT_ID_MAP_20260918.json): 한국어화 전후 과거 코드 리비전 대조.
 
-과거 문서를 무조건 지우거나 이동하지 않는다. 현재도 사용되는 레거시 스키마·회귀 계약이 들어 있을 수 있다.
+과거 문서를 무조건 지우거나 이동하지 않는다. 현재도 사용되는 레거시 스키마마·회귀 계약이 들어 있을 수 있다.
 
 ## 운영 화면 실행
 
