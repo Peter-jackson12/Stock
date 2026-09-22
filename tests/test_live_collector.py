@@ -45,7 +45,7 @@ def test_operational_default_preserves_raw_and_closes_new_file(live):
     logger._on_receive_real_data("005930", "주식체결", "")
     logger._on_receive_real_data("005930", "주식호가잔량", "")
     logger._shutdown("test stop")
-    assert logger.exit_code == 0
+    assert logger.exit_code == 0, "\n".join(messages)
     with read_raw_v2(logger.db_path) as (meta, rows):
         records = list(rows)
     assert len(records) == 3  # start + signed-volume trade + quote
@@ -100,11 +100,11 @@ def test_live_direction_keeps_unknown_and_unrelated_price_errors(live, volume, e
     logger._shutdown("test")
     with read_raw_v2(logger.db_path) as (_, rows):
         records = list(rows)
-    trade = records[1]
-    assert trade["event"].is_buy is expected
-    assert trade["event"].price is None
-    assert trade["raw_fields"]["fids"]["15"] == volume
-    assert ("trade_direction_unverified" in trade["raw_fields"]["issues"]) == (expected is None)
+    trade = records[1]["event"]
+    assert trade.is_buy is expected
+    assert trade.price is None
+    assert records[1]["raw_fields"]["fids"]["15"] == volume
+    assert ("trade_direction_unverified" in records[1]["raw_fields"]["issues"]) == (expected is None)
     assert records[2]["event"].control_type == "parse_error"
 
 
@@ -259,7 +259,7 @@ def test_status_reader_is_bounded_and_does_not_create_files(tmp_path):
     assert observe_raw_capture(tmp_path)["status"] == "unavailable"
     assert not list(tmp_path.iterdir())
     path = tmp_path / "operations_state" / "capture_status.json"
-    path.parent.mkdir()
+    path.parent.mkdir(parents=True)
     path.write_bytes(b"x" * (MAX_LOG_BYTES + 1))
     observed = observe_raw_capture(tmp_path)
     assert observed["status"] == "unavailable" and "size limit" in observed["reason"]
