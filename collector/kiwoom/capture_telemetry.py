@@ -40,7 +40,7 @@ def _text(value, limit):
 
 
 def clock_difference(raw_clock, received_utc):
-    """同日 보정이 아니라 명시적 동일 KST 날짜 가정의 signed clock 차이다."""
+    """날짜 보정이 아니라 명시적 동일 KST 날짜 가정의 signed clock 차이다."""
     result = {"same_day_kst_assumption": True, "not_network_latency": True,
               "difference_seconds": None, "status": "invalid_source_clock"}
     if not isinstance(raw_clock, str):
@@ -126,9 +126,9 @@ class CaptureTelemetry:
         return number, now
 
     def connection_observed(self, token, value):
-        if token is None or self.error or self.closed:
+        if (token is None or self.error or self.closed
+                or threading.get_ident() != self.owner_thread):
             return
-        # 원 반환값의 자료형과 제한된 값만 보존한다. 정규화는 기존 호출자가 수행한다.
         if type(value) is int:
             saved = value if -(2 ** 63) <= value < 2 ** 63 else None
         elif isinstance(value, str):
@@ -142,13 +142,14 @@ class CaptureTelemetry:
         self._poll = (*self._poll[:8], observation)
 
     def poll_return(self, token, *, outcome):
-        if token is None or self.error or self.closed:
+        if (token is None or self.error or self.closed
+                or threading.get_ident() != self.owner_thread):
             return
         now = self.clock_ns()
         old = self._poll
         duration = now - token[1]
         self._poll = (old[0], old[1] + 1, max(0, old[2] - 1), old[3], now,
-                      duration if duration >= 0 else None, token[0], outcome, old[8])
+                      duration if duration >= 0 else None, token[0], str(outcome)[:40], old[8])
 
     def reserve_sample(self, real_type, received_ns):
         if (self.error or self.closed or self.stream is None
@@ -160,9 +161,12 @@ class CaptureTelemetry:
         return True
 
     def callback_sample(self, *, code, real_type, fids, received_ns, received_at_utc,
-                        accepted, finished_ns):
-        if self.error or self.closed:
+                        accepted, finished_ns=None):
+        if (self.error or self.closed or self.stream is None
+                or threading.get_ident() != self.owner_thread):
             return
+        if finished_ns is None:
+            finished_ns = self.clock_ns()  # 선택된 표본에만 추가 시계 호출
         if not self._samples_lock.acquire(blocking=False):
             self.samples_dropped += 1
             return
@@ -186,7 +190,7 @@ class CaptureTelemetry:
             self._samples_lock.release()
 
     def poll_snapshot(self, now_ns):
-        state = self._poll  # 한 번 읽은 immutable tuple에서만 만든다.
+        state = self._poll
         connection = state[8]
         return dict(entries=state[0], returns=state[1], in_flight=state[2],
             last_entry_ns=state[3], last_return_ns=state[4], last_duration_ns=state[5],
