@@ -178,12 +178,25 @@ def test_unfinished_worker_prevents_native_clear(live, monkeypatch):
     logger, _, _ = live
     logger._on_login(0)
     control = enabled(logger)
+    # 정상 종료를 마친 뒤에도 단순 closed 문자열만 믿지 않는 경계를 재검증한다.
+    logger._shutdown("drain")
+    assert control.calls == 1
+    control = enabled(logger)
     with monkeypatch.context() as patch:
         patch.setattr(logger.raw_capture.queue, "wait", lambda timeout: False)
         assert not logger._release_ocx_if_stopped()
     assert control.calls == 0 and logger._ocx_teardown.state == "deferred"
-    logger._shutdown("cleanup")
+    assert logger._release_ocx_if_stopped()
     assert control.calls == 1
+
+
+def test_active_collector_cannot_be_cleared(live):
+    logger, _, _ = live
+    logger._on_login(0)
+    control = enabled(logger)
+    assert not logger._release_ocx_if_stopped()
+    assert control.calls == 0 and logger._ocx_teardown.state == "not_attempted"
+    assert logger.accepting_events and logger.raw_capture.queue.snapshot()["accepting"]
 
 
 def test_interrupted_input_stays_interrupted_after_clear(live):
@@ -276,10 +289,11 @@ def test_invalid_phase_record_disables_only_phase_writes(tmp_path, detail):
 
 def test_cli_explicit_teardown_is_opt_in(collector):
     logger, _, _ = collector
-    # 기존 parser만 조회한다. Qt 생성이나 로그인을 실행하지 않는다.
     parser = logger.start.__globals__["parse_collector_args"]
     assert parser([])[0].explicit_ocx_teardown is False
     assert parser(["--explicit-ocx-teardown"])[0].explicit_ocx_teardown is True
+    with pytest.raises(SystemExit):
+        parser(["--explicit-ocx-teardown", "--aftermarket-nxt-codes", "005930_NX"])
 
 
 @pytest.mark.parametrize("constructor_fails", [False, True])
@@ -323,3 +337,31 @@ def test_event_loop_markers_distinguish_return_from_exception(live, tmp_path, ra
     assert "event_loop_unwinding" in names
     assert names.index("ocx_clear_returned") < names.index("diagnostics_closing")
     assert control.calls == 1
+
+
+def test_exception_cleanup_gates_reentry_before_clear(live):
+    logger, _, _ = live
+    logger._on_login(0)
+    logger._on_receive_real_data("005930", "주식체결", "")
+    def reenter():
+        assert logger._shutdown_done and not logger.accepting_events
+        assert logger.raw_capture.queue.wait(0)
+        before = logger.raw_capture.queue.snapshot()["accepted_callbacks"]
+        logger._on_receive_real_data("005930", "주식체결", "")
+        logger._poll_control()
+        assert logger.raw_capture.queue.snapshot()["accepted_callbacks"] == before
+    control = enabled(logger, hook=reenter)
+    logger._finish_process_resources("synthetic unexpected exit")
+    assert control.calls == 1
+    assert logger.raw_capture.queue.snapshot()["state"] == "interrupted"
+    logger._finish_process_resources("repeat")
+    assert control.calls == 1
+
+
+def test_transition_teardown_rejected_before_qt_construction(collector, monkeypatch):
+    old, _, _ = collector
+    def forbidden(*args):
+        raise AssertionError("Qt must not be constructed")
+    monkeypatch.setitem(old.__init__.__globals__, "QApplication", forbidden)
+    with pytest.raises(ValueError, match="session transitions"):
+        type(old)(code_revision="fixture", explicit_ocx_teardown=True, aftermarket_plan=object())

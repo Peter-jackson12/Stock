@@ -87,6 +87,8 @@ class KiwoomUniverseLogger:
             raise ValueError("unsupported storage backend")
         if type(explicit_ocx_teardown) is not bool:
             raise ValueError("explicit OCX teardown flag must be bool")
+        if explicit_ocx_teardown and aftermarket_plan is not None:
+            raise ValueError("explicit OCX teardown is not verified for session transitions")
         self.storage = storage
         self.managed = managed
         self.diagnostics = diagnostics
@@ -153,7 +155,7 @@ class KiwoomUniverseLogger:
             if plan.mode != MODE_NXT:
                 raise ValueError("구독 계획은 명시적 NXT 모드에서만 받는다")
             if storage != "raw-v2" or managed is not None:
-                raise ValueError("NXT 계획은 독립 raw-v2 실행만 지원한다")
+                raise ValueError("NXT 계획은 독립 raw-v2 검증 실행만 지원한다")
             if type(duration_seconds) is not int or not 1 <= duration_seconds <= 300:
                 raise ValueError("NXT 계획은 1~300초 제한 시간이 필요하다")
         for candidate in (plan, aftermarket_plan):
@@ -242,7 +244,13 @@ class KiwoomUniverseLogger:
                      session_id=getattr(identity, "session_id", None), **details)
 
     def _release_ocx_if_stopped(self):
-        """저장 워커가 남으면 해제를 보류한다. closed 보고와 워커 종료는 별개다."""
+        """입력 차단과 워커 종료를 모두 요구한다. closed 문자열만으로 해제하지 않는다."""
+        if threading.get_ident() != self._main_thread_ident:
+            raise RuntimeError("OCX release requires its owning Qt thread")
+        if self._ocx_teardown.enabled and (
+                not self._shutdown_done or self.accepting_events or self._transition_active):
+            self._phase("ocx_clear_blocked_active")
+            return False
         if not self._ocx_teardown.enabled:
             stopped = False
         elif self.raw_capture is not None:
@@ -264,6 +272,26 @@ class KiwoomUniverseLogger:
         self._phase("qt_quit_enter", teardown_state=self._ocx_teardown.state)
         self.app.quit()
         self._phase("qt_quit_returned")
+
+    def _finish_process_resources(self, failure=None):
+        """예외 종료에서도 입력 가드와 drain을 유지한다. 강제 종료/재접속은 없다."""
+        if threading.get_ident() != self._main_thread_ident:
+            raise RuntimeError("process cleanup requires its owning Qt thread")
+        was_shutdown = self._shutdown_done
+        self.accepting_events = self.is_running = False
+        self._shutdown_done = True
+        self.timer.stop()
+        if self.raw_capture is not None:
+            if not was_shutdown:
+                self.raw_capture.queue.abort(failure or "unexpected collector exit")
+            while not self.raw_capture.queue.wait(5):
+                print("raw v2 저장 워커 종료 대기 중", flush=True)
+        elif self.writer is not None:
+            self.writer.stop.set()
+            worker = getattr(self, "db_thread", None)
+            if worker is not None:
+                worker.join()
+        self._release_ocx_if_stopped()
 
     @property
     def total_trades(self):
@@ -325,9 +353,9 @@ class KiwoomUniverseLogger:
             self.log.emit(f"🧩 충돌/침묵 진단: {self.diagnostics.path}")
         self.log.emit("=" * 65)
         self.log.emit("🔑 키움 OpenAPI+ 서버 접속 시도 중...")
-        self.ocx.dynamicCall("CommConnect()")
         self._phase("event_loop_enter")
         try:
+            self.ocx.dynamicCall("CommConnect()")
             result = self.app.exec_()
             self._phase("event_loop_returned", qt_exit_code=result)
         finally:
@@ -535,7 +563,7 @@ class KiwoomUniverseLogger:
             self.db_path = self.raw_capture.path
             self.plan = plan                       # 이후 기록은 애프터마켓 계획을 따른다
             # 새 세션에는 새 감시 상태를 쓴다 — 정규장의 수신 시각·침묵 권고·카운터를
-            # 이어받지 않도록 인스턴스 자체를 교체한다.
+            # 이어받으면 안 되므로 인스턴스 자체를 교체한다.
             self.monitor = SessionMonitor(
                 sessions=resolve_profile(plan.market_profile),
                 gap_threshold_sec=self._gap_threshold_sec,
@@ -1012,6 +1040,8 @@ def parse_collector_args(argv=None):
         args.aftermarket_nxt_eligibility_confirmed, args.aftermarket_list_note is not None,
         args.aftermarket_market_profile is not None))
     if aftermarket_given:
+        if args.explicit_ocx_teardown:
+            parser.error("explicit OCX teardown is not verified for session transitions")
         # 상충 인자는 OCX(QApplication/OCX 컨트롤) 를 만들기 전에 거부한다.
         if plan is not None:
             parser.error("--nxt-codes 계획과 애프터마켓 전환을 함께 줄 수 없다")
@@ -1079,15 +1109,9 @@ if __name__ == "__main__":
             raise
         finally:
             record_phase(diagnostics, "main_finally_enter", failure=failure)
-            # Keep the lease while any accepted data is still being drained.
-            if logger is not None and logger.raw_capture is not None:
-                if not logger._shutdown_done:
-                    logger.raw_capture.queue.abort(failure or "unexpected collector exit")
-                while not logger.raw_capture.queue.wait(5):
-                    print("raw v2 저장 워커 종료 대기 중", flush=True)
+            # 기존 drain 대기 동안 lease와 진단기를 유지한다.
             if logger is not None:
-                # finish가 타임아웃으로 반환한 경로에서도 워커 종료 전 clear하지 않는다.
-                logger._release_ocx_if_stopped()
+                logger._finish_process_resources(failure)
             if managed is not None and not managed.finished:
                 capture = logger.raw_capture if logger is not None else None
                 report = capture.report if capture is not None and capture.report.state == "closed" else None
