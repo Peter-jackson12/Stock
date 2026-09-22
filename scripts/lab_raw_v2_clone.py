@@ -19,6 +19,7 @@ import sqlite3
 import stat
 import sys
 import time
+import traceback
 import uuid
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +34,7 @@ SCHEMA = "raw_v2_clone_lab_v1"
 CHUNK = 64 * 1024
 MAX_IO_BYTES = 16 * lab.MAX_DB_BYTES
 MAX_SECONDS = 20
+DIRECTORY_ACCESS = 1  # FILE_LIST_DIRECTORY: metadata-only access=0 is not a pin.
 
 
 @dataclass(frozen=True)
@@ -98,7 +100,7 @@ def _open_handle(path, *, directory):
     create.restype = wintypes.HANDLE
     # 파일은 read/write/delete를 모두 배제하고 디렉터리는 기존 이름의 delete/rename을 막는다.
     # OPEN_REPARSE_POINT로 최종 성분을 암묵 추적하지 않는다. 상위 경로도 별도 검사한다.
-    access, sharing = (0, 3) if directory else (0x80000000, 0)
+    access, sharing = (DIRECTORY_ACCESS, 3) if directory else (0x80000000, 0)
     flags = 0x00200000 | (0x02000000 if directory else 0x80)
     handle = create(str(path), access, sharing, None, 3, flags, None)
     if handle == wintypes.HANDLE(-1).value:
@@ -352,6 +354,7 @@ def clone_fixture(root, fixture, *, hook=None):
         result["synthetic_copy_verified"] = False
         result["research_eligible"] = False
         result["error"] = f"{type(exc).__name__}: {exc}"
+        result["traceback"] = traceback.format_exc()
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             lab._replace_json(result_path, result)
             raise
