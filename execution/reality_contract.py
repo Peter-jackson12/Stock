@@ -1,7 +1,7 @@
 """현재 틱 연구의 실행 가정과 입력 형식 능력을 기술한다.
 
-모델 선택기나 데이터 검사기가 아니다. 검증된 simulator의 값만 읽으며,
-지원하는 필드와 실제 관측/원천 인증을 구분한다. 실행 상태를 변경하지 않는다.
+모델 선택기나 데이터 검사기가 아니다. 생성자가 받아들인 simulator 값과
+실행 규칙을 기술하며, 실제 관측/원천 인증이나 수치 안전성 증명은 아니다.
 """
 from decimal import getcontext
 from typing import TYPE_CHECKING
@@ -30,6 +30,14 @@ def simulation_contract(sim: "TickSimulator") -> dict:
         },
         "partial_fill_policy": "retain_remainder_until_filled_cancelled_or_expired",
         "resource_policy": "no_reservation_retry_when_cash_or_position_becomes_available",
+        "resource_retry_policy": {
+            "reservation": "none",
+            "allocation_round": "one_submission_order_pass",
+            "later_orders_observe_earlier_fills": True,
+            "earlier_blocked_order": "retry_on_next_matching_round_not_revisited_in_same_round",
+            "fixed_point_iteration": False,
+            "retry_still_requires": ["ready", "not_cancelled", "valid_fresh_quote", "remaining_side_budget"],
+        },
         "queue_position_model": "none",
         "market_impact_model": "not_modeled",
         "feed_latency_model": {
@@ -62,6 +70,12 @@ def simulation_contract(sim: "TickSimulator") -> dict:
             "separate_tax_or_broker_schedule": "not_modeled",
             "currency_quantization": "none_beyond_decimal_context",
         },
+        "numeric_safety": {
+            "arbitrary_context_and_input_magnitude": "not_certified",
+            "post_debit_solvency_guard": False,
+            "known_issue": "NUM-1_low_precision_can_admit_buy_and_produce_negative_cash",
+            "stable_context_alone_guarantees_solvency": False,
+        },
         "slippage_model": {
             "status": "not_modeled_separately",
             "price_effects_already_present": ["bid_ask_spread", "quote_at_each_matching_attempt_on_or_after_order_ready"],
@@ -85,6 +99,15 @@ def simulation_contract(sim: "TickSimulator") -> dict:
             "order_priority": "submission_insertion_order_not_exchange_queue_position",
             "external_event_tie": "supplied_increasing_sequence_not_timestamp_batching",
             "cancel_requested_in_callback": "cannot_undo_prior_matching",
+            "matching_rounds": {
+                "submit": "every_accepted_submission_even_if_new_order_not_ready",
+                "cancel": "new_accepted_request_only_even_if_ack_is_delayed",
+                "advance": "one_per_distinct_reserved_deadline_then_one_at_endpoint",
+                "deadline_endpoint_tie": "two_separate_rounds",
+                "deadline_snapshot": "active_orders_at_advance_start_retained_for_that_call",
+                "market_event": "advance_with_previous_quote_then_post_event_round",
+                "close": "advance_to_close_minus_one_then_expire_without_matching_at_close",
+            },
         },
         "close_boundary_policy": {
             "id": "exclusive_close_v1",
@@ -99,6 +122,8 @@ def simulation_contract(sim: "TickSimulator") -> dict:
             "chunking": "preserve_simulator_and_strategy_state_across_chunks",
             "randomness": "none",
             "numeric_context_requirement": "caller_keeps_decimal_context_stable_during_run",
+            "public_call_schedule": "part_of_simulation_input_not_just_external_events",
+            "advance_subdivision_invariant": False,
         },
         "decimal_context": {
             "prec": context.prec,
