@@ -251,7 +251,12 @@ class CaptureTelemetry:
     def close(self):
         if self.closed:
             return True
-        self.flush(force=True)
+        try:
+            self.flush(force=True)
+        except Exception as exc:
+            # 最終 flush의 예외도 파일 닫기를 건너뛰게 해서는 안 된다.
+            # 앞서 기록된 진단 오류는 disable의 first-error 정책으로 보존한다.
+            self.disable(f"close_flush:{type(exc).__name__}")
         if not self._flush_lock.acquire(blocking=False):
             return False
         try:
