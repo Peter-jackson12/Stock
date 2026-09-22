@@ -38,7 +38,8 @@ def live(collector, monkeypatch, tmp_path):
         logger._shutdown("test cleanup")
 
 
-def test_operational_default_preserves_raw_and_closes_new_file(live):
+@pytest.mark.parametrize("_startup_attempt", range(4))
+def test_operational_default_preserves_raw_and_closes_new_file(live, _startup_attempt):
     logger, _, messages = live
     assert logger.storage == "raw-v2"
     logger._on_login(0)
