@@ -286,6 +286,18 @@ class KiwoomUniverseLogger:
         self.app.quit()
         self._phase("qt_quit_returned")
 
+    def _close_telemetry(self):
+        if self.telemetry is None:
+            return True
+        result = observe(self.telemetry, "close")
+        closed = bool(getattr(self.telemetry, "closed", False))
+        if result is True and closed:
+            self._phase("telemetry_close_returned", diagnostic_error=getattr(self.telemetry, "error", None))
+            return True
+        self._phase("telemetry_close_pending", result=result, closed=closed,
+                    diagnostic_error=getattr(self.telemetry, "error", None))
+        return False
+
     def _finish_process_resources(self, failure=None):
         """예외 종료에서도 입력 가드와 drain을 유지한다. 강제 종료/재접속은 없다."""
         if threading.get_ident() != self._main_thread_ident:
@@ -305,7 +317,7 @@ class KiwoomUniverseLogger:
             if worker is not None:
                 worker.join()
         self._release_ocx_if_stopped()
-        observe(self.telemetry, "close")
+        self._close_telemetry()
 
     @property
     def total_trades(self):
@@ -394,7 +406,7 @@ class KiwoomUniverseLogger:
             try:
                 self._shutdown("이벤트 루프 종료")
             finally:
-                observe(self.telemetry, "close")
+                self._close_telemetry()
         return self.exit_code
 
     def _on_login(self, err_code: int):
