@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-22 / 수집 장애 후 종료·진단 보강, 운영 미승인
+# 현재 인계 — 2026-09-22 / 종료·수신 진단 PR, 운영 미승인
 
 [문서 인덱스](README.md) · [첫 시험 체크리스트](BACKTEST_TODO.md) ·
 [파이프라인 지도](docs/PIPELINE_MAP.md) · [보존본 안내](docs/archive/README.md)
@@ -17,12 +17,18 @@ RES-1 one-pass retry와 CLK-1 advance 호출열 정책은 유지한다.
 
 - PR #15: 원본 보호 handle 기반 격리 복제 **합성 lab**, 미병합. 최종 보고 기준
   `257e8f1ea0e54e926466e8094d69865e9c6c4d37`, 1,454 passed / 6 deselected.
-  운영 복제·sidecar 정리 승인이 아니다. 해당 PR과 이번 종료 변경은 독립이다.
+  운영 복제·sidecar 정리 승인이 아니다. 해당 PR의 변경은 아래 PR에 포함하지 않는다.
 - PR #16: 종료 단계 기록과 `--explicit-ocx-teardown` 선택적 해제.
-  [종료 계약](docs/COLLECTOR_TEARDOWN.md)을 읽는다. 기본 해제 옵션은 꺼짐이며 원격 합성 검증만 한다.
-  최종 HEAD/run/job와 decoded CI 로그는 PR 본문을 기준으로 다시 확인한다.
-- 다음 별도 PR은 Qt 폴링 실제 반환값과 이미 읽은 FID 시각의 저부하 관측이다.
-  같은 collector 파일을 바꾸므로 PR #16 위에 stack하고 diff/CI를 구분한다.
+  [종료 계약](docs/COLLECTOR_TEARDOWN.md)을 읽는다. 기본 해제 옵션은 꺼짐이다.
+  `127a323e9141dafdccec0b3aafb721bf7af993a4`의 CI #135에서 집중 65 passed,
+  전체 1,455 passed / 6 deselected를 decoded 로그로 확인했다.
+- PR #17: [Qt 폴링·기존 FID 제한 표본 진단](docs/COLLECTOR_TELEMETRY.md).
+  `codex/collector-teardown-20260922` 위에 stack한 별도 변경이다. master 직접 병합 대상으로
+  오해하지 않는다. `--capture-telemetry`는 기본 꺼짐이며 해제 옵션과 독립이다.
+  최종 HEAD/run/job와 실제 회귀 결과는 각 PR 본문에서 다시 확인한다.
+
+두 PR은 실제 32비트 키움/Qt/보안 모듈 동작, native 오류 재발 방지, 수신 처리량을 인증하지 않는다.
+저부하는 설계 목표이며 실측 완료가 아니다. 로컬 설치·동기화·수집 실행·운영 적용은 하지 않았다.
 
 ## 2026-09-22 수집 장애 — 첨부 사본 및 사용자 관측
 
