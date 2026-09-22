@@ -60,6 +60,7 @@ from collector.kiwoom.session_transition import SessionTransition, write_transit
 from collector.kiwoom.subscription_plan import MODE_NXT, build_plan  # noqa: E402
 from collector.kiwoom.tick_writer import TickWriter  # noqa: E402
 from collector.kiwoom.live_capture import LiveRawCapture, TRADE_FIDS, QUOTE_FIDS  # noqa: E402
+from collector.kiwoom.ocx_teardown import OcxTeardown, record_phase  # noqa: E402
 
 
 class KiwoomUniverseLogger:
@@ -80,9 +81,12 @@ class KiwoomUniverseLogger:
         aftermarket_duration_seconds=None,
         aftermarket_transition_at=None,
         aftermarket_transition_after_seconds=None,
+        explicit_ocx_teardown=False,
     ):
         if storage not in ("raw-v1", "raw-v2"):
             raise ValueError("unsupported storage backend")
+        if type(explicit_ocx_teardown) is not bool:
+            raise ValueError("explicit OCX teardown flag must be bool")
         self.storage = storage
         self.managed = managed
         self.diagnostics = diagnostics
@@ -149,7 +153,7 @@ class KiwoomUniverseLogger:
             if plan.mode != MODE_NXT:
                 raise ValueError("구독 계획은 명시적 NXT 모드에서만 받는다")
             if storage != "raw-v2" or managed is not None:
-                raise ValueError("NXT 계획은 독립 raw-v2 검증 실행만 지원한다")
+                raise ValueError("NXT 계획은 독립 raw-v2 실행만 지원한다")
             if type(duration_seconds) is not int or not 1 <= duration_seconds <= 300:
                 raise ValueError("NXT 계획은 1~300초 제한 시간이 필요하다")
         for candidate in (plan, aftermarket_plan):
@@ -163,6 +167,8 @@ class KiwoomUniverseLogger:
         # OCX(ActiveX) 는 이 스레드에 묶인다 — run_aftermarket_transition() 이 다른
         # 스레드에서 불리면 OCX 호출 전에 거부한다(_stats_worker 는 플래그만 세운다).
         self._main_thread_ident = threading.get_ident()
+        self._ocx_teardown = OcxTeardown(owner_thread=self._main_thread_ident,
+                                       enabled=explicit_ocx_teardown)
         self.app = QApplication(sys.argv)
 
         # 파이썬 인터프리터가 Ctrl+C를 감지할 수 있도록 0.2초 주기 타이머 가동
@@ -212,18 +218,52 @@ class KiwoomUniverseLogger:
             RAW_DIR.mkdir(parents=True, exist_ok=True)
             self.writer = TickWriter(self.db_path, self.trade_queue, self.quote_queue)
 
-        # 키움 OCX 초기화
+        # 키움 OCX 초기화. 신호 연결 실패도 부분 생성된 컨트롤의 종료 대상이다.
+        self.ocx = None
         try:
             self.ocx = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
+            self.ocx.OnEventConnect.connect(self._on_login)
+            self.ocx.OnReceiveRealData.connect(self._on_receive_real_data)
+            self.app.aboutToQuit.connect(lambda: self._shutdown("Qt 종료"))
         except Exception as e:
+            self.accepting_events = self.is_running = False
+            self._shutdown_done = True
+            self.timer.stop()
+            self._phase("ocx_init_failed", error=type(e).__name__)
+            self._release_ocx_if_stopped()
             self.log.emit(f"❌ 키움 OCX 로드 실패 (32비트 가상환경인지 확인하세요): {e}")
+            self.log.close()
             sys.exit(1)
 
-        # 이벤트 시그널 연결
-        self.ocx.OnEventConnect.connect(self._on_login)
-        self.ocx.OnReceiveRealData.connect(self._on_receive_real_data)
+    def _phase(self, phase, **details):
+        capture = self.raw_capture
+        identity = getattr(capture, "identity", None)
+        record_phase(self.diagnostics, phase,
+                     session_id=getattr(identity, "session_id", None), **details)
 
-        self.app.aboutToQuit.connect(lambda: self._shutdown("Qt 종료"))
+    def _release_ocx_if_stopped(self):
+        """저장 워커가 남으면 해제를 보류한다. closed 보고와 워커 종료는 별개다."""
+        if not self._ocx_teardown.enabled:
+            stopped = False
+        elif self.raw_capture is not None:
+            stopped = bool(self.raw_capture.queue.wait(0))
+        else:
+            worker = getattr(self, "db_thread", None)
+            stopped = worker is None or not worker.is_alive()
+        ok = self._ocx_teardown.release(self.ocx, writer_stopped=stopped,
+                                        diagnostics=self.diagnostics)
+        if not ok:
+            self.exit_code = 2
+        return ok
+
+    def _finish_qt_shutdown(self):
+        # 저장을 먼저 마친 뒤에만 선택적 native teardown을 시도한다.
+        # clear 중 재진입은 _shutdown_done / accepting_events 가드로 차단한다.
+        self._release_ocx_if_stopped()
+        self.log.close()
+        self._phase("qt_quit_enter", teardown_state=self._ocx_teardown.state)
+        self.app.quit()
+        self._phase("qt_quit_returned")
 
     @property
     def total_trades(self):
@@ -286,9 +326,12 @@ class KiwoomUniverseLogger:
         self.log.emit("=" * 65)
         self.log.emit("🔑 키움 OpenAPI+ 서버 접속 시도 중...")
         self.ocx.dynamicCall("CommConnect()")
+        self._phase("event_loop_enter")
         try:
-            self.app.exec_()
+            result = self.app.exec_()
+            self._phase("event_loop_returned", qt_exit_code=result)
         finally:
+            self._phase("event_loop_unwinding")
             self._shutdown("이벤트 루프 종료")
         return self.exit_code
 
@@ -600,6 +643,8 @@ class KiwoomUniverseLogger:
 
     def _on_receive_real_data(self, code: str, real_type: str, real_data: str):
         """Capture entry clocks before extracting raw FIDs on the Qt thread."""
+        if self._shutdown_done:
+            return  # clear() 중 재진입도 추가 FID 조회·저장을 하지 않는다.
         if not self.accepting_events:
             # 전환 중이면 저장 파일 대신 전환 기록에 보존한다. 조용히 버리지 않는다.
             if self.transition is not None and self.transition.in_progress:
@@ -796,6 +841,8 @@ class KiwoomUniverseLogger:
         임계를 넘었으면 '정상 종료' 라고 말하지 않는다 — 2026-09-14 에
         54분치 결손을 정상 종료로 보고했던 일의 재발 방지다.
         """
+        if threading.get_ident() != self._main_thread_ident:
+            raise RuntimeError("collector shutdown requires its owning Qt thread")
         if self._transition_active:
             self._shutdown_requested = reason
             return
@@ -807,9 +854,13 @@ class KiwoomUniverseLogger:
         self.accepting_events = False
         self.is_running = False
         self.timer.stop()
+        self._phase("shutdown_enter", reason=str(reason)[:256])
+        self._phase("unregister_enter")
         try:
             self.ocx.dynamicCall("SetRealRemove(QString, QString)", "ALL", "ALL")
+            self._phase("unregister_returned")
         except Exception as e:
+            self._phase("unregister_failed", error=type(e).__name__)
             self.log.emit(f"⚠️ 실시간 등록 해제 실패: {e}")
 
         stats = getattr(self, "stats_thread", None)
@@ -825,9 +876,11 @@ class KiwoomUniverseLogger:
                     f"마지막 {summary['commit']/1048576:,.0f} MiB / 최대 {summary['peak_commit']/1048576:,.0f} MiB "
                     f"— 이력 {summary['history_path']}"))
         self.log.emit("💾 수신을 멈추고 남은 체결/호가의 DB 커밋을 기다립니다.")
+        self._phase("storage_finish_enter", storage=self.storage)
         if self.storage == "raw-v2":
             command = self.managed.stop[1] if self.managed is not None and self.managed.stop else None
             clean = self.raw_capture is not None and self.raw_capture.finish(reason, command=command)
+            self._phase("storage_finish_returned", clean=bool(clean))
             if not clean:
                 cancelled_before_capture = self.raw_capture is None and self.managed is not None and self.managed.stop
                 if not cancelled_before_capture:
@@ -839,8 +892,7 @@ class KiwoomUniverseLogger:
                 self.log.emit("데이터 방향·venue·무누락 품질은 미검증입니다.")
                 self.log.emit(report.headline)
             self.log.emit_all(report.lines())
-            self.log.close()
-            self.app.quit()
+            self._finish_qt_shutdown()
             return
         self.writer.stop.set()
         worker = getattr(self, "db_thread", None)
@@ -851,6 +903,7 @@ class KiwoomUniverseLogger:
                     self.log.emit(f"💾 종료 저장 중: 미커밋 약 {self.writer.pending:,}건")
         pending = self.writer.pending
         storage_failed = bool(self.writer.error or pending)
+        self._phase("storage_finish_returned", clean=not storage_failed)
         report.extra.extend([
             ("DB 반영 건수  ", f"체결 {self.total_trades:,} 건 / 호가 {self.total_quotes:,} 건"),
             ("종료 후 미커밋", f"{pending:,} 건"),
@@ -862,8 +915,7 @@ class KiwoomUniverseLogger:
         else:
             self.log.emit(report.headline)
         self.log.emit_all(report.lines())
-        self.log.close()
-        self.app.quit()
+        self._finish_qt_shutdown()
 
     def _install_sigint_handler(self):
         """
@@ -874,6 +926,8 @@ class KiwoomUniverseLogger:
         """
         def _handler(signum, frame):
             signal.signal(signal.SIGINT, signal.SIG_DFL)   # 다음 번엔 강제 종료
+            if self._shutdown_done:
+                return  # 종료/clear 중 재진입으로 이미 닫은 로그에 쓰지 않는다.
             self.log.end_status_line()
             self.log.emit("🛑 사용자에 의해 수집이 중단되었습니다 (Ctrl+C).")
             self._shutdown_requested = "사용자 중단 (Ctrl+C)"
@@ -888,6 +942,8 @@ def parse_collector_args(argv=None):
     parser.add_argument("--codes", help="explicit comma-separated common-stock codes for a small run")
     parser.add_argument("--duration-seconds", type=int)
     parser.add_argument("--preflight", action="store_true", help="read-only environment check; no OCX instance/login")
+    parser.add_argument("--explicit-ocx-teardown", action="store_true",
+                        help="선택적 종료 순서 실측: 워커 종료 후 Qt 스레드에서 ActiveX clear. 기본 꺼짐")
     parser.add_argument("--managed-launch", help=argparse.SUPPRESS)
     nxt = parser.add_argument_group(
         "NXT 구독 계획", "명시적 NXT 모드. 독립 raw-v2 검증 실행이며 제한 시간이 필요하다")
@@ -1012,7 +1068,8 @@ if __name__ == "__main__":
                 duration_seconds=args.duration_seconds, managed=managed, diagnostics=diagnostics,
                 aftermarket_plan=aftermarket_plan, aftermarket_duration_seconds=aftermarket_duration_seconds,
                 aftermarket_transition_at=aftermarket_transition_at,
-                aftermarket_transition_after_seconds=aftermarket_transition_after_seconds)
+                aftermarket_transition_after_seconds=aftermarket_transition_after_seconds,
+                explicit_ocx_teardown=args.explicit_ocx_teardown)
             logger.start()
         except KeyboardInterrupt:
             if logger is not None:
@@ -1021,12 +1078,16 @@ if __name__ == "__main__":
             failure = f"{type(exc).__name__}: {exc}"
             raise
         finally:
+            record_phase(diagnostics, "main_finally_enter", failure=failure)
             # Keep the lease while any accepted data is still being drained.
             if logger is not None and logger.raw_capture is not None:
                 if not logger._shutdown_done:
                     logger.raw_capture.queue.abort(failure or "unexpected collector exit")
                 while not logger.raw_capture.queue.wait(5):
                     print("raw v2 저장 워커 종료 대기 중", flush=True)
+            if logger is not None:
+                # finish가 타임아웃으로 반환한 경로에서도 워커 종료 전 clear하지 않는다.
+                logger._release_ocx_if_stopped()
             if managed is not None and not managed.finished:
                 capture = logger.raw_capture if logger is not None else None
                 report = capture.report if capture is not None and capture.report.state == "closed" else None
@@ -1034,4 +1095,5 @@ if __name__ == "__main__":
                 if error is None and logger is not None and logger.exit_code:
                     error = f"collector exited with code {logger.exit_code}; see capture log"
                 managed.finish(report, error)
+            record_phase(diagnostics, "main_finally_returned")
         sys.exit(logger.exit_code)
