@@ -174,6 +174,19 @@ def test_clear_failure_does_not_relabel_stored_data_or_hide_exit_failure(live):
     assert any("저장 완료" in message for message in messages)
 
 
+def test_log_close_failure_still_requests_qt_quit(live):
+    logger, _, _ = live
+    logger._on_login(0)
+    logger._on_receive_real_data("005930", "주식체결", "")
+    control = enabled(logger)
+    logger.log.close = lambda: (_ for _ in ()).throw(OSError("synthetic log close failure"))
+    logger._shutdown("fixture")
+    assert logger.app.quits == 1 and control.calls == 1
+    assert logger.exit_code == 2
+    state = logger.raw_capture.queue.snapshot()
+    assert state["writer_closed"] and state["state"] == "closed"
+
+
 def test_unfinished_worker_prevents_native_clear(live, monkeypatch):
     logger, _, _ = live
     logger._on_login(0)
@@ -186,8 +199,9 @@ def test_unfinished_worker_prevents_native_clear(live, monkeypatch):
         patch.setattr(logger.raw_capture.queue, "wait", lambda timeout: False)
         assert not logger._release_ocx_if_stopped()
     assert control.calls == 0 and logger._ocx_teardown.state == "deferred"
+    assert logger.exit_code == 0  # 보류는 teardown 실패가 아니다.
     assert logger._release_ocx_if_stopped()
-    assert control.calls == 1
+    assert control.calls == 1 and logger.exit_code == 0
 
 
 def test_active_collector_cannot_be_cleared(live):
@@ -196,6 +210,7 @@ def test_active_collector_cannot_be_cleared(live):
     control = enabled(logger)
     assert not logger._release_ocx_if_stopped()
     assert control.calls == 0 and logger._ocx_teardown.state == "not_attempted"
+    assert logger.exit_code == 0  # active 차단도 실패 판정이 아니다.
     assert logger.accepting_events and logger.raw_capture.queue.snapshot()["accepting"]
 
 
