@@ -8,8 +8,8 @@
 
 ## 원격 기준과 진행 중 PR
 
-작업 시작 master: `4c677bf9ed535f4b9ba529af81b0c00f3eb8af97`.
-NUM-1(PR #12)와 RUN-1(PR #14)은 병합됐다. PR #13은 superseded, closed/not merged다.
+현재 master: `adf370ecb70f5490b44d629d46a3b87fa500c707` (PR #16 병합).
+NUM-1(PR #12), RUN-1(PR #14), 수집 종료 보강(PR #16)은 병합됐다. PR #13은 superseded, closed/not merged다.
 이전 인계의 수정 대기/xfailed는 현재 코드 판정이 아니다.
 이 기준의 Git-only 회귀는 1,418 passed / 6 deselected / 0 xfailed였으며,
 execution 감사 범위는 9,450조합 / 62,886 checkpoint다. 새 PR의 통과 수와 합산하지 않는다.
@@ -18,19 +18,17 @@ RES-1 one-pass retry와 CLK-1 advance 호출열 정책은 유지한다.
 - PR #15: 원본 보호 handle 기반 격리 복제 **합성 lab**, 미병합. 최종 보고 기준
   `257e8f1ea0e54e926466e8094d69865e9c6c4d37`, 1,454 passed / 6 deselected.
   운영 복제·sidecar 정리 승인이 아니다. 해당 PR의 변경은 아래 PR에 포함하지 않는다.
-- PR #16: 종료 단계 기록과 `--explicit-ocx-teardown` 선택적 해제.
-  [종료 계약](docs/COLLECTOR_TEARDOWN.md)을 읽는다. 기본 해제 옵션은 꺼짐이다.
-  `127a323e9141dafdccec0b3aafb721bf7af993a4`의 CI #135에서 집중 65 passed,
-  전체 1,455 passed / 6 deselected를 decoded 로그로 확인했다.
+- PR #16은 master `adf370ec...`로 병합됐다. 최종 CI #185에서 teardown/수집 집중 69 passed,
+  전체 1,459 passed / 6 deselected를 decoded 로그로 확인했다. `--explicit-ocx-teardown`은 기본 꺼짐이다.
 - PR #17: [Qt 폴링·기존 FID 제한 표본 진단](docs/COLLECTOR_TELEMETRY.md).
-  `codex/collector-teardown-20260922` 위에 stack한 별도 변경이다. master 직접 병합 대상으로
-  오해하지 않는다. `--capture-telemetry`는 기본 꺼짐이며 해제 옵션과 독립이다.
-  중단된 작업을 원격에서 재확인해 이어갔으며 새 중복 PR은 만들지 않았다.
-  두 옵션의 4가지 조합과 실패 비간섭을 확인하는 11개 통합 회귀를 추가했다.
-  CI #156의 1 failed / 53 passed는 최종 flush 예외로 진단 파일 close가 생략되는 반례였다.
-  `db2b18e9292a0be257a01e855faf1b7958562cbe`에서 해당 경계를 수정했고 기대를 완화하지 않았다.
-  이 결함은 새 진단 경로의 정리 문제이며 운영 수신 장애의 원인 규명과 다르다.
-  최종 HEAD/run/job와 수정 후 실제 회귀 결과는 각 PR 본문에서 다시 확인한다.
+  PR #16 병합 뒤 base를 master로 옮겼다. `--capture-telemetry`는 기본 꺼짐이며 해제 옵션과 독립이다.
+  독립 감사의 high finding인 flush-lock 경합 중 close 포기를 수정해 active flush가 close 요청을
+  finally에서 인계하도록 했고, 호출부는 pending phase를 남겨 후속 정리에서 다시 확인한다.
+  poll age의 음수값은 수치로 발행하지 않고, 표본 slot이 성공이 아닌 선택 시도 기준임을 문서·회귀로 고정했다.
+  CI #156의 flush 예외 close 누락과 #162의 일회성 raw startup 실패 이력은 지우지 않는다.
+  startup 실패에는 ready/state/error/writer_done을 남기고 기본 시작·종료 회귀를 4회 반복한다.
+  master 재동기화 전 CI #183은 telemetry/통합 57 passed, teardown 69 passed,
+  전체 1,516 passed / 6 deselected였다. 최종 master-base HEAD/run/job는 다시 확인한다.
 
 두 PR은 실제 32비트 키움/Qt/보안 모듈 동작, native 오류 재발 방지, 수신 처리량을 인증하지 않는다.
 저부하는 설계 목표이며 실측 완료가 아니다. 로컬 설치·동기화·수집 실행·운영 적용은 하지 않았다.
@@ -80,9 +78,8 @@ PR #15 합성 경로도 운영 namespace/동시 접근/실제 출처의 충분 �
 
 ## 다음 작업과 승인 경계
 
-정확한 PR HEAD의 최종 CI와 별도 코드 검토 뒤 병합 판단을 한다. 구현자의 자체 검토와 독립
-검토를 구별한다. #16을 먼저 병합하는 경우 #17의 base를 master로 바꾸고 변경 diff와 CI를 다시
-확인한다. #15와 공통 문서/CI 충돌은 별도로 조정하며 이력 재작성으로 덮지 않는다.
+PR #17은 최신 master를 이력 재작성 없이 정상 merge parent로 동기화하고 최종 diff/CI를 확인한 뒤 병합 판단한다.
+그 다음 PR #15의 독립 검토와 병합 판단으로 돌아간다. #15와 공통 문서/CI 충돌은 별도로 조정한다.
 
 신규 로그인·재수집은 자동 실행하지 않는다. 실제 적용에는 대상 identity·사전 상태·장외 시각·
 동시 접근 배제·경로 보호·free space·I/O/time 예산과 별도 사용자 승인이 필요하다.
