@@ -211,6 +211,52 @@ def test_io_error_and_closed_state_are_contained(probe, monkeypatch):
     assert not telemetry.flush()
 
 
+def test_close_request_is_completed_by_inflight_flush(probe, monkeypatch):
+    telemetry, _ = probe
+    sample(telemetry)
+    entered = threading.Event()
+    release = threading.Event()
+    original_write = telemetry._write
+    outcome = []
+
+    def slow_write(record):
+        entered.set()
+        assert release.wait(2)
+        return original_write(record)
+
+    monkeypatch.setattr(telemetry, "_write", slow_write)
+    worker = threading.Thread(target=lambda: outcome.append(telemetry.flush(force=True)))
+    worker.start()
+    assert entered.wait(2)
+    assert not telemetry.close()  # active flush가 닫기 요청을 인계받는다.
+    assert telemetry._close_requested and not telemetry.closed
+    release.set()
+    worker.join(2)
+    assert not worker.is_alive() and outcome == [True]
+    assert telemetry.closed and telemetry.stream is None
+    assert telemetry.close()
+
+
+def test_poll_age_does_not_publish_negative_duration(probe):
+    telemetry, clock = probe
+    clock.now = 100
+    token = telemetry.poll_enter()
+    clock.now = 50
+    assert telemetry.poll_snapshot(clock.now)["entry_age_ns"] is None
+    telemetry.poll_return(token, outcome="returned")
+    assert telemetry.poll_snapshot(40)["return_age_ns"] is None
+    assert telemetry.poll_snapshot(40)["last_duration_ns"] is None
+
+
+def test_reserved_sample_slot_is_attempt_based(probe):
+    telemetry, _ = probe
+    assert telemetry.reserve_sample("주식체결", 0)
+    # FID/submit 이전에 고른 표본이 실패해 callback_sample까지 오지 않아도
+    # 해당 종류의 다음 5초 selection slot은 소비된다.
+    assert not telemetry.reserve_sample("주식체결", telemetry.SAMPLE_NS - 1)
+    assert telemetry.reserve_sample("주식체결", telemetry.SAMPLE_NS)
+
+
 def test_observer_exception_never_escapes():
     class Broken:
         def disable(self, reason):
