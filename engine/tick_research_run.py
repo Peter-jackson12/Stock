@@ -36,6 +36,19 @@ def _json(value):
     return json.dumps(value, default=_default, sort_keys=True, ensure_ascii=False, allow_nan=False)
 
 
+def _provenance_event_count(provenance):
+    """예약 키만 검증한다. 일반 JSON metadata/reader 설명은 해석하지 않는다."""
+    if not isinstance(provenance, dict) or "raw_manifest" not in provenance:
+        return 0
+    manifest = provenance["raw_manifest"]
+    if not isinstance(manifest, dict):
+        raise ValueError("input_provenance.raw_manifest must be a dictionary")
+    count = manifest.get("event_count", 0)
+    if type(count) is not int or count < 0:
+        raise ValueError("input_provenance.raw_manifest.event_count must be a nonnegative integer")
+    return count
+
+
 def _write(path, value):
     temporary = path.with_suffix(".tmp")
     with temporary.open("x", encoding="utf-8") as stream:
@@ -62,8 +75,14 @@ def run_research(events, *, output_root, dataset_label, simulator_config,
     dataset_label is a caller label, not proof of raw file identity/finalization.
     event_sha256 covers the consumed normalized stream; complete only on success.
     Output locations are fresh UUID directories: reruns never overwrite results.
-    Config errors occur before any run directory is created. Memory usage scales
-    with orders/fills; large real-data runs require later storage/performance work.
+    Config/provenance validation and JSON serialization precede output creation.
+    Generic JSON provenance remains opaque. A top-level dictionary's reserved
+    raw_manifest must be a dictionary; its optional event_count must be an actual
+    nonnegative int (not bool). Missing manifest/count means zero for classification.
+    reader/reader_sha256 are retained metadata, not independently verified evidence.
+    Once iteration starts, replay failures retain failed/diagnostics_only output;
+    this is not a guarantee against filesystem failure or process termination.
+    Memory usage scales with orders/fills; large real-data runs require later work.
     """
     if not isinstance(dataset_label, str) or not dataset_label.strip():
         raise ValueError("dataset label required")
@@ -80,6 +99,7 @@ def run_research(events, *, output_root, dataset_label, simulator_config,
     _json(settings)
     provenance = deepcopy(input_provenance)
     _json(provenance)
+    raw_event_count = _provenance_event_count(provenance)
     contracts = dict(simulation_contract=simulation_contract(sim),
                      input_capabilities=input_capabilities(sim))
     contract_hash = hashlib.sha256(_json(contracts).encode("utf-8")).hexdigest()
@@ -114,8 +134,7 @@ def run_research(events, *, output_root, dataset_label, simulator_config,
         sim.close(close_ns)
     except Exception as exc:
         error = exc
-    no_selection = (count == 0 and isinstance(provenance, dict)
-                    and provenance.get("raw_manifest", {}).get("event_count", 0) > 0)
+    no_selection = count == 0 and raw_event_count > 0
     status = ("failed" if error is not None else "completed_no_selected_events" if no_selection
               else "completed_empty_input" if count == 0
               else "completed_with_open_position" if sim.position else
