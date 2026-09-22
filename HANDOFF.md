@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-22 / 수집 장애 후 종료·진단 보강, 운영 미승인
+# 현재 인계 — 2026-09-22 / 종료·수신 진단 PR, 운영 미승인
 
 [문서 인덱스](README.md) · [첫 시험 체크리스트](BACKTEST_TODO.md) ·
 [파이프라인 지도](docs/PIPELINE_MAP.md) · [보존본 안내](docs/archive/README.md)
@@ -8,8 +8,8 @@
 
 ## 원격 기준과 진행 중 PR
 
-작업 시작 master: `4c677bf9ed535f4b9ba529af81b0c00f3eb8af97`.
-NUM-1(PR #12)와 RUN-1(PR #14)은 병합됐다. PR #13은 superseded, closed/not merged다.
+현재 master: `adf370ecb70f5490b44d629d46a3b87fa500c707` (PR #16 병합).
+NUM-1(PR #12), RUN-1(PR #14), 수집 종료 보강(PR #16)은 병합됐다. PR #13은 superseded, closed/not merged다.
 이전 인계의 수정 대기/xfailed는 현재 코드 판정이 아니다.
 이 기준의 Git-only 회귀는 1,418 passed / 6 deselected / 0 xfailed였으며,
 execution 감사 범위는 9,450조합 / 62,886 checkpoint다. 새 PR의 통과 수와 합산하지 않는다.
@@ -17,15 +17,22 @@ RES-1 one-pass retry와 CLK-1 advance 호출열 정책은 유지한다.
 
 - PR #15: 원본 보호 handle 기반 격리 복제 **합성 lab**, 미병합. 최종 보고 기준
   `257e8f1ea0e54e926466e8094d69865e9c6c4d37`, 1,454 passed / 6 deselected.
-  운영 복제·sidecar 정리 승인이 아니다. 해당 PR과 이번 종료 변경은 독립이다.
-- PR #16: 종료 단계 기록과 `--explicit-ocx-teardown` 선택적 해제.
-  [종료 계약](docs/COLLECTOR_TEARDOWN.md)을 읽는다. 기본 해제 옵션은 꺼짐이다.
-  독립 감사에서 발견한 teardown 보류의 exit_code 오판과 log close 실패 시 Qt quit 누락을 수정했다.
-  raw-v2 기본 시작/종료 경로는 반복 회귀로 넓히고 startup 실패 시 ready/state/error/writer_done을 남긴다.
-  수정 직전 최종 코드 CI #178은 집중 69 passed, 전체 1,459 passed / 6 deselected였다.
-  이 문서 커밋 뒤 최종 HEAD/run/job는 PR 본문과 Actions 실제 로그로 다시 확인한다.
-- PR #17: Qt 폴링 실제 반환값과 이미 읽은 FID 시각의 저부하 관측. PR #16 위 stacked 상태이며
-  telemetry close 경합 high finding을 수정했다. #16 병합 뒤 base를 master로 옮겨 diff/CI를 다시 확인한다.
+  운영 복제·sidecar 정리 승인이 아니다. 해당 PR의 변경은 아래 PR에 포함하지 않는다.
+- PR #16은 master `adf370ec...`로 병합됐다. 최종 CI #185에서 teardown/수집 집중 69 passed,
+  전체 1,459 passed / 6 deselected를 decoded 로그로 확인했다. `--explicit-ocx-teardown`은 기본 꺼짐이다.
+- PR #17: [Qt 폴링·기존 FID 제한 표본 진단](docs/COLLECTOR_TELEMETRY.md).
+  PR #16 병합 뒤 base를 master로 옮겼다. `--capture-telemetry`는 기본 꺼짐이며 해제 옵션과 독립이다.
+  독립 감사의 high finding인 flush-lock 경합 중 close 포기를 수정해 active flush가 close 요청을
+  finally에서 인계하도록 했고, 호출부는 pending phase를 남겨 후속 정리에서 다시 확인한다.
+  poll age의 음수값은 수치로 발행하지 않고, 표본 slot이 성공이 아닌 선택 시도 기준임을 문서·회귀로 고정했다.
+  CI #156의 flush 예외 close 누락과 #162의 일회성 raw startup 실패 이력은 지우지 않는다.
+  startup 실패에는 ready/state/error/writer_done을 남기고 기본 시작·종료 회귀를 4회 반복한다.
+  PR #16 병합 master를 정상 merge parent로 동기화한 CI #189에서 telemetry/통합 57 passed,
+  teardown 69 passed, 전체 1,516 passed / 6 deselected를 decoded 로그로 확인했다.
+  이 인계 문서-only 커밋 뒤 최종 Actions 상태는 PR 본문에서 한 번 더 확인한다.
+
+두 PR은 실제 32비트 키움/Qt/보안 모듈 동작, native 오류 재발 방지, 수신 처리량을 인증하지 않는다.
+저부하는 설계 목표이며 실측 완료가 아니다. 로컬 설치·동기화·수집 실행·운영 적용은 하지 않았다.
 
 ## 2026-09-22 수집 장애 — 첨부 사본 및 사용자 관측
 
@@ -72,9 +79,12 @@ PR #15 합성 경로도 운영 namespace/동시 접근/실제 출처의 충분 �
 
 ## 다음 작업과 승인 경계
 
-종료·진단 PR의 GitHub 합성 검증/코드 검토를 먼저 완료한다. 신규 로그인·재수집은 자동 실행하지 않는다.
-실제 적용에는 대상 identity·사전 상태·장외 시각·동시 접근 배제·경로 보호·free space·
-I/O/time 예산과 별도 사용자 승인이 필요하다. 합성 통과를 native 오류 해결/운영 승인으로 읽지 않는다.
+PR #17은 최신 master를 이력 재작성 없이 정상 merge parent로 동기화하고 최종 diff/CI를 확인한 뒤 병합 판단한다.
+그 다음 PR #15의 독립 검토와 병합 판단으로 돌아간다. #15와 공통 문서/CI 충돌은 별도로 조정한다.
+
+신규 로그인·재수집은 자동 실행하지 않는다. 실제 적용에는 대상 identity·사전 상태·장외 시각·
+동시 접근 배제·경로 보호·free space·I/O/time 예산과 별도 사용자 승인이 필요하다.
+합성 통과를 native 오류 해결/운영 승인으로 읽지 않는다.
 
 closed != data quality pass; sample clean != whole-file clean;
 stream integrity != research eligibility; parse_error != file corruption;

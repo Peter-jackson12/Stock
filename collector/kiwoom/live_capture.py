@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from collector.kiwoom.queued_capture import QueuedCapture
 from collector.kiwoom.queue_control import QueueStopReports
+from collector.kiwoom.capture_telemetry import observe
 from control_tower.lifecycle import CaptureReport, ProcessIdentity
 from control_tower.report_journal import ReportJournal
 from control_tower.windows_process import WindowsProcess
@@ -44,6 +45,7 @@ class LiveRawCapture:
         self.report = CaptureReport(self.identity, 1, "starting")
         self.journal.append(self.report)
         self.received_trades = self.received_quotes = 0
+        self.telemetry = None  # logger가 명시적으로 활성화한 경우에만 연결한다.
         self._error = None
         self._last_status = 0
         self._finished = False
@@ -78,6 +80,9 @@ class LiveRawCapture:
     def on_tick(self, code, real_type, read_fid, *, received_ns, received_at_utc):
         if real_type not in ("주식체결", "주식호가잔량"):
             return False
+        probe = self.telemetry
+        sampled = (observe(probe, "reserve_sample", real_type, received_ns)
+                   if probe is not None else False)
         fids = {}
         event_type = real_type
         try:
@@ -87,8 +92,16 @@ class LiveRawCapture:
             self._error = f"FID read failed: {type(exc).__name__}: {exc}"
             fids["_read_error"] = self._error
             event_type = "callback_error"  # Worker preserves partial input as an error record.
-        accepted = self.queue.submit_tick(code=code, venue="unknown", real_type=event_type,
-            fids=fids, received_ns=received_ns, received_at_utc=received_at_utc)
+        accepted = None
+        try:
+            accepted = self.queue.submit_tick(code=code, venue="unknown", real_type=event_type,
+                fids=fids, received_ns=received_ns, received_at_utc=received_at_utc)
+        finally:
+            if sampled:
+                # 추가 FID 조회/JSON/파일 쓰기 없이 작은 진단 표본만 보관한다.
+                observe(probe, "callback_sample", code=code, real_type=real_type,
+                        fids=fids, received_ns=received_ns, received_at_utc=received_at_utc,
+                        accepted=accepted)
         if accepted:
             if real_type == "주식체결":
                 self.received_trades += 1
