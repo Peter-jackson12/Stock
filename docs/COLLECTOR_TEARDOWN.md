@@ -24,11 +24,15 @@ Python 대역만으로 검증할 수 없기 때문에, 기존 실행 명령에 �
 - clear 전에 종료 가드를 세우므로 재진입한 login/real-data/poll/shutdown은 새 FID 조회나
   raw 입력을 하지 않는다. 명시적 clear는 성공/실패를 포함해 한 번만 시도한다.
 - raw-v2 워커의 `wait(0)`가 false면 타임아웃을 종료로 간주하지 않고 clear를 보류한다.
+  이 `deferred`/active 차단은 teardown 실패가 아니므로 그 사실만으로 exit_code를 2로 올리지 않는다.
+  실제 clear 예외 또는 clear 후 non-null인 `failed`만 teardown 실패로 승격한다.
   main finally의 `_finish_process_resources`는 예외 경로에서도 입력·타이머를 먼저 차단하고
   기존 drain 대기를 수행한다. 이 예외 경로에서는 app.quit 요청보다 clear가 늦어질 수 있다.
 - 초기화 실패로 컨트롤이 없거나 이미 null이면 불필요하게 clear하지 않는다.
 - clear의 Python 예외 또는 clear 후 non-null은 해제 실패로 남기고 프로세스의 예정 종료 코드를
   비정상으로 둔다. 이미 closed인 저장 결과를 incomplete로 다시 쓰거나 원본을 보정하지 않는다.
+- 일반 로그 close가 실패해도 그 실패를 기록하고 exit_code를 비정상으로 두되 `app.quit()` 호출은
+  계속 시도한다. 로그 close 실패 때문에 Qt 이벤트 루프 종료 요청 자체를 건너뛰지 않는다.
 - 네이티브 hang/abort를 Python try/except로 복구하지 않는다. DLL unload 완료나 OS 종료 성공을
   clear 반환·isNull·`qt_quit_returned`로 인증하지 않는다. 새 timeout/강제 종료는 없다.
 
