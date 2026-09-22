@@ -45,7 +45,7 @@ def test_clone_preserves_bytes_full_stream_and_quality(unsigned):
     before = lab.db_snapshot(fixture.path)
     result_path = clone.clone_fixture(root, fixture)
     result = read_result(result_path)
-    assert result["status"] == "synthetic_verified", result
+    assert result["status"] == "synthetic_verified", result["error"]
     assert result["synthetic_copy_verified"] is True
     assert result["source_unchanged"] is True
     assert result["source_sqlite_reopened"] is False
@@ -136,21 +136,27 @@ print(json.dumps(results))
     def hook(stage, path, run):
         if stage != "sealed":
             return
+        print("CLONE_PROBE child_start", flush=True)
         process = subprocess.run([sys.executable, "-c", code, str(path)],
                                  capture_output=True, text=True, timeout=lab.CHILD_TIMEOUT_SECONDS)
+        print("CLONE_PROBE child_result", process.returncode, process.stdout, process.stderr, flush=True)
         assert process.returncode == 0, process.stderr
         observed.extend(json.loads(process.stdout))
         for suffix in ("", "-wal", "-shm"):
             target = Path(str(path) + suffix)
+            print("CLONE_PROBE unlink", target.name, flush=True)
             with pytest.raises(OSError):
                 target.unlink()
+            print("CLONE_PROBE rename_file", target.name, flush=True)
             with pytest.raises(OSError):
                 target.rename(target.with_name(target.name + ".replaced"))
         for directory in (path.parent, root, run / "working"):
+            print("CLONE_PROBE rename_directory", directory.name, flush=True)
             with pytest.raises(OSError):
                 directory.rename(directory.with_name(directory.name + "_moved"))
     result = read_result(clone.clone_fixture(root, fixture, hook=hook))
-    assert result["synthetic_copy_verified"] is True, result
+    print("CLONE_PROBE end", result["error"], sorted(p.name for p in root.iterdir()), flush=True)
+    assert result["synthetic_copy_verified"] is True, result["error"]
     assert observed == [32] * 6 + ["sqlite-blocked"] * 2
 
 
@@ -165,7 +171,7 @@ def test_clone_never_opens_source_with_sqlite(source, monkeypatch):
         return original(database, *args, **kwargs)
     monkeypatch.setattr(sqlite3, "connect", spy)
     result = read_result(clone.clone_fixture(root, fixture))
-    assert result["synthetic_copy_verified"] is True, result
+    assert result["synthetic_copy_verified"] is True, result["error"]
     assert calls and all("/working/raw.db" in value for value in calls)
 
 
@@ -184,7 +190,6 @@ def test_interruption_preserves_original_partial_files_and_releases_handles(sour
     assert seen[0].exists() and (seen[0] / "result.json").exists()
     if stage != "sealed":
         assert (seen[0] / "evidence/raw.db").exists()
-    # 실패 후 handle이 남지 않는지 원본 변경 없이 재획득으로 확인한다.
     for name in fixture.files:
         with (fixture.path.parent / name).open("r+b"):
             pass
