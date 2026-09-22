@@ -52,8 +52,13 @@ class LiveRawCapture:
             feed_scope=self.identity.feed_scope, price_policy="signed_magnitude", direction_policy="signed_volume",
             started_ns=time.perf_counter_ns(), started_at_utc=datetime.now(timezone.utc).isoformat()).start()
         try:
-            if not self.queue.ready.wait(5) or self.queue.snapshot()["state"] != "running":
-                raise RuntimeError("raw-v2 writer startup failed")
+            ready = self.queue.ready.wait(5)
+            startup = self.queue.snapshot()
+            if not ready or startup["state"] != "running":
+                raise RuntimeError(
+                    "raw-v2 writer startup failed: "
+                    f"ready={ready}, state={startup['state']}, "
+                    f"error={startup['error']!r}, writer_done={self.queue.done.is_set()}")
             self.write_status(force=True)
         except BaseException:
             self.queue.abort("backend startup failed")

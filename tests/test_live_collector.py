@@ -38,14 +38,15 @@ def live(collector, monkeypatch, tmp_path):
         logger._shutdown("test cleanup")
 
 
-def test_operational_default_preserves_raw_and_closes_new_file(live):
+@pytest.mark.parametrize("_startup_attempt", range(4))
+def test_operational_default_preserves_raw_and_closes_new_file(live, _startup_attempt):
     logger, _, messages = live
     assert logger.storage == "raw-v2"
     logger._on_login(0)
     logger._on_receive_real_data("005930", "주식체결", "")
     logger._on_receive_real_data("005930", "주식호가잔량", "")
     logger._shutdown("test stop")
-    assert logger.exit_code == 0
+    assert logger.exit_code == 0, messages[-12:]
     with read_raw_v2(logger.db_path) as (meta, rows):
         records = list(rows)
     assert len(records) == 3  # start + signed-volume trade + quote

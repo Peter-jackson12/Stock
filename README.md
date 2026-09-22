@@ -35,6 +35,7 @@ LOB/초봉 변환과 기존 런 비교는 유지하는 레거시 경로이며 �
 | 첫 실제 시험의 남은 체크 항목 | [BACKTEST_TODO](BACKTEST_TODO.md) |
 | 어떤 코드가 무엇을 실행하는지·경로 간 차이·단순화 후속 항목 | [파이프라인 지도](docs/PIPELINE_MAP.md) |
 | 수집 시작/종료·저장·메타데이터·별도 확장 절차 | [수집 실행 안내](docs/COLLECTION_RUNBOOK.md#환경과-수집-시작) |
+| 종료 단계 증거·선택적 ActiveX 해제와 미검증 경계 | [종료 계약](docs/COLLECTOR_TEARDOWN.md) |
 | raw 표본·연구 실행·결과 상태와 한계 | [틱 연구 실행 안내](TICK_RESEARCH_RUNBOOK.md) |
 | 독립 execution oracle·유한 검증 범위·미해결 반례 | [실행 감사 명세](tests/EXECUTION_ORACLE_SPEC.md) |
 | 운영 화면·제어 계약·IPC·예약·권한 | [CONTROL_TOWER](CONTROL_TOWER.md) |
