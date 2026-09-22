@@ -10,6 +10,8 @@
 `--explicit-ocx-teardown`은 **기본 꺼짐**이다. 실제 키움 컨트롤의 종료 동작은 GitHub의
 Python 대역만으로 검증할 수 없기 때문에, 기존 실행 명령에 몰래 활성화하지 않는다.
 별도 실측 승인 뒤 실행할 때만 이 옵션을 검토한다. 이 문서는 로그인 승인이나 실행 지시가 아니다.
+다중 세션 전환의 모든 워커 수명은 아직 이 옵션으로 검증하지 않았으므로 애프터마켓 전환과의
+동시 사용은 CLI 및 생성자에서 Qt/OCX 생성 전에 거부한다. 기본 전환 동작은 유지한다.
 
 ## 순서
 
@@ -17,11 +19,13 @@ Python 대역만으로 검증할 수 없기 때문에, 기존 실행 명령에 �
 저장 마무리 → (옵션 활성화 시) 워커 종료 확인 → OCX clear → 로그 close → app.quit이다.
 
 - OCX를 만든 Qt 스레드 밖의 종료/clear 호출은 상태 변경과 native 호출 전에 거부한다.
+- 입력 수용 중이거나 종료 가드가 없거나 전환 중이면 `ocx_clear_blocked_active`를 기록하고
+  직접 해제 호출을 거부한다. 활성 수집을 편의상 강제 중단시키는 API가 아니다.
 - clear 전에 종료 가드를 세우므로 재진입한 login/real-data/poll/shutdown은 새 FID 조회나
   raw 입력을 하지 않는다. 명시적 clear는 성공/실패를 포함해 한 번만 시도한다.
 - raw-v2 워커의 `wait(0)`가 false면 타임아웃을 종료로 간주하지 않고 clear를 보류한다.
-  기존 main finally의 drain 대기가 끝난 뒤 다시 검사할 수 있다. 이 예외 경로에서는
-  app.quit 요청보다 clear가 늦어질 수 있으며, 워커 종료 전 native teardown은 허용하지 않는다.
+  main finally의 `_finish_process_resources`는 예외 경로에서도 입력·타이머를 먼저 차단하고
+  기존 drain 대기를 수행한다. 이 예외 경로에서는 app.quit 요청보다 clear가 늦어질 수 있다.
 - 초기화 실패로 컨트롤이 없거나 이미 null이면 불필요하게 clear하지 않는다.
 - clear의 Python 예외 또는 clear 후 non-null은 해제 실패로 남기고 프로세스의 예정 종료 코드를
   비정상으로 둔다. 이미 closed인 저장 결과를 incomplete로 다시 쓰거나 원본을 보정하지 않는다.
@@ -34,7 +38,7 @@ Python 대역만으로 검증할 수 없기 때문에, 기존 실행 명령에 �
 `CaptureDiagnostics`가 없는 직접 호출은 기록을 생략한다.
 
 `shutdown_enter`, `unregister_enter/returned/failed`, `storage_finish_enter/returned`,
-`ocx_clear_enter/returned/failed/deferred/disabled/absent`, `qt_quit_enter/returned`,
+`ocx_clear_enter/returned/failed/deferred/disabled/absent/blocked_active`, `qt_quit_enter/returned`,
 `event_loop_enter/returned/unwinding`, `main_finally_enter/returned`, `diagnostics_closing`을 구분한다.
 
 enter만 있고 returned가 없으면 그 구간이 조사 대상이지만, 기록 실패와 프로세스 중단을
