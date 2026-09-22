@@ -1,29 +1,33 @@
-# 현재 인계 — 2026-09-22 / 독립 execution 감사 PR #11, 운영 적용 미승인
+# 현재 인계 — 2026-09-22 / NUM-1·RUN-1 독립 수정 PR, 운영 적용 미승인
 
 현재 목표·차단 조건·다음 행동만 유지한다. [문서 인덱스](README.md),
 [첫 시험 체크리스트](BACKTEST_TODO.md), [파이프라인 지도](docs/PIPELINE_MAP.md)를 따른다.
 과거 기록은 [보존본 안내](docs/archive/README.md)와 Git 이력에 보존한다.
 수집 시작 전 원문은 `4821762fd93230b658339fee084d6c08e3e53ce9:HANDOFF.md`에 남아 있다.
-이번 감사 전 인계/과거 CI 상세는 `98725431ca84f6fc88efb293e126b915799f0a28:HANDOFF.md`에 보존한다.
+PR #11 감사 인계/발견 당시 미수정 상태는 `d9d4e5d8b8639e99c8e2c14846023552e9cb5dac:HANDOFF.md`에 보존한다.
 
-## 2026-09-22 원격 execution 감사
+## 2026-09-22 원격 execution 수정
 
 사용자 보고 live session은 `39b5af8b45024458be9a3ae2a2259685`다. 로컬 관측이 아니다.
 GitHub branch/PR와 Actions의 작은 합성 검증만 한다. Windows 저장소·실제 raw/evidence·DB·OCX·
-수집기·qualification·실제 백테스트를 건드리지 않으며 로컬 Git 조작을 요청하지 않는다.
+수집기·sidecar·qualification·실제 백테스트를 건드리지 않으며 로컬 Git 조작을 요청하지 않는다.
 
-시작 master는 `98725431ca84f6fc88efb293e126b915799f0a28`이며 PR #10 병합을 확인했다.
-`codex/execution-oracle-audit` / [PR #11](https://github.com/Peter-jackson12/Stock/pull/11)에
-[독립 명세·전수 범위·최소 반례](tests/EXECUTION_ORACLE_SPEC.md)를 추가했다. oracle는 tests 전용이다.
-설계 공간은 6,912개 parameter/program 조합이며 unique state 수가 아니다. 실제 실행 수·checkpoint·
-최종 HEAD의 CI 통과/예상 실패 수는 PR의 decoded job log 근거로 확인한다. 이전 PR 수치를 재사용하지 않는다.
+시작 master `d9d4e5d8b8639e99c8e2c14846023552e9cb5dac`에 PR #11 병합을 확인했다.
+두 수정은 이 기준에서 독립 분기했으며 자동 병합하지 않는다. 각 PR에는 상대 결함의 strict xfail이
+남는다. 두 수정의 비병합 통합 검증은 별도이며, 어느 한 PR의 통과를 두 결함 모두의 해결로 읽지 않는다.
 
-**실행 동작은 유지하고 자원 재시도/매칭 라운드의 계약 v1 설명을 보완한다.**
-NUM-1(낮은 Decimal 정밀도에서 음수 cash), RUN-1(null raw_manifest에서 running만 남음)을
-Actions에서 재현했다. 수정은 별도 후속이며 두 normative 검사를 strict xfail로 남긴다.
-CI success/xfail은 이 결함의 해결이나 전체 수치 범위의 자원 보존 인증이 아니다.
-추가 advance 삽입/분할은 자원 재시도 기회를 바꾸므로 경제적 불변성을 주장하지 않는다.
-같은 호출열의 chunk 분할과 구별한다. 최종 CI/diff를 확인하고 PR을 미병합 상태로 보고한다.
+- [PR #12 NUM-1](https://github.com/Peter-jackson12/Stock/pull/12): `codex/fix-num1-solvency`.
+  `d431308`에서 production 수정 후 기존 normative 검사의 strict XPASS를 확인했다.
+  정수 계수 기반 exact affordability/gross/fee/cash와 유한 numerical envelope를 적용한다.
+  전략 산술·실거래 통화 반올림까지 context 독립/정확하다고 인증하지 않는다.
+- [PR #13 RUN-1](https://github.com/Peter-jackson12/Stock/pull/13): `codex/fix-run1-provenance`.
+  `4d073b4`에서 production 수정 후 strict XPASS를 확인했다. 예약 raw_manifest와 선택적
+  비음수 int event_count를 출력 생성 전에 검증하고 generic provenance/런타임 진단 계약은 유지한다.
+
+동일 최소 반례는 정상 회귀로 전환한다. [명세·수정 이력](tests/EXECUTION_ORACLE_SPEC.md),
+각 PR의 최종 HEAD/run/job decoded 로그를 따른다. 기본 oracle 6,912조합/40,692 checkpoint는 유지한다.
+pass/deselected/xfail은 구분하며 중간 XPASS 실행의 실패를 CI 성공으로 계산하지 않는다.
+RES-1 one-pass retry와 CLK-1 endpoint round는 변경하지 않는다. 운영 적용 승인이 아니다.
 
 ## 현재 운영 판정과 근거 수준
 
@@ -127,8 +131,8 @@ sealed handle 해제 직후 후발 writer가 먼저 commit하는 경합과 파�
 
 ## 바로 다음 작업과 역할
 
-1. GitHub에서 PR #11의 최종 HEAD diff/CI를 확인하고 미병합으로 보고한다. 그 뒤에는 NUM-1의 지원
-   수치 범위/체결전 자원 검증, RUN-1의 예약 provenance 검증을 별도 작은 PR로 검토한다.
+1. PR #12/#13의 독립 최종 HEAD CI와 두 수정 통합 검증을 검토한다. 자동 병합하지 않으며
+   현재 Stock 컨트롤타워에서 사용자 병합 판단을 받는다. 상대 결함의 xfail을 통과로 세지 않는다.
    실행 호출열의 의미를 바꾸는 수정은 별도 정책 결정 사항이다. 운영 evidence/TEMP 재조회가 아니다.
 2. 별도 후속 후보는 [복제본 합성 계획](TICK_RESEARCH_RUNBOOK.md#다음-합성-계획--원본-비변경-복제본-경로)이다.
    source SQLite 재연결 없이 보호한 handle에서 복제하고, 사적 복제본에서만 정리한다.
