@@ -120,9 +120,21 @@ def test_sidecar_initial_write_failure_prevents_subscription_and_drains(diagnost
     assert logger.db_path == unstarted_legacy_path
     assert not Path(unstarted_legacy_path).exists()
     assert logger.raw_capture.path.is_file()
-    with read_raw_v2(logger.raw_capture.path) as (manifest, rows):
-        assert manifest["feed_scope"] == FEED_SCOPE_DIAGNOSTIC
-        assert len(list(rows)) == 1  # session_start only; no subscription callback
+    # Startup failure aborts rather than certifies a closed capture. Inspect only
+    # this test's small synthetic file after its writer has stopped.
+    conn = sqlite3.connect(logger.raw_capture.path.as_uri() + "?mode=ro", uri=True)
+    try:
+        manifest = json.loads(conn.execute("SELECT value FROM metadata").fetchone()[0])
+        rows = [json.loads(row[0]) for row in conn.execute("SELECT payload FROM events ORDER BY seq")]
+    finally:
+        conn.close()
+    assert manifest["feed_scope"] == FEED_SCOPE_DIAGNOSTIC
+    assert manifest["state"] == "incomplete"
+    assert any(row["event"].get("control_type") == "session_start" for row in rows)
+    assert all(row["event"].get("control_type") for row in rows)  # no trade/quote callback
+    with pytest.raises(ValueError, match="incomplete"):
+        with read_raw_v2(logger.raw_capture.path):
+            pytest.fail("an aborted startup was accepted as a closed raw dataset")
 
 
 def test_sidecar_final_replace_failure_preserves_old_evidence_and_storage_completion(diagnostic, monkeypatch):
