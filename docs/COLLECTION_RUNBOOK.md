@@ -6,6 +6,91 @@
 수집 중에는 재시작·추가 OCX 로그인·전체 DB 조회·변환·실제 재생을 하지 않는다.
 실행 중인 코드 버전과 현재 상태를 먼저 확인한다. 기록된 관측값은 현재 상태가 아니다.
 
+## Mock 전종목 FID A-B-A — 실행 전 사전점검과 1회 실행 계약
+
+상세 실험 의미·연구 배제·A2/POST 해석은
+[Mock 전종목 FID 읽기 A-B-A 계약](../tests/FID_READ_AB_DIAGNOSTIC.md)을 따른다.
+이 절은 **Windows/OCX에서 실제로 실행하기 직전의 운영 절차**만 정한다.
+GitHub CI 통과나 이 문서 자체는 로그인·실행 승인이 아니다.
+
+### 1. 실행 시점
+
+- 실제 피드 의미를 보려는 1차 실험은 **공식 거래일의 KRX 정규장 09:00~15:30 KST 안**에서 한다.
+- 개장/마감 burst를 별도 변수로 만들지 않기 위해 최초 1회는 가능하면 09:15 이후~15:15 이전에 한다.
+- 특별 개장·임시 휴장·공휴일은 실행 당일 공식 KRX 정보를 다시 확인한다. 휴장일·장외의 0건 실행으로 대신하지 않는다.
+- 동일 PC의 다른 collector/OCX 세션이나 Runtime 오류 창/PID 잔류 여부가 미확인이면 새 로그인을 시작하지 않는다.
+
+### 2. 로그인 없는 사전점검
+
+전용 clean checkout/worktree에서 원격 PR #24의 현재 HEAD를 먼저 확인한다.
+사용자 변경이 있는 checkout을 reset/stash/clean하지 않는다. 필요하면 새 worktree를 사용한다.
+실제 실행과 같은 인자에 `--preflight`만 추가한다.
+
+```powershell
+git fetch origin
+git rev-parse HEAD
+git status --short
+
+.\.venv32\Scripts\python.exe collector\kiwoom\kiwoom_universe_logger.py `
+  --storage raw-v2 `
+  --capture-telemetry `
+  --fid-read-ab-test `
+  --duration-seconds 90 `
+  --preflight
+```
+
+정상 JSON은 최소한 `python_bits=32`, `login_attempted=false`, `ocx_instantiated=false`,
+`ocx_registered=true`, `ocx_file_exists=true`, `ready=true`를 만족해야 한다.
+`ready=true`는 로그인 성공·Mock 서버 가용성·실시간 수신·저장 여유를 인증하지 않는다.
+실행 직전 프로젝트 볼륨의 free bytes도 기록한다. 코드 admission 하한은 256 MiB지만
+그 하한 통과만으로 90초 전종목 raw에 충분한 공간이라고 일반화하지 않는다.
+
+### 3. 실행 직전 차단 조건
+
+아래 하나라도 충족하면 **로그인하지 않고 중단**한다.
+
+- checkout HEAD가 승인된 PR #24 HEAD와 다르거나 working tree가 깨끗하지 않다.
+- 32비트 Python/OCX preflight가 실패한다.
+- 다른 `kiwoom_universe_logger.py` collector가 살아 있거나 기존 OCX/Runtime 오류 상태 종료가 미확인이다.
+- collector lease를 안전하게 획득할 조건이 불명확하다. lock 파일 존재만으로 생존/종료를 단정하지 않는다.
+- 공식 거래일/시장 구간이 확인되지 않았거나 목표 정규장 구간 밖이다.
+- 저장 볼륨 여유가 코드 admission 하한보다 작다.
+- 기존 운영 raw/dump/operations_state를 삭제·덮어써야만 실행할 수 있다.
+
+차단을 없애려고 자동 kill/restart/relogin, lock 삭제, Runtime 창 강제 종료, LAA 변경, queue 확대, 기본 FID 축소를 하지 않는다.
+
+### 4. 승인 후 실제 Mock 1회 실행
+
+사전점검과 당일 거래일/구간 확인이 통과한 경우에만 다음 **한 번의 독립 실행**을 사용한다.
+
+```powershell
+.\.venv32\Scripts\python.exe collector\kiwoom\kiwoom_universe_logger.py `
+  --storage raw-v2 `
+  --capture-telemetry `
+  --fid-read-ab-test `
+  --duration-seconds 90
+```
+
+추가하지 말아야 할 인자: `--codes`, `--nxt-codes`, `--managed-launch`, `--explicit-ocx-teardown`, 모든 `--aftermarket-*`.
+관측 서버가 Mock이 아니면 backend/구독 전에 실패해야 하며 live로 계속 진행하지 않는다.
+로그인 실패·구독 거부·FID 예외·queue/storage 오류가 나면 자동 재시도하지 않는다.
+
+### 5. 실행 후 기계적 성공과 실험 해석을 분리
+
+- raw manifest `feed_scope == "kiwoom_universe_fid_read_diagnostic"`
+- sidecar `fid_read_ab_test.json`은 `fid_read_ab_test_v2`, `diagnostic_only=true`, `research_eligible=false`
+- 최종 저장 snapshot의 closed/writer_closed, pending callback 0
+- raw/sidecar/telemetry/diagnostics의 session identity와 code revision 일치
+- sidecar `diagnostic_error`, FID read failure, queue/storage 오류 유무
+- A1/B/A2/POST별 callback·FID attempt/success 계수와 telemetry 표본
+- 저장 종료 뒤 collector PID·native Runtime 창·lease는 서로 독립 사실로 확인
+
+저장이 정상 종료돼도 phase별 callback이 없거나 표본이 부족하면 기계적 성공과 해석 가능성을 분리한다.
+A1/B/A2 callback 수를 30으로 나눈 값을 독립 정상상태 service rate로 부르지 않는다.
+POST는 분석에서 제외하되 버리지 않는다. FID clock difference를 network latency라고 부르지 않는다.
+정상 종료 뒤 PID/Runtime 창 잔류가 보이면 두 번째 실험을 시작하지 않는다.
+첫 실행 검토 전에는 live 비교·동시 두 계정 비교·반복 전종목 실행으로 자동 확대하지 않는다.
+
 ## 2026-09-17 설치된 공식 명세 대조
 
 `C:/OpenAPI/koa_devguide.xml`(CP949, 관측 당시 수정 시각 2026-09-12)의 다음 항목을 직접 확인했다.
