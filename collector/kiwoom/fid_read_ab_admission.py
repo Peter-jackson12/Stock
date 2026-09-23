@@ -116,6 +116,7 @@ def inspect_processes(repo_root: Path, *, own_pid: int | None = None) -> dict:
     own_pid = os.getpid() if own_pid is None else own_pid
     script = r"""
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $py = @(Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" |
   Select-Object ProcessId,Name,CommandLine,ExecutablePath)
 $windows = @(Get-Process | Where-Object { $_.MainWindowTitle } |
