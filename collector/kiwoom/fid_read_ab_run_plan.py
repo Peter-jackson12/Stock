@@ -89,19 +89,21 @@ def _require_ready_admission(admission: dict, *, expected_revision: str, now_kst
         )
 
 
-def build_run_plan(admission: dict, *, expected_revision: str, now_kst: datetime) -> dict:
-    if now_kst.utcoffset() != timedelta(hours=9):
-        raise FidReadRunPlanError("now_kst must use explicit UTC+09:00")
-    _require_ready_admission(admission, expected_revision=expected_revision, now_kst=now_kst)
-
-    inputs = admission["inputs"]
-    preflight = admission["checks"]["preflight"]
-    repo_root = Path(inputs["repo_root"]).resolve()
+def _manual_command_from_admission(admission: dict) -> tuple[str, list[str]]:
+    inputs = admission.get("inputs")
+    checks = admission.get("checks")
+    if not isinstance(inputs, dict) or not isinstance(checks, dict):
+        raise FidReadRunPlanError("complete admission inputs/checks required")
+    preflight = checks.get("preflight")
+    if not isinstance(preflight, dict):
+        raise FidReadRunPlanError("preflight evidence required")
+    python_executable = preflight.get("executable")
+    if not isinstance(python_executable, str) or not python_executable.strip():
+        raise FidReadRunPlanError("preflight executable missing")
+    repo_root = Path(inputs.get("repo_root", "")).resolve()
     collector = repo_root / "collector" / "kiwoom" / "kiwoom_universe_logger.py"
     if not collector.is_file():
         raise FidReadRunPlanError(f"collector entrypoint missing: {collector}")
-
-    python_executable = str(preflight["executable"])
     command = [
         python_executable,
         str(collector),
@@ -110,6 +112,15 @@ def build_run_plan(admission: dict, *, expected_revision: str, now_kst: datetime
         "--fid-read-ab-test",
         "--duration-seconds", "90",
     ]
+    return str(repo_root), command
+
+
+def build_run_plan(admission: dict, *, expected_revision: str, now_kst: datetime) -> dict:
+    if now_kst.utcoffset() != timedelta(hours=9):
+        raise FidReadRunPlanError("now_kst must use explicit UTC+09:00")
+    _require_ready_admission(admission, expected_revision=expected_revision, now_kst=now_kst)
+
+    working_directory, command = _manual_command_from_admission(admission)
     created = now_kst
     expires = created + timedelta(seconds=PLAN_TTL_SECONDS)
     return {
@@ -118,7 +129,7 @@ def build_run_plan(admission: dict, *, expected_revision: str, now_kst: datetime
         "expires_at_kst": expires.isoformat(),
         "ttl_seconds": PLAN_TTL_SECONDS,
         "expected_revision": expected_revision,
-        "working_directory": str(repo_root),
+        "working_directory": working_directory,
         "admission_sha256": admission_sha256(admission),
         "admission": admission,
         "manual_command": command,
@@ -242,17 +253,12 @@ def verify_plan_for_manual_command(
     if fresh.get("inputs", {}).get("expected_revision") != plan.get("expected_revision"):
         raise FidReadRunPlanError("fresh admission revision mismatch")
 
-    command = plan.get("manual_command")
-    if not isinstance(command, list) or not all(isinstance(x, str) and x for x in command):
-        raise FidReadRunPlanError("bounded manual command list required")
-    expected_tail = [
-        "--storage", "raw-v2",
-        "--capture-telemetry",
-        "--fid-read-ab-test",
-        "--duration-seconds", "90",
-    ]
-    if command[2:] != expected_tail:
-        raise FidReadRunPlanError("manual command contract mismatch")
+    fresh_working_directory, fresh_command = _manual_command_from_admission(fresh)
+    if plan.get("working_directory") != fresh_working_directory:
+        raise FidReadRunPlanError("working directory changed since plan creation")
+    if plan.get("manual_command") != fresh_command:
+        raise FidReadRunPlanError("manual command changed or no longer matches fresh admission")
+    command = fresh_command
 
     return {
         "schema": "fid_read_ab_run_plan_verification_v1",
