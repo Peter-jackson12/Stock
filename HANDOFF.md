@@ -74,13 +74,19 @@ PR #25의 bounded analyzer 위에서 `fid_read_ab_assessment_v1` 규칙을 별�
 실제 실행일에는 그 시점의 최종 PR 스택 HEAD를 다시 확인하고, 동일 revision에서 preflight를 재실행한 뒤
 `scripts/assess_fid_read_ab.py`로 bounded analyzer + 사전등록 판정을 함께 보존한다.
 
-## FID A-B-A 실행 당일 admission
+## FID A-B-A 실행 당일 admission과 short-lived plan
 
-`check_fid_read_ab_admission.py`는 로그인 전에 exact HEAD·clean tree·32비트 OCX preflight·
-free space·collector/Runtime 창·기존 lease·09:15~15:15 KST·사용자 1회 승인을 묶어
-`RUN_READY / RUN_BLOCKED / RUN_UNCERTAIN`으로 판정한다. 공식 거래일은 도구가 추정하지 않고
-컨트롤타워가 확인한 날짜·근거를 attestation으로 입력한다. 도구는 git fetch, OCX 생성/로그인,
-kill/restart, lock 삭제, raw scan을 하지 않는다. READY도 실제 수집 성공 인증은 아니다.
+`check_fid_read_ab_admission.py`는 exact HEAD·clean tree·32비트 OCX preflight·free space·
+collector/Runtime 창·lease·09:15~15:15 KST·사용자 1회 승인을 로그인 전에 읽기 전용으로 확인해
+`RUN_READY / RUN_BLOCKED / RUN_UNCERTAIN`을 낸다. 공식 거래일은 컨트롤타워가 확인한 날짜·근거를
+attestation으로 넣고 도구가 추정하지 않는다.
+
+READY 뒤에도 즉시 실행하지 않는다. `prepare_fid_read_ab_run.py`가 60초 이내 admission만 받아
+create-only plan을 만들고 5분 TTL을 둔다. `verify_fid_read_ab_run_plan.py`는 trusted exact SHA와
+fresh 실행 승인을 다시 요구하고 admission을 재실행한다. 그때도 READY면 fresh Python/worktree에서
+exact collector 명령을 재계산해 plan과 일치할 때만 **수동 실행용 명령을 표시**한다.
+prepare/verify는 git fetch, OCX 생성/로그인, collector launch, kill/restart, lock 삭제, raw scan을 하지 않는다.
+READY/MANUAL_COMMAND_READY도 실제 수집 성공·서버 가용성·native 안정성을 인증하지 않는다.
 
 ## 2026-09-23 FID A-B-A 로컬 preflight — 사용자 전달 보고
 
