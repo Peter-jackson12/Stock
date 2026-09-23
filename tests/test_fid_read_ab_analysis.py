@@ -204,6 +204,8 @@ def test_clean_complete_session_is_analysis_ready_without_raw_access(tmp_path):
     assert report["capture"]["writer_closed"] is True
     assert report["diagnostic"]["research_eligible"] is False
     assert report["telemetry"]["by_phase"][PHASE_B]["fid_call_count"]["median"] == 3
+    assert report["telemetry"]["by_phase_real_type"][PHASE_B]["주식체결"]["fid_call_count"]["median"] == 3
+    assert report["telemetry"]["by_phase_real_type"][PHASE_B]["주식호가잔량"]["samples"] == 0
     assert report["resources"]["max_peak_commit"] == 280
     assert "raw database was not opened or scanned" in report["notes"]
     assert not raw.exists()
