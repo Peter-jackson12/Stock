@@ -62,6 +62,15 @@ from collector.kiwoom.tick_writer import TickWriter  # noqa: E402
 from collector.kiwoom.live_capture import LiveRawCapture, TRADE_FIDS, QUOTE_FIDS  # noqa: E402
 from collector.kiwoom.ocx_teardown import OcxTeardown, record_phase  # noqa: E402
 from collector.kiwoom.capture_telemetry import CaptureTelemetry, observe  # noqa: E402
+from collector.kiwoom.fid_read_ab_diagnostic import (  # noqa: E402
+    DURATION_SECONDS as FID_AB_DURATION_SECONDS,
+    FEED_SCOPE_DIAGNOSTIC,
+    RESOURCE_INTERVAL_SEC as FID_AB_RESOURCE_INTERVAL_SEC,
+    SIDECAR_NAME as FID_AB_SIDECAR_NAME,
+    FidReadAbController,
+    sidecar_payload as fid_ab_sidecar_payload,
+    validate_cli_combination as validate_fid_ab_cli,
+)
 
 
 class KiwoomUniverseLogger:
@@ -84,6 +93,7 @@ class KiwoomUniverseLogger:
         aftermarket_transition_after_seconds=None,
         explicit_ocx_teardown=False,
         capture_telemetry=False,
+        fid_read_ab_test=False,
     ):
         if storage not in ("raw-v1", "raw-v2"):
             raise ValueError("unsupported storage backend")
@@ -93,14 +103,27 @@ class KiwoomUniverseLogger:
             raise ValueError("explicit OCX teardown is not verified for session transitions")
         if type(capture_telemetry) is not bool:
             raise ValueError("capture telemetry flag must be bool")
+        if type(fid_read_ab_test) is not bool:
+            raise ValueError("fid-read-ab-test flag must be bool")
         if capture_telemetry and (storage != "raw-v2" or aftermarket_plan is not None):
             raise ValueError("capture telemetry supports a single raw-v2 session only")
+        if fid_read_ab_test:
+            err = validate_fid_ab_cli(
+                enabled=True, storage=storage, capture_telemetry=capture_telemetry,
+                codes=codes, plan=plan, aftermarket_given=aftermarket_plan is not None,
+                explicit_ocx_teardown=explicit_ocx_teardown,
+                duration_seconds=duration_seconds, managed_launch=managed is not None)
+            if err:
+                raise ValueError(err)
         self.storage = storage
         self.managed = managed
         self.diagnostics = diagnostics
         self.code_revision = code_revision or subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, text=True, timeout=3).strip()
         self.codes, self.duration_seconds = codes, duration_seconds
+        self.fid_read_ab_test = fid_read_ab_test
+        self._fid_ab = FidReadAbController(monotonic=None) if fid_read_ab_test else None
+        # monotonic wired after self._monotonic is set below
         # 구독 계획. None 이면 기존 정규장 경로 그대로다 — 접미사 허용은 계획이 있을 때만이다.
         self.plan = plan
         # 애프터마켓 전환은 **명시적으로 계획을 넘길 때만** 준비된다. 기본은 전환 없음이다.
@@ -116,6 +139,8 @@ class KiwoomUniverseLogger:
         self._transition_record_path = None
         self._transition_active = False
         self._monotonic = time.monotonic
+        if self._fid_ab is not None:
+            self._fid_ab._monotonic = self._monotonic
         self._kst_now = lambda: datetime.now(KST)
         self._last_received_monotonic = None
         self._last_received_utc = None
@@ -457,7 +482,23 @@ class KiwoomUniverseLogger:
                     raise ValueError(f"unknown server flag: {flag!r}")
                 if self.managed is not None and server != self.managed.plan["server"]:
                     raise ValueError("observed server does not match requested server")
-                self.raw_capture = LiveRawCapture(PROJECT_ROOT, server=server, code_revision=self.code_revision)
+                # Mock-only guard for FID A-B-A: refuse live before any subscription.
+                if self.fid_read_ab_test and server != "mock":
+                    raise ValueError(
+                        "fid-read-ab-test is mock-only; refusing live server before subscription")
+                lrc_kwargs = {}
+                if self.fid_read_ab_test:
+                    lrc_kwargs["feed_scope"] = FEED_SCOPE_DIAGNOSTIC
+                    lrc_kwargs["fid_read_ab"] = self._fid_ab
+                self.raw_capture = LiveRawCapture(
+                    PROJECT_ROOT, server=server, code_revision=self.code_revision, **lrc_kwargs)
+                if self.fid_read_ab_test:
+                    sidecar = self.raw_capture.directory / FID_AB_SIDECAR_NAME
+                    payload = fid_ab_sidecar_payload(
+                        code_revision=self.code_revision, intended_server="mock")
+                    sidecar.write_text(
+                        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                    self.log.emit(f"📝 FID A-B-A diagnostic sidecar: {sidecar}")
                 if self.telemetry is not None:
                     bound = observe(self.telemetry, "bind", self.raw_capture.directory,
                                     session_id=self.raw_capture.identity.session_id,
@@ -471,8 +512,10 @@ class KiwoomUniverseLogger:
                 self.db_path = self.raw_capture.path
                 self.log.emit(f"📁 raw v2 저장 파일: {self.db_path}")
                 self.log.emit(f"📝 세션 상태: {self.raw_capture.directory / 'status.json'}")
+                rh_interval = FID_AB_RESOURCE_INTERVAL_SEC if self.fid_read_ab_test else 60.0
                 self.resources = ResourceHistory(
-                    self.raw_capture.directory / "resource_history.jsonl", clock=time.monotonic)
+                    self.raw_capture.directory / "resource_history.jsonl",
+                    clock=time.monotonic, interval_sec=rh_interval)
                 self.resources.sample(force=True)
                 if self.plan is not None:
                     # 목록 근거·시장 프로필·구독 원문을 세션에 남긴다. 상태 파일과 달리 덮어쓰지 않는다.
@@ -499,6 +542,8 @@ class KiwoomUniverseLogger:
         try:
             self._register_all_universe()
             self._subscribed_at = self._monotonic()
+            if self._fid_ab is not None:
+                self._fid_ab.mark_subscribed(self._subscribed_at)
             self.monitor.mark_reception_expected()
         except Exception as exc:
             self.log.emit(f"❌ 실시간 등록 실패: {exc}")
@@ -970,6 +1015,20 @@ class KiwoomUniverseLogger:
         self.log.emit("💾 수신을 멈추고 남은 체결/호가의 DB 커밋을 기다립니다.")
         self._phase("storage_finish_enter", storage=self.storage)
         if self.storage == "raw-v2":
+            if self._fid_ab is not None and self.raw_capture is not None:
+                try:
+                    sidecar = self.raw_capture.directory / FID_AB_SIDECAR_NAME
+                    if sidecar.is_file():
+                        import json as _json
+                        data = _json.loads(sidecar.read_text(encoding="utf-8"))
+                        data["phase_counters"] = self._fid_ab.snapshot()
+                        data["shutdown_reason"] = str(reason)[:256]
+                        temporary = sidecar.with_suffix(".tmp")
+                        temporary.write_text(
+                            _json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+                        temporary.replace(sidecar)
+                except Exception as exc:
+                    self.log.emit(f"⚠️ FID A-B-A sidecar counter flush failed: {exc}")
             command = self.managed.stop[1] if self.managed is not None and self.managed.stop else None
             clean = self.raw_capture is not None and self.raw_capture.finish(reason, command=command)
             self._phase("storage_finish_returned", clean=bool(clean))
@@ -1040,6 +1099,9 @@ def parse_collector_args(argv=None):
                         help="선택적 종료 순서 실측: 워커 종료 후 Qt 스레드에서 ActiveX clear. 기본 꺼짐")
     parser.add_argument("--capture-telemetry", action="store_true",
                         help="단일 raw-v2의 저빈도 폴링/기존 FID 시각 진단. 기본 꺼짐, 추가 OCX 조회 없음")
+    parser.add_argument("--fid-read-ab-test", action="store_true",
+                        help="진단 전용: 전종목 Mock FID read A-B-A (30s FULL / 30s ESSENTIAL / 30s FULL). "
+                             "기본 꺼짐. research 비적격. 실제 시장 실행은 별도 승인 후")
     parser.add_argument("--managed-launch", help=argparse.SUPPRESS)
     nxt = parser.add_argument_group(
         "NXT 구독 계획", "명시적 NXT 모드. 독립 raw-v2 검증 실행이며 제한 시간이 필요하다")
@@ -1095,7 +1157,7 @@ def parse_collector_args(argv=None):
     elif any((args.list_origin is not None, args.list_verified_at is not None, args.nxt_eligibility_confirmed,
               args.list_note is not None, args.market_profile is not None)):
         parser.error("목록 근거 인자는 --nxt-codes 와 함께 써야 한다")
-    if args.duration_seconds is not None and plan is None and (
+    if args.duration_seconds is not None and plan is None and not getattr(args, "fid_read_ab_test", False) and (
             codes is None or not 1 <= args.duration_seconds <= 300):
         parser.error("--duration-seconds requires --codes and 1..300 seconds")
     aftermarket_plan = None
@@ -1138,6 +1200,15 @@ def parse_collector_args(argv=None):
                 note=args.aftermarket_list_note)
         except ValueError as exc:
             parser.error(str(exc))
+    if getattr(args, "fid_read_ab_test", False):
+        err = validate_fid_ab_cli(
+            enabled=True, storage=args.storage, capture_telemetry=args.capture_telemetry,
+            codes=codes, plan=plan, aftermarket_given=aftermarket_given,
+            explicit_ocx_teardown=args.explicit_ocx_teardown,
+            duration_seconds=args.duration_seconds,
+            managed_launch=bool(args.managed_launch))
+        if err:
+            parser.error(err)
     if args.managed_launch and (codes or args.duration_seconds is not None or args.storage != "raw-v2"):
         parser.error("managed launch uses its stored plan only")
     return (args, codes, plan, aftermarket_plan, aftermarket_duration_seconds,
@@ -1172,7 +1243,8 @@ if __name__ == "__main__":
                 aftermarket_transition_at=aftermarket_transition_at,
                 aftermarket_transition_after_seconds=aftermarket_transition_after_seconds,
                 explicit_ocx_teardown=args.explicit_ocx_teardown,
-                capture_telemetry=args.capture_telemetry)
+                capture_telemetry=args.capture_telemetry,
+                fid_read_ab_test=getattr(args, "fid_read_ab_test", False))
             logger.start()
         except KeyboardInterrupt:
             if logger is not None:
