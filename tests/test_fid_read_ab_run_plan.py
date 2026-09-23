@@ -129,6 +129,20 @@ def test_stale_admission_cannot_create_plan(tmp_path, age):
         build_run_plan(admission, expected_revision=REV, now_kst=now)
 
 
+def test_ready_label_is_revalidated_for_process_and_market_contracts(tmp_path):
+    now = datetime(2026, 9, 28, 10, 0, 20, tzinfo=KST)
+    admission = ready_admission(tmp_path, observed=now)
+    admission["checks"]["processes"]["collector_processes"] = [{"pid": 999}]
+    with pytest.raises(FidReadRunPlanError, match="process state"):
+        build_run_plan(admission, expected_revision=REV, now_kst=now)
+
+    admission = ready_admission(tmp_path / "market", observed=now)
+    admission["inputs"]["official_market_date"] = "2026-09-27"
+    admission["checks"]["market_attestation"]["date"] = "2026-09-27"
+    with pytest.raises(FidReadRunPlanError, match="market date"):
+        build_run_plan(admission, expected_revision=REV, now_kst=now)
+
+
 def test_plan_is_create_only_and_round_trips(tmp_path):
     now = datetime(2026, 9, 28, 10, 0, 20, tzinfo=KST)
     admission = ready_admission(tmp_path, observed=now)
@@ -284,7 +298,12 @@ def test_prepare_cli_creates_plan_only_for_ready_admission(tmp_path, monkeypatch
     import scripts.prepare_fid_read_ab_run as script
 
     root = make_repo(tmp_path)
-    now = datetime.now(KST)
+    now = datetime(2026, 9, 28, 10, 0, 20, tzinfo=KST)
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now if tz is not None else now.replace(tzinfo=None)
+    monkeypatch.setattr(script, "datetime", FixedDatetime)
     admission = ready_admission(tmp_path / "fixture", observed=now)
     admission["inputs"]["repo_root"] = str(root.resolve())
     admission["checks"]["preflight"]["executable"] = sys.executable
