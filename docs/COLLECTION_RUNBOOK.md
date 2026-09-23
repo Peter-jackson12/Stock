@@ -59,6 +59,39 @@ git status --short
 
 차단을 없애려고 자동 kill/restart/relogin, lock 삭제, Runtime 창 강제 종료, LAA 변경, queue 확대, 기본 FID 축소를 하지 않는다.
 
+### 3-1. 당일 admission checker
+
+위 수동 차단 조건을 한 번에 정리하기 위해 `scripts/check_fid_read_ab_admission.py`를 사용한다.
+이 도구는 OCX를 만들거나 로그인하지 않고, raw DB도 열지 않는다. Git fetch도 수행하지 않으므로
+컨트롤타워/운영자가 **직전에 원격을 확인해 전달한 exact SHA**를 `--expected-revision`으로 넣는다.
+
+공식 거래일 여부는 이 로컬 도구가 인터넷 없이 추정하지 않는다. 컨트롤타워가 당일 공식 KRX 근거를
+확인한 뒤 그 날짜와 근거 메모를 명시적으로 전달한다. `--execution-approved`는 사용자가 그 1회 실행을
+명시적으로 승인한 뒤에만 붙인다.
+
+```powershell
+C:\Projects\Stock\.venv32\Scripts\python.exe scripts\check_fid_read_ab_admission.py `
+  --repo-root <PR 스택의 clean 실행 worktree> `
+  --expected-revision <컨트롤타워가 방금 확인한 정확한 SHA> `
+  --official-market-date YYYY-MM-DD `
+  --official-market-source-note "<확인한 공식 KRX 근거와 시각>" `
+  --execution-approved
+```
+
+판정:
+
+- `RUN_READY` — 현재 관측 시점의 로그인 전 계약이 모두 충족됨. 실제 수집 성공 인증은 아님.
+- `RUN_BLOCKED` — wrong HEAD/dirty tree/preflight 실패/저장공간 하한/collector 또는 Runtime 창/
+  lease 미확인/시장 날짜·09:15~15:15 구간/승인 중 하나라도 차단.
+- `RUN_UNCERTAIN` — process probe 실패 또는 같은 `.venv32` Python의 다른 프로세스처럼
+  안전하게 정체를 확정하지 못한 상태. 실제 로그인 금지.
+
+프로세스 탐색은 checker 자신의 PID를 제외한다. 다른 `kiwoom_universe_logger.py`는 BLOCKED,
+같은 32비트 Python의 정체불명 프로세스는 UNCERTAIN이다. 기존 lease 파일은 새로 만들거나 삭제하지 않고
+존재할 때만 잠금 가능 여부를 순간 확인한다. 파일이 없으면 실제 collector가 실행 시 다시 lease를 획득한다.
+
+`RUN_READY`라도 서버 가용성·실시간 수신·native 안정성·실험 성공은 미인증이다.
+
 ### 4. 승인 후 실제 Mock 1회 실행
 
 사전점검과 당일 거래일/구간 확인이 통과한 경우에만 다음 **한 번의 독립 실행**을 사용한다.
