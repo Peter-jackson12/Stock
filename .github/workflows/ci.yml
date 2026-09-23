@@ -1,100 +1,56 @@
-name: CI
+name: FID chain independent failure audit
 
+# 감사 전용 branch: full CI를 대체하는 병합 후보가 아니다. push 중복 실행 없음.
 on:
-  push:
   pull_request:
+    branches: [audit/fid-read-aba-run-plan-20260923]
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: fid-chain-audit-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  git-only-tests:
-    name: Git-only tests (Windows, Python 3.14)
+  failure-injection:
+    name: Frozen PR28 fail-closed audit (synthetic only)
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 8
     env:
       PYTHONUTF8: "1"
+      AUDIT_SOURCE: c156108c269ffec55fc1bf7c843397d56781f112
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - name: Confirm frozen production source
+        run: |
+          git rev-parse HEAD
+          git diff --exit-code $env:AUDIT_SOURCE HEAD -- collector scripts engine control_tower
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
         with:
           version: "0.12.5"
           python-version: "3.14"
           enable-cache: false
-      - name: Install locked dependencies
+      - name: Install existing locked environment
         run: uv sync --locked --group dev --python 3.14
-      - name: Audit protected synthetic clone and failure preservation
+      - name: Assert independent safety contracts (failures remain failures)
         timeout-minutes: 2
         run: |
-          uv run --locked --offline python -c "import platform,sqlite3; print('CLONE_ENV', platform.platform(), platform.python_version(), sqlite3.sqlite_version)"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          uv run --locked --offline python -m pytest -q -s -ra tests/test_raw_v2_clone_lab.py
-          $testExit = $LASTEXITCODE
-          if ($testExit -ne 0) {
-            Get-ChildItem -Path "$env:TEMP/Stock_raw_sidecar_lab_*/clone_*/result.json" -File -ErrorAction SilentlyContinue | Select-Object -First 64 | ForEach-Object {
-              if ($_.Length -le 131072) {
-                try {
-                  $report = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
-                  if ($report.status -eq 'failed') {
-                    Write-Output ("CLONE_FAILURE " + $_.FullName + " " + $report.error)
-                    Write-Output ("CLONE_SOURCE_CHECK " + $report.source_verification_error.summary)
-                  }
-                } catch { Write-Output ("CLONE_REPORT_UNREADABLE " + $_.FullName) }
-              }
-            }
+          uv run --locked --offline python -m pytest -q -s --tb=line -ra tests/test_fid_chain_fail_closed_audit.py --junitxml="$env:RUNNER_TEMP/fid-chain-audit.xml"
+          exit $LASTEXITCODE
+      - name: Summarize actual audit outcomes
+        if: always()
+        run: |
+          $p = "$env:RUNNER_TEMP/fid-chain-audit.xml"
+          if (Test-Path -LiteralPath $p) {
+            [xml]$j = Get-Content -LiteralPath $p -Raw
+            $s = $j.testsuites.testsuite
+            Write-Output ("AUDIT_COUNTS tests=" + $s.tests + " failures=" + $s.failures + " errors=" + $s.errors + " skipped=" + $s.skipped)
+          } else {
+            Write-Output "AUDIT_COUNTS unavailable: no completed pytest report"
           }
-          exit $testExit
-      - name: Audit telemetry sampling and raw noninterference
-        timeout-minutes: 2
-        run: >-
-          uv run --locked --offline python -m pytest -q -ra
-          tests/test_capture_telemetry.py tests/test_collector_diagnostics_integration.py
-      - name: Audit collector teardown boundaries
-        timeout-minutes: 2
-        run: >-
-          uv run --locked --offline python -m pytest -q -ra
-          tests/test_ocx_teardown.py tests/test_capture_diagnostics.py
-          tests/test_tick_collector_shutdown.py tests/test_live_collector.py
-      - name: Audit FID read diagnostic boundaries
-        timeout-minutes: 2
-        run: >-
-          uv run --locked --offline python -m pytest -q -ra
-          tests/test_fid_read_ab_diagnostic.py
-          tests/test_fid_read_ab_safety.py
-          tests/test_fid_read_ab_logger_safety.py
-          tests/test_fid_read_ab_analysis.py
-          tests/test_fid_read_ab_assessment.py
-          tests/test_fid_read_ab_admission.py
-          tests/test_fid_read_ab_run_plan.py
-      - name: Check collector syntax for Python 3.10
-        run: >-
-          uv run --locked --offline python -c
-          "import ast,pathlib,tokenize; [ast.parse(tokenize.open(p).read(), filename=str(p), feature_version=(3,10)) for p in pathlib.Path('collector/kiwoom').glob('*.py')]; print('Python 3.10 grammar: OK (not a 32-bit/native runtime test)')"
-      - name: Focus numerical and provenance failure boundaries
-        timeout-minutes: 2
-        run: >-
-          uv run --locked --offline python -m pytest -q -s -ra
-          tests/test_execution_metamorphic.py tests/test_execution_research_audit.py
-          tests/test_execution_contract_audit.py
-          -k "numeric or low_precision or provenance or null_raw_manifest or iterator_failure or prerun"
-      - name: Audit bounded execution oracle and metamorphic properties
-        timeout-minutes: 2
-        run: >-
-          uv run --locked --offline python -m pytest -q -s -ra --durations=5
-          tests/test_execution_oracle_audit.py tests/test_execution_metamorphic.py
-          tests/test_execution_research_audit.py tests/test_execution_contract_audit.py
-      - name: Run execution reality synthetic regressions
-        run: >-
-          uv run --locked --offline python -m pytest -ra
-          tests/test_reality_contract.py tests/test_tick_execution_boundaries.py
-          tests/test_tick_simulator.py tests/test_tick_research_run.py
-          tests/test_tick_receive_order.py tests/test_nxt_tick_research.py
-          tests/test_raw_v2.py tests/test_documentation.py
-      - name: Run Git-reproducible tests
-        run: uv run --locked --offline python -m pytest -ra
