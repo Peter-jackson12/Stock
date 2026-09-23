@@ -207,6 +207,14 @@ def validate_plan_integrity(plan: dict, *, now_kst: datetime) -> None:
         raise FidReadRunPlanError("fresh verification contract required")
 
 
+def powershell_command(command: list[str]) -> str:
+    if not isinstance(command, list) or not all(isinstance(item, str) and item for item in command):
+        raise FidReadRunPlanError("nonempty string command list required")
+    def quote(value: str) -> str:
+        return "'" + value.replace("'", "''") + "'"
+    return " ".join(quote(item) for item in command)
+
+
 def verify_plan_for_manual_command(
     plan: dict,
     *,
@@ -254,6 +262,7 @@ def verify_plan_for_manual_command(
         "fresh_admission": fresh,
         "working_directory": plan["working_directory"],
         "manual_command": command,
+        "manual_command_powershell": powershell_command(command),
         "automatic_execution": False,
         "note": (
             "The command is displayed for explicit manual execution only. "
