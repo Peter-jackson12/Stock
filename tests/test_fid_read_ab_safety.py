@@ -10,7 +10,7 @@ import pytest
 
 from collector.kiwoom.capture_telemetry import CaptureTelemetry
 from collector.kiwoom.fid_read_ab_diagnostic import (
-    FEED_SCOPE_DIAGNOSTIC, PHASE_PRE, PHASE_A1, PHASE_B, PHASE_A2,
+    FEED_SCOPE_DIAGNOSTIC, PHASE_PRE, PHASE_A1, PHASE_B, PHASE_A2, PHASE_POST,
     FidReadAbController, active_fids_for, sidecar_payload,
 )
 from collector.kiwoom.live_capture import LiveRawCapture, TRADE_FIDS, QUOTE_FIDS
@@ -182,6 +182,25 @@ def test_phase_is_fixed_for_entire_callback_even_when_clock_crosses_boundary(bef
     assert calls == list((20, 10, 15) if after < 60 else TRADE_FIDS)
 
 
+def test_post_90_tail_is_separate_from_a2_but_keeps_full_reads():
+    clock = [89.999]
+    capture = backend(clock[0])
+    capture.fid_read_ab._monotonic = lambda: clock[0]
+    calls = []
+    assert send(capture, lambda fid: calls.append(fid) or "raw")
+    assert calls == list(TRADE_FIDS)
+    clock[0] = 90.001
+    calls.clear()
+    assert send(capture, lambda fid: calls.append(fid) or "raw")
+    assert calls == list(TRADE_FIDS)
+    counters = capture.fid_read_ab.snapshot()
+    assert counters["trade_callbacks_by_phase"][PHASE_A2] == 1
+    assert counters["trade_callbacks_by_phase"][PHASE_POST] == 1
+    assert counters["fid_calls_by_phase"][PHASE_A2] == len(TRADE_FIDS)
+    assert counters["fid_calls_by_phase"][PHASE_POST] == len(TRADE_FIDS)
+    assert counters["a2_includes_shutdown_tail"] is False
+
+
 def test_pre_subscription_callback_stays_full():
     capture = backend(100)
     capture.fid_read_ab.subscribed_at = None
@@ -342,10 +361,16 @@ def test_ui_worker_rejects_diagnostic_header_before_scan_and_result(tmp_path, mo
     assert not (tmp_path / "research_runs").exists()
 
 
-def test_design_metadata_discloses_cost_coupling_and_tail():
+def test_design_metadata_discloses_cost_coupling_and_separates_tail():
     meta = sidecar_payload(code_revision="fixture")
+    assert meta["schema"] == "fid_read_ab_test_v2"
     assert meta["pure_com_cost_experiment"] is False
     assert "json_serialization" in meta["co_varying_costs"]
     assert meta["backlog_reset_between_phases"] is False
     assert meta["duration_is_shutdown_request_not_hard_cutoff"] is True
-    assert meta["phases"][PHASE_A2]["includes_shutdown_tail_after_nominal_end"] is True
+    assert meta["strict_phase_windows"] is True
+    assert meta["post_90s_callbacks_separated"] is True
+    assert meta["phases"][PHASE_A2]["analysis_window"] is True
+    assert meta["phases"][PHASE_A2]["includes_shutdown_tail_after_nominal_end"] is False
+    assert meta["phases"][PHASE_POST]["fid_set"] == "FULL"
+    assert meta["phases"][PHASE_POST]["analysis_window"] is False
