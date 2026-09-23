@@ -175,6 +175,8 @@ def test_fresh_ready_admission_recomputes_and_reveals_manual_command(tmp_path):
 
     result = verify_plan_for_manual_command(
         plan,
+        trusted_expected_revision=REV,
+        execution_approved_now=True,
         now_kst=now + timedelta(seconds=10),
         admission_runner=runner,
     )
@@ -197,6 +199,8 @@ def test_fresh_non_ready_admission_withholds_manual_command(tmp_path, fresh_stat
 
     result = verify_plan_for_manual_command(
         plan,
+        trusted_expected_revision=REV,
+        execution_approved_now=True,
         now_kst=now + timedelta(seconds=1),
         admission_runner=lambda *_a, **_k: fresh,
     )
@@ -234,6 +238,36 @@ def test_changed_working_directory_is_rejected(tmp_path):
             now_kst=now + timedelta(seconds=1),
             admission_runner=lambda *_a, **_k: fresh,
         )
+
+
+def test_plan_revision_must_match_fresh_trusted_revision(tmp_path):
+    now = datetime(2026, 9, 28, 10, 0, 20, tzinfo=KST)
+    admission = ready_admission(tmp_path, observed=now)
+    plan = build_run_plan(admission, expected_revision=REV, now_kst=now)
+    with pytest.raises(FidReadRunPlanError, match="trusted expected revision"):
+        verify_plan_for_manual_command(
+            plan,
+            trusted_expected_revision="other",
+            execution_approved_now=True,
+            now_kst=now + timedelta(seconds=1),
+            admission_runner=lambda *_a, **_k: admission,
+        )
+
+
+def test_fresh_execution_approval_is_required_to_reveal_command(tmp_path):
+    now = datetime(2026, 9, 28, 10, 0, 20, tzinfo=KST)
+    admission = ready_admission(tmp_path, observed=now)
+    plan = build_run_plan(admission, expected_revision=REV, now_kst=now)
+    result = verify_plan_for_manual_command(
+        plan,
+        trusted_expected_revision=REV,
+        execution_approved_now=False,
+        now_kst=now + timedelta(seconds=1),
+        admission_runner=lambda *_a, **_k: pytest.fail("fresh admission should not run without approval"),
+    )
+    assert result["status"] == "NOT_READY"
+    assert result["manual_command"] is None
+    assert result["fresh_admission"] is None
 
 
 def test_powershell_command_quotes_single_quotes_without_shell_execution():
@@ -299,6 +333,10 @@ def test_verify_cli_never_launches_collector_and_returns_verification(monkeypatc
         "manual_command": ["python", "collector.py"],
         "automatic_execution": False,
     })
-    code = script.main(["--plan", str(plan_file)])
+    code = script.main([
+        "--plan", str(plan_file),
+        "--expected-revision", REV,
+        "--execution-approved",
+    ])
     assert code == 0
     assert json.loads(capsys.readouterr().out)["automatic_execution"] is False
