@@ -268,3 +268,57 @@ def test_bounded_reader_rejects_oversized_status_without_touching_raw(tmp_path):
     with pytest.raises(FidReadAnalysisError, match="exceeds bounded size"):
         analyze_fid_read_ab_session(session)
     assert not raw.exists()
+
+def test_python_bits_and_v2_phase_contract_are_identity_evidence(tmp_path):
+    session, _ = make_session(tmp_path)
+    status = json.loads((session / "status.json").read_text(encoding="utf-8"))
+    status["identity"]["python_bits"] = 64
+    _write_json(session / "status.json", status)
+    sidecar = json.loads((session / "fid_read_ab_test.json").read_text(encoding="utf-8"))
+    sidecar["strict_phase_windows"] = False
+    sidecar["phase_counters"]["a2_includes_shutdown_tail"] = True
+    _write_json(session / "fid_read_ab_test.json", sidecar)
+    report = analyze_fid_read_ab_session(session)
+    assert report["result"] == RESULT_INVALID
+    ids = {i["id"] for i in report["issues"]}
+    assert {"python_bits", "phase_window_contract", "a2_tail_contract"} <= ids
+
+
+def test_closed_status_with_queue_accounting_conflict_is_incomplete(tmp_path):
+    session, _ = make_session(tmp_path)
+    status = json.loads((session / "status.json").read_text(encoding="utf-8"))
+    status["snapshot"]["queued"] = 1
+    status["snapshot"]["committed_callbacks"] -= 1
+    _write_json(session / "status.json", status)
+    report = analyze_fid_read_ab_session(session)
+    assert report["result"] == RESULT_INCOMPLETE
+    ids = {i["id"] for i in report["issues"]}
+    assert {"queued", "callback_commit_accounting"} <= ids
+
+
+def test_telemetry_samples_cannot_exceed_sidecar_callbacks(tmp_path):
+    session, _ = make_session(tmp_path)
+    rows = [
+        json.loads(line)
+        for line in (session / "capture_telemetry.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    a1 = next(s for s in rows[1]["samples"] if s["diagnostic_phase"] == PHASE_A1)
+    rows[1]["samples"].extend([dict(a1), dict(a1)])
+    _write_jsonl(session / "capture_telemetry.jsonl", rows)
+    report = analyze_fid_read_ab_session(session)
+    assert report["result"] == RESULT_INVALID
+    assert any(i["id"] == "telemetry_trade_accounting" for i in report["issues"])
+
+
+def test_resource_pid_mismatch_is_invalid(tmp_path):
+    session, _ = make_session(tmp_path)
+    rows = [
+        json.loads(line)
+        for line in (session / "resource_history.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    rows[-1]["pid"] = 999
+    _write_jsonl(session / "resource_history.jsonl", rows)
+    report = analyze_fid_read_ab_session(session)
+    assert report["result"] == RESULT_INVALID
+    assert any(i["id"] == "resource_pid" for i in report["issues"])
+
