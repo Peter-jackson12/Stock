@@ -172,7 +172,7 @@ def test_blocker_takes_precedence_over_uncertainty():
 
 
 def test_wrong_timezone_is_rejected_instead_of_silently_localized():
-    with pytest.raises(ValueError, match="UTC\+09"):
+    with pytest.raises(ValueError, match=r"UTC\+09"):
         assess(now_kst=datetime(2026, 9, 28, 1, 0, tzinfo=timezone.utc))
 
 

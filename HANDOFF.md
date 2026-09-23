@@ -42,6 +42,9 @@ CI는 감사 전용 workflow 대신 PR #28의 정상 CI로 복원하고 FID 집�
 - 명령줄에 collector 이름이 있는 비-collector 프로세스, 제목에 kiwoom/키움/OpenAPI가 있는 창(터미널·브라우저
   포함)도 보수적으로 BLOCKED다. 권한 밖 Python 프로세스는 UNCERTAIN으로 남아 실행을 막을 수 있다.
 - plan created를 60초 신선도 안에서 옮긴 경우는 구별하지 못한다(verify는 fresh admission을 다시 요구).
+- 컨트롤타워 R1(부모 PID·같은 executable만으로 launcher 제외)은 부모·checker 명령줄의 인자 일치라는
+  명시적 연결이 있을 때만 제외하도록 좁혔다. 명령줄 누락은 UNCERTAIN, 무관한 부모는 제외하지 않는다.
+  인자까지 같은 무관한 부모 프로세스는 구별하지 못한다.
 - 최종 후보를 별도 agent가 독립 재검토했다. READY 오발급 경로는 찾지 못했고, 지적된 정상 경로 차단
   (venv launcher 부모, 실행 경로 대소문자), CLI traceback, 엄격 타입 누락은 반영하고 회귀를 추가했다.
 - entrypoint 외 모듈의 ignored 파일 shadowing, `.pth`/sitecustomize 같은 import 환경은 범위 밖이다.

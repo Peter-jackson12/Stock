@@ -243,12 +243,51 @@ def _row_list(raw: dict, key: str, count_key: str):
     return rows
 
 
+def _command_tail(command_line) -> str | None:
+    """Arguments after the first (executable) token of a Windows command line."""
+    if not isinstance(command_line, str):
+        return None
+    text = command_line.strip()
+    if text.startswith('"'):
+        end = text.find('"', 1)
+        if end < 0:
+            return None
+        rest = text[end + 1:]
+    else:
+        parts = text.split(None, 1)
+        rest = parts[1] if len(parts) == 2 else ""
+    rest = rest.strip()
+    return rest or None
+
+
+def _is_own_launcher(item: dict, own_item, *, runtime_exes: set, norm, current_executable: str) -> bool:
+    """A uv/venv ``python.exe`` launcher re-runs the same arguments in its child (the checker).
+
+    Only that explicit link excuses the direct parent: its executable is the launcher
+    path, both command lines are readable, and their argument tails are identical.
+    Missing/empty/inaccessible command lines or an unrelated parent script never qualify.
+    """
+    executable = item.get("ExecutablePath")
+    if not isinstance(executable, str) or norm(executable) != norm(current_executable):
+        return False
+    if not isinstance(own_item, dict):
+        return False
+    own_executable = own_item.get("ExecutablePath")
+    if not isinstance(own_executable, str) or norm(own_executable) not in runtime_exes:
+        return False
+    parent_tail = _command_tail(item.get("CommandLine"))
+    own_tail = _command_tail(own_item.get("CommandLine"))
+    if parent_tail is None or own_tail is None or parent_tail != own_tail:
+        return False
+    return COLLECTOR_MARKER not in parent_tail.lower()
+
+
 def classify_process_rows(raw, *, own_pid: int, current_executable: str,
                           base_executable: str | None = None, own_parent_pid: int | None = None) -> dict:
     """Pure classification of process/window rows. Missing evidence is never absence.
 
-    A uv/venv ``python.exe`` is a launcher whose child runs the checker, so the direct
-    parent running the same launcher executable is the checker itself, not another process.
+    The direct parent is excluded only when it is provably this checker's own venv
+    launcher (see ``_is_own_launcher``); otherwise it is classified like any process.
     """
     if not isinstance(raw, dict):
         return _probe_gap(own_pid, "process probe did not return an object")
@@ -278,8 +317,9 @@ def classify_process_rows(raw, *, own_pid: int, current_executable: str,
             continue
         command_line = item.get("CommandLine")
         executable = item.get("ExecutablePath")
-        if pid == own_parent_pid and isinstance(executable, str) and norm(executable) == norm(current_executable) \
-                and not (isinstance(command_line, str) and COLLECTOR_MARKER in command_line.lower()):
+        if pid == own_parent_pid and _is_own_launcher(
+                item, rows.get(own_pid), runtime_exes=runtime_exes, norm=norm,
+                current_executable=current_executable):
             own_launcher = pid
             continue
         name = item.get("Name") if isinstance(item.get("Name"), str) else None

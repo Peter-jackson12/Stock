@@ -97,8 +97,10 @@ READY 판정은 `RUN_READY` 문자열이나 `valid`/`meets_code_minimum` 플래�
 엄격한 pure evaluator로 다시 계산한 결과다. 필수 필드 누락·타입 오류(bool을 숫자로 보지 않음)·내부 모순은
 READY가 아니다. prepare와 verify도 같은 evaluator로 재검증한다.
 
-프로세스 탐색은 checker 자신, 조회용 PowerShell, 그리고 checker를 띄운 venv launcher(직계 부모이며 같은
-`python.exe` 경로이고 collector marker가 없는 경우만)를 제외한다. 조회 결과는 목록과 개수가 함께 있어야
+프로세스 탐색은 checker 자신, 조회용 PowerShell, 그리고 checker를 띄운 venv launcher를 제외한다.
+launcher 제외는 직계 부모가 같은 venv `python.exe` 경로이고, 부모와 checker의 명령줄을 모두 읽을 수 있으며
+실행 파일 뒤 인자가 정확히 같을 때(launcher가 같은 인자로 자식을 띄운 근거)만 한다. 명령줄 누락·빈 값은
+UNCERTAIN, 무관한 부모 스크립트는 일반 같은-runtime 프로세스(UNCERTAIN), collector 부모는 BLOCKED다. 조회 결과는 목록과 개수가 함께 있어야
 하며, 명시적 빈 목록만 "없음"이다. 명령줄에 `kiwoom_universe_logger`가 있는 프로세스는 interpreter와
 script/`-m` module 형식에 관계없이 BLOCKED다(편집기 등도 보수적으로 차단). 임의 CommandLine 원문은
 출력하지 않고 일치 여부만 남긴다. 프로세스·창 조작은 하지 않는다. 기존 lease 파일은 새로 만들거나 삭제하지 않고

@@ -135,27 +135,69 @@ def test_probe_script_excludes_its_own_host_and_parses_without_running(monkeypat
     assert int(result.stdout.strip()) == 0
 
 
-def test_own_venv_launcher_parent_is_not_another_runtime_process(tmp_path):
-    # uv/venv python.exe는 launcher이고 checker는 그 자식이다(재검토 반례).
-    venv, base = "C:/Stock/.venv32/Scripts/python.exe", "C:/Python310-32/python.exe"
-    rows = raw_rows(py=[
-        {"ProcessId": 500, "Name": "python.exe", "CommandLine": "python scripts/check.py", "ExecutablePath": venv},
-        {"ProcessId": 501, "Name": "python.exe", "CommandLine": "python scripts/check.py", "ExecutablePath": base},
-        {"ProcessId": 777, "Name": "python.exe", "CommandLine": "python other.py", "ExecutablePath": base},
-    ])
-    proc = ad.classify_process_rows(rows, own_pid=501, current_executable=venv,
-                                    base_executable=base, own_parent_pid=500)
+VENV_EXE, BASE_EXE = "C:/Stock/.venv32/Scripts/python.exe", "C:/Python310-32/python.exe"
+CHECK_ARGS = "scripts/check_fid_read_ab_admission.py --token=do-not-print-this"
+# uv/venv python.exe는 launcher이고 checker(501)는 같은 인자를 받은 자식이다.
+OWN_ROW = {"ProcessId": 501, "Name": "python.exe", "ExecutablePath": BASE_EXE,
+           "CommandLine": f'"{BASE_EXE}" {CHECK_ARGS}'}
+LAUNCHER_ROW = {"ProcessId": 500, "Name": "python.exe", "ExecutablePath": VENV_EXE,
+                "CommandLine": f'"{VENV_EXE}" {CHECK_ARGS}'}
+
+
+def classify_parent(parent, *extra):
+    rows = raw_rows(py=[row for row in (parent, OWN_ROW, *extra) if row is not None])
+    return ad.classify_process_rows(rows, own_pid=501, current_executable=VENV_EXE,
+                                    base_executable=BASE_EXE, own_parent_pid=500)
+
+
+def test_own_venv_launcher_parent_positive_control(tmp_path):
+    proc = classify_parent(LAUNCHER_ROW)
     assert proc["own_launcher_pid_excluded"] == 500
-    assert [p["pid"] for p in proc["same_python_runtime_other_processes"]] == [777]
-    alone = ad.classify_process_rows(raw_rows(py=rows["python_processes"][:2]), own_pid=501,
-                                     current_executable=venv, base_executable=base, own_parent_pid=500)
-    assert evaluate(ready_admission(tmp_path), processes=alone)["status"] == ad.RUN_READY
-    # A parent that is itself a collector is never excused.
-    collector_parent = raw_rows(py=[{"ProcessId": 500, "Name": "python.exe", "ExecutablePath": venv,
-                                     "CommandLine": "python collector/kiwoom/kiwoom_universe_logger.py"}])
-    blocked = ad.classify_process_rows(collector_parent, own_pid=501, current_executable=venv,
-                                       base_executable=base, own_parent_pid=500)
-    assert [p["pid"] for p in blocked["collector_processes"]] == [500]
+    assert all(proc[name] == [] for name in ad.PROCESS_LISTS)
+    assert "do-not-print-this" not in json.dumps(proc)
+    assert evaluate(ready_admission(tmp_path), processes=proc)["status"] == ad.RUN_READY
+    # 부모가 아닌 같은-runtime 프로세스는 기존대로 UNCERTAIN이다.
+    other = {"ProcessId": 777, "Name": "python.exe", "CommandLine": "python other.py", "ExecutablePath": BASE_EXE}
+    with_other = classify_parent(LAUNCHER_ROW, other)
+    assert with_other["own_launcher_pid_excluded"] == 500
+    report = evaluate(ready_admission(tmp_path / "other"), processes=with_other)
+    assert report["status"] == ad.RUN_UNCERTAIN and ids(report) == {"same_python_runtime"}
+
+
+@pytest.mark.parametrize("change,expected_status,expected_id", [
+    ({"CommandLine": None}, ad.RUN_UNCERTAIN, "unidentified_python"),
+    ({"CommandLine": ""}, ad.RUN_UNCERTAIN, "unidentified_python"),
+    ({"CommandLine": "   "}, ad.RUN_UNCERTAIN, "unidentified_python"),
+    ({"CommandLine": f'"{VENV_EXE}" unrelated_worker.py'}, ad.RUN_UNCERTAIN, "same_python_runtime"),
+    ({"CommandLine": "python unrelated_worker.py"}, ad.RUN_UNCERTAIN, "same_python_runtime"),
+    ({"CommandLine": f'"{VENV_EXE}"'}, ad.RUN_UNCERTAIN, "same_python_runtime"),
+    ({"CommandLine": f'"{VENV_EXE}" -m collector.kiwoom.kiwoom_universe_logger'},
+     ad.RUN_BLOCKED, "collector_process"),
+], ids=["none", "empty", "blank", "unrelated_quoted", "unrelated_plain", "no_arguments", "collector"])
+def test_parent_is_excluded_only_with_explicit_launcher_link(tmp_path, change, expected_status, expected_id):
+    # 정상 fixture에서 부모 row의 CommandLine만 바꾼다. Git/시간/승인 등 나머지는 READY 조건이다.
+    proc = classify_parent({**LAUNCHER_ROW, **change})
+    assert proc["own_launcher_pid_excluded"] is None
+    report = evaluate(ready_admission(tmp_path), processes=proc)
+    assert report["status"] == expected_status
+    assert ids(report) == {expected_id}
+    assert "do-not-print-this" not in json.dumps(proc)
+
+
+@pytest.mark.parametrize("variant", ["own_row_missing", "own_command_unreadable", "parent_other_executable"])
+def test_launcher_link_requires_both_readable_rows_and_launcher_path(tmp_path, variant):
+    parent, own = dict(LAUNCHER_ROW), dict(OWN_ROW)
+    if variant == "parent_other_executable":
+        parent["ExecutablePath"] = "C:/elsewhere/python.exe"
+    elif variant == "own_command_unreadable":
+        own["CommandLine"] = None
+    rows = raw_rows(py=[parent] if variant == "own_row_missing" else [parent, own])
+    proc = ad.classify_process_rows(rows, own_pid=501, current_executable=VENV_EXE,
+                                    base_executable=BASE_EXE, own_parent_pid=500)
+    assert proc["own_launcher_pid_excluded"] is None
+    # parent_other_executable: 읽을 수 있는 무관한 Python은 기존 계약대로 runtime 목록에 들지 않는다.
+    if variant != "parent_other_executable":
+        assert evaluate(ready_admission(tmp_path), processes=proc)["status"] == ad.RUN_UNCERTAIN
 
 
 def test_git_timeout_is_an_oserror_for_the_cli(monkeypatch, tmp_path):
