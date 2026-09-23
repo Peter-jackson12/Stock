@@ -82,7 +82,8 @@ collector/Runtime 창·lease·09:15~15:15 KST·사용자 1회 승인을 로그�
 attestation으로 넣고 도구가 추정하지 않는다.
 
 READY 뒤에도 즉시 실행하지 않는다. `prepare_fid_read_ab_run.py`가 60초 이내 admission만 받아
-create-only plan을 만들고 5분 TTL을 둔다. `verify_fid_read_ab_run_plan.py`는 trusted exact SHA와
+gitignored `operations_state/fid_read_ab_run_plans/`에 create-only plan을 만들고 5분 TTL을 둔다.
+`verify_fid_read_ab_run_plan.py`는 trusted exact SHA와
 fresh 실행 승인을 다시 요구하고 admission을 재실행한다. 그때도 READY면 fresh Python/worktree에서
 exact collector 명령을 재계산해 plan과 일치할 때만 **수동 실행용 명령을 표시**한다.
 prepare/verify는 git fetch, OCX 생성/로그인, collector launch, kill/restart, lock 삭제, raw scan을 하지 않는다.
