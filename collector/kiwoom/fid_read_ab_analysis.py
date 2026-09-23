@@ -170,6 +170,15 @@ def _counter_summary(sidecar: dict, status: dict, issues: list[dict]) -> dict | 
                 "reason": phase,
             })
 
+    if counters.get("subscribed_at_set") is not True:
+        issues.append({"severity": "invalid", "id": "subscribed_at_set", "reason": str(counters.get("subscribed_at_set"))})
+    if counters.get("a2_includes_shutdown_tail") is not False:
+        issues.append({"severity": "invalid", "id": "a2_tail_contract", "reason": str(counters.get("a2_includes_shutdown_tail"))})
+    if counters.get("post_90s_phase") != PHASE_POST:
+        issues.append({"severity": "invalid", "id": "post_phase_contract", "reason": str(counters.get("post_90s_phase"))})
+    if counters.get("counter_scope") != "callback_read_attempts_not_accepted_or_committed":
+        issues.append({"severity": "invalid", "id": "counter_scope", "reason": str(counters.get("counter_scope"))})
+
     if counters.get("diagnostic_error") not in (None, ""):
         issues.append({
             "severity": "diagnostic",
@@ -193,12 +202,31 @@ def _counter_summary(sidecar: dict, status: dict, issues: list[dict]) -> dict | 
 
     accepted = status.get("snapshot", {}).get("accepted_callbacks")
     sidecar_callbacks = sum(trade.values()) + sum(quote.values())
-    if type(accepted) is int and status.get("snapshot", {}).get("dropped_callbacks") == 0 and not sum(failures.values()):
-        if accepted != sidecar_callbacks:
+    clean_callback_accounting = (
+        type(accepted) is int
+        and status.get("snapshot", {}).get("dropped_callbacks") == 0
+        and not sum(failures.values())
+    )
+    if clean_callback_accounting and accepted != sidecar_callbacks:
+        issues.append({
+            "severity": "invalid",
+            "id": "callback_accounting",
+            "reason": f"status={accepted},sidecar={sidecar_callbacks}",
+        })
+    if clean_callback_accounting:
+        received_trade = status.get("received_trade_callbacks")
+        received_quote = status.get("received_quote_callbacks")
+        if received_trade != sum(trade.values()):
             issues.append({
                 "severity": "invalid",
-                "id": "callback_accounting",
-                "reason": f"status={accepted},sidecar={sidecar_callbacks}",
+                "id": "trade_callback_accounting",
+                "reason": f"status={received_trade},sidecar={sum(trade.values())}",
+            })
+        if received_quote != sum(quote.values()):
+            issues.append({
+                "severity": "invalid",
+                "id": "quote_callback_accounting",
+                "reason": f"status={received_quote},sidecar={sum(quote.values())}",
             })
 
     return {
@@ -294,11 +322,22 @@ def _resource_summary(rows: list[dict] | None, *, pid: int | None, issues: list[
         issues.append({"severity": "limited", "id": "resource_history", "reason": "missing_or_empty"})
         return {"present": False, "samples": 0}
     mismatched = 0
+    malformed = 0
     for row in rows:
         if pid is not None and row.get("pid") != pid:
             mismatched += 1
+        metrics = ("working_set", "peak_working_set", "commit", "peak_commit")
+        if (
+            type(row.get("pid")) is not int
+            or not isinstance(row.get("at_utc"), str)
+            or not row.get("at_utc")
+            or any(type(row.get(name)) is not int or row.get(name) < 0 for name in metrics)
+        ):
+            malformed += 1
     if mismatched:
         issues.append({"severity": "invalid", "id": "resource_pid", "reason": f"{mismatched}_mismatched_rows"})
+    if malformed:
+        issues.append({"severity": "invalid", "id": "resource_shape", "reason": f"{malformed}_malformed_rows"})
     return {
         "present": True,
         "samples": len(rows),
@@ -364,6 +403,8 @@ def analyze_fid_read_ab_session(session_dir: Path, *, expected_revision: str | N
         issues.append({"severity": "invalid", "id": "feed_scope", "reason": "diagnostic_scope_required"})
     if identity.get("server") != "mock":
         issues.append({"severity": "invalid", "id": "server", "reason": str(identity.get("server"))})
+    if identity.get("python_bits") != 32:
+        issues.append({"severity": "invalid", "id": "python_bits", "reason": str(identity.get("python_bits"))})
     if snapshot.get("session_id") != session_id:
         issues.append({"severity": "invalid", "id": "snapshot_session", "reason": "session_id_mismatch"})
     if snapshot.get("dataset_path") != identity.get("dataset_path"):
@@ -379,12 +420,46 @@ def analyze_fid_read_ab_session(session_dir: Path, *, expected_revision: str | N
         issues.append({"severity": "invalid", "id": "sidecar_scope", "reason": str(sidecar.get("feed_scope"))})
     if revision and sidecar.get("code_revision") != revision:
         issues.append({"severity": "invalid", "id": "sidecar_revision", "reason": "code_revision_mismatch"})
+    if sidecar.get("intended_server") != "mock":
+        issues.append({"severity": "invalid", "id": "sidecar_server", "reason": str(sidecar.get("intended_server"))})
+    if sidecar.get("strict_phase_windows") is not True or sidecar.get("post_90s_callbacks_separated") is not True:
+        issues.append({"severity": "invalid", "id": "phase_window_contract", "reason": "v2_phase_contract_required"})
+    phase_meta = sidecar.get("phases")
+    if not isinstance(phase_meta, dict):
+        issues.append({"severity": "invalid", "id": "phase_metadata", "reason": "missing_or_not_object"})
+    else:
+        expected_windows = {
+            PHASE_PRE: False,
+            PHASE_A1: True,
+            PHASE_B: True,
+            PHASE_A2: True,
+            PHASE_POST: False,
+        }
+        for phase, analysis_window in expected_windows.items():
+            meta = phase_meta.get(phase)
+            if not isinstance(meta, dict) or meta.get("analysis_window") is not analysis_window:
+                issues.append({"severity": "invalid", "id": "phase_metadata", "reason": phase})
+        a2_meta = phase_meta.get(PHASE_A2, {})
+        post_meta = phase_meta.get(PHASE_POST, {})
+        if a2_meta.get("includes_shutdown_tail_after_nominal_end") is not False:
+            issues.append({"severity": "invalid", "id": "a2_phase_metadata", "reason": "tail_flag"})
+        if post_meta.get("fid_set") != "FULL":
+            issues.append({"severity": "invalid", "id": "post_phase_metadata", "reason": "FULL_required"})
 
     clean_capture_checks = [
         ("state", snapshot.get("state") == "closed", snapshot.get("state")),
+        ("accepting", snapshot.get("accepting") is False, snapshot.get("accepting")),
         ("writer_closed", snapshot.get("writer_closed") is True, snapshot.get("writer_closed")),
         ("pending_callbacks", snapshot.get("pending_callbacks") == 0, snapshot.get("pending_callbacks")),
+        ("queued", snapshot.get("queued") == 0, snapshot.get("queued")),
+        ("in_flight", snapshot.get("in_flight") == 0, snapshot.get("in_flight")),
         ("dropped_callbacks", snapshot.get("dropped_callbacks") == 0, snapshot.get("dropped_callbacks")),
+        (
+            "callback_commit_accounting",
+            type(snapshot.get("accepted_callbacks")) is int
+            and snapshot.get("committed_callbacks") == snapshot.get("accepted_callbacks"),
+            f"accepted={snapshot.get('accepted_callbacks')},committed={snapshot.get('committed_callbacks')}",
+        ),
         ("capture_error", status.get("error") in (None, ""), status.get("error")),
         ("finalization", isinstance(snapshot.get("finalization"), dict), snapshot.get("finalization")),
     ]
@@ -392,10 +467,27 @@ def analyze_fid_read_ab_session(session_dir: Path, *, expected_revision: str | N
         if not ok:
             issues.append({"severity": "incomplete", "id": name, "reason": str(observed)[:256]})
 
-    counters = _counter_summary(sidecar, {"snapshot": snapshot}, issues)
+    finalization = snapshot.get("finalization")
+    if isinstance(finalization, dict) and type(snapshot.get("committed_seq")) is int:
+        if finalization.get("final_seq") != snapshot.get("committed_seq"):
+            issues.append({
+                "severity": "invalid",
+                "id": "finalization_accounting",
+                "reason": f"final={finalization.get('final_seq')},committed={snapshot.get('committed_seq')}",
+            })
+
+    counters = _counter_summary(sidecar, status, issues)
     telemetry = _telemetry_summary(
         telemetry_rows, session_id=session_id, code_revision=revision, issues=issues
     )
+    if counters is not None and telemetry.get("present"):
+        for phase in PHASES:
+            counter_phase = counters["per_phase"][phase]
+            telemetry_phase = telemetry["by_phase"][phase]
+            if telemetry_phase["trade_samples"] > counter_phase["trade_callbacks"]:
+                issues.append({"severity": "invalid", "id": "telemetry_trade_accounting", "reason": phase})
+            if telemetry_phase["quote_samples"] > counter_phase["quote_callbacks"]:
+                issues.append({"severity": "invalid", "id": "telemetry_quote_accounting", "reason": phase})
     resources = _resource_summary(resource_rows, pid=pid, issues=issues)
 
     return {
