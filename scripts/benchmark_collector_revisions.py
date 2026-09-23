@@ -93,8 +93,15 @@ def run_revision(repo: Path, script: Path, label: str, revision: str,
             result = _run(
                 child_command(script, checkout, label, revision, pairs, repeats, telemetry),
                 cwd=checkout,
+                check=False,
                 capture_output=True,
             )
+            if result.returncode:
+                raise RuntimeError(
+                    f"benchmark child failed for {label} telemetry={telemetry}: "
+                    f"exit={result.returncode}\nstdout:\n{result.stdout[-8000:]}\n"
+                    f"stderr:\n{result.stderr[-8000:]}"
+                )
         finally:
             remove_worktree(repo, checkout)
     payloads = [
