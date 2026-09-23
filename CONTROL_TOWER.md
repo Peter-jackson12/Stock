@@ -48,7 +48,6 @@ flowchart TD
 - `dashboard/operations.py`: 수집 로그, 결과 조회 요청, 장외 재생 계획, 최근 작업 30건을 표시한다.
 - `control_tower/status.py`: 오늘 KST 로그의 끝부분만 읽는다. 최근/오래됨/미확인/시각 이상을 구분한다.
   프로세스 생존, DB 커밋, 무누락, 실제 venue/매수 방향을 인증하지 않는다.
-- `control_tower/session_assessment.py`: 수집 세션 근거를 저장·프로세스·native UI·lease·callback activity·source freshness·research eligibility 축으로 분리한다. 어느 한 축도 다른 축의 증거로 승격하지 않는다.
 - `control_tower/jobs.py`: `operations_state/jobs.sqlite3`에 작업을 보존한다. 수집 DB와 분리했다.
 - `control_tower/service.py`, `scripts/control_worker.py`: 허용된 결과 조회만 별도 프로세스에서 실행한다.
   입력은 `research_runs/**/result.json`으로 제한한다. shell 명령 문자열을 실행하지 않는다.
@@ -67,38 +66,6 @@ flowchart TD
 
 `runs/`의 기존 Trade/수익률 분석과 `research_runs/`의 틱 진단 결과는 아직 서로 다른 계약이다.
 조회 화면을 만들었다고 틱 equity·왕복 거래·성과 비교까지 구현된 것은 아니다.
-
-### 2-1. 세션 상태 축 — 재구축 1단계
-
-2026-09-23 native 장애 조사에서 저장 종료와 OS/native 종료가 같은 사건이 아니라는 것이 직접 확인됐다.
-따라서 운영 화면은 더 이상 하나의 `healthy/closed` 판정으로 세션을 요약하지 않는다.
-현재 `session_assessment.py`는 다음 근거를 서로 독립된 축으로 유지한다.
-
-| 축 | 대표 상태 | 이 축이 증명하지 않는 것 |
-|---|---|---|
-| storage | active / draining / closed / interrupted / failed | 프로세스 종료, source freshness, 데이터 적격성 |
-| process | alive / absent / access_denied / mismatch / unverified | native 창 해제, 저장 완료 |
-| native UI | clear / runtime_error / ocx_window_present / unverified | process exit, lease 상태 |
-| lease | held / free / unverified | OS process exit. **free lease는 종료 증거가 아니다.** |
-| callback activity | recent / stale / stopped / unverified | source FID freshness, 원천 무누락 |
-| source freshness | fresh / lagging / unverified | storage/queue 상태, backlog 위치 |
-| research | diagnostic_only / ineligible / eligible / unverified | 저장 종료나 프로세스 생존 |
-
-`termination`은 process/native UI 증거에서만 파생한다. process가 absent이고 관련 native 창도 clear인 경우에만
-`verified_exited`로 표현한다. process가 살아 있고 Runtime/OCX 창이 남으면 `residual_native`다.
-lease는 이 계산에 일부러 사용하지 않는다.
-
-현재 dashboard 어댑터는 기존 bounded log/status만 읽으므로 storage/callback activity 외의 축은 근거가 없으면 그대로
-`unverified`다. 최근 heartbeat를 source freshness로 승격하지 않는다. 이 1단계에서 새 PID scan, 창 열거, lease probe, raw DB 검사, qualification을 자동 수행하지 않는다.
-향후 로컬 관측 adapter를 추가하더라도 각 결과는 이 축에만 넣고 다른 축의 결론을 대신하지 않는다.
-
-특히 다음 등식은 금지한다.
-
-- `writer_closed=true` 또는 storage `closed` ⇒ OS process exited
-- lease `free` ⇒ process exited
-- Python queue `0` ⇒ OCX/Qt/provider 앞단 backlog 없음
-- 최근 heartbeat ⇒ feed freshness/무누락 인증
-- diagnostic raw closed ⇒ research eligible
 
 ## 3. 지금 사용할 수 있는 흐름
 

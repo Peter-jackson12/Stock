@@ -1,0 +1,40 @@
+name: Session assessment regressions
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: assessment-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  assessment:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.12.5"
+          python-version: "3.14"
+          enable-cache: false
+      - name: Install locked dependencies
+        run: uv sync --locked --group dev --python 3.14
+      - name: Focus evidence, UI and documentation regressions
+        run: >-
+          uv run --locked --offline python -m pytest -q -ra
+          tests/test_session_assessment.py tests/test_session_assessment_ui.py
+          tests/test_session_assessment_docs.py tests/test_control_tower.py
+          tests/test_control_tower_ui.py tests/test_documentation.py
+      - name: Check changed modules with Python 3.10 grammar
+        run: >-
+          uv run --locked --offline python -c
+          "import ast,pathlib; paths=['control_tower/status.py','control_tower/session_assessment.py','dashboard/session_assessment_view.py','dashboard/operations.py']; [ast.parse(pathlib.Path(p).read_text(encoding='utf-8'), filename=p, feature_version=(3,10)) for p in paths]; print('Assessment Python 3.10 grammar OK; not native validation')"

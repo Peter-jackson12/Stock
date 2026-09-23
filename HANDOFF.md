@@ -1,153 +1,134 @@
-# 현재 인계 — 2026-09-23 / native backlog 조사와 컨트롤타워 상태 모델 재구축
+# 현재 인계 — 2026-09-23 / PR #21 재검토와 독립 진단 트랙
 
-[문서 인덱스](README.md) · [컨트롤타워](CONTROL_TOWER.md) ·
+[문서 인덱스](README.md) · [세션 근거 표시 계약](docs/SESSION_ASSESSMENT.md) ·
+[운영 제어](CONTROL_TOWER.md) · [수집 런북](docs/COLLECTION_RUNBOOK.md) ·
 [파이프라인 지도](docs/PIPELINE_MAP.md) · [첫 시험 체크리스트](BACKTEST_TODO.md) ·
 [보존본 안내](docs/archive/README.md)
 
-직전 활성 인계는 `5b5156f810b7852c6b5fa4b5c42b77ddfbca0a70:HANDOFF.md`에 보존돼 있다.
-매 작업 시작 시 원격 master/PR/CI를 다시 확인한다. 아래 값은 현재 작업 기준이며 영구 최신값이 아니다.
+## 시작 규칙과 작업 분리
 
-## 원격 기준과 열린 진단 트랙
+매 작업 시작 시 원격 master/열린 PR/최신 CI를 다시 확인하고 AGENTS → HANDOFF를 읽는다.
+기준 master: `5b5156f810b7852c6b5fa4b5c42b77ddfbca0a70`, master CI #195 success.
+GitHub만 사용하는 대화는 사용자 Windows/로컬 git/pytest/OCX/raw/evidence에 접근하지 않는다.
+로컬 working tree나 현재 PID 상태를 원격에서 확인했다고 쓰지 않는다.
 
-현재 master 기준: `5b5156f810b7852c6b5fa4b5c42b77ddfbca0a70`.
+| PR | 담당 범위 | 기준 HEAD / 상태 |
+|---|---|---|
+| #18 | 이 대화 초반의 **일반 ChatGPT 컨트롤타워 운영 판단 계약**: 읽기 순서, 장전/KRX/NXT 구분 | `65a2feb333d81f3666ce41ee58d23e15199e0b69`, draft/unmerged |
+| #19 | 과거 revision 고정 합성 입력 비교 | `32e6285e2bd5a224a63152c2ed1f492b57afd841`, draft/unmerged |
+| #20 | Mock 전용 FID A-B-A 실험 준비 | `c263003da6be82cefe740d6b22896babfcc89cbc`, draft/unmerged |
+| #21 | **운영 UI의 근거 표시**와 회귀 보강. 전면 아키텍처 재구축이 아님 | `refactor/control-tower-evidence-model-20260923`, 최종 HEAD/CI는 PR에서 재확인 |
 
-- PR #18: 수집 시각·KRX/NXT 판단 계약 감사. open/draft/unmerged.
-- PR #19: 과거 collector revision 고정 입력 비교. open/draft/unmerged.
-- PR #20: 전종목 FID read A-B-A 진단 준비. open/draft/unmerged, HEAD
-  `c263003da6be82cefe740d6b22896babfcc89cbc`. 실제 시장 실행 전까지 병합 보류.
-- 현재 컨트롤타워 재구축 branch:
-  `refactor/control-tower-evidence-model-20260923`. collector/native 실행 코드는 건드리지 않는다.
+#18의 운영 계약과 #21의 UI를 같은 작업으로 부르지 않는다. ARCHITECTURE_V2는 레거시 배경이며
+raw→LOB/feature가 현 raw-v2 틱 연구의 필수 선행 단계가 된 것은 아니다.
+PR #18/#19/#20은 이번 재검토에서 수정하지 않는다. #21도 자동 merge하지 않는다.
+CI 성공과 native 오류 해결, 실행 승인, 실제 원본 검증은 서로 다르다.
 
-GitHub CI·합성 검증은 실제 32비트 QAx/OCX/native 동작이나 feed 정확성을 인증하지 않는다.
+## PR #21 재검토 결과와 다음 행동
 
-## 2026-09-23 실제 장애 — 현재 확인된 사실
+초기 HEAD `db5c24b97a13d010e760694c9910de6bdbf9343a`의 PR CI #226은
+1,578 passed / 6 deselected였다. 성공했지만 다음 의미적 오판은 테스트가 놓쳤다.
 
-대상 session: `7a35b11eddff4dcea88c98acdc8b37df`.
-collection revision: `5b5156f810b7852c6b5fa4b5c42b77ddfbca0a70`.
-CPython 3.10.11 x86, collector PID 13572.
+- 일일 로그 recent는 계수 재출력일 수 있고 session_id도 없다. 세션 콜백 진행으로 승격하지 않는다.
+- stale active 보고는 현재 활성으로 표시하지 않는다. 시각/마지막 보고 상태는 보존한다.
+- 정상 실행 중 OCX 창 존재는 native 잔류가 아니다. 저장 닫힘 뒤 잔존과 active Runtime 오류를 분리한다.
+- runtime 관측은 full identity와 UTC 시각/TTL을 확인한다. lease free는 종료 증거가 아니다.
+- 알려진 diagnostic feed_scope는 표시에서 연구 입력 제외로 남기며 임의 eligible 승격은 받지 않는다.
+- reader/reducer의 status 검증을 공유하고, 표시 컴포넌트 UI 회귀를 추가한다.
 
-- 09:00 이후 FID20/FID21 clock difference가 점진적으로 증가했다.
-  종류별 저빈도 telemetry에서 source progression ratio는 초기 약 0.60, memory peak 이후 약 0.80이었다.
-  lag slope도 각각 약 0.35초/초, 약 0.17초/초로 같은 방향이다.
-- memory recorded peak는 10:08:19.624 KST:
-  commit 약 1767.7 MiB, working set 약 1747.7 MiB.
-  10:11:22부터 memory 감소가 관측됐지만 lag는 약 1700초까지 계속 증가했다.
-- callback-entry→queue-submit processing은 장애 구간에도 대체로 sub-ms 수준이었다.
-  Qt/control poll은 callback 종료 부근까지 진입/복귀했고 GetConnectState 관측은 1이었다.
-  poll 정상은 feed 건강 인증이 아니다.
-- telemetry 마지막 sample은 10:36:18~19, status last_commit은 10:36:21.189,
-  reception_stall은 10:38:21.937, silence_stop/shutdown은 10:46:21대다.
-  telemetry 표본은 전수 callback이 아니므로 정확한 마지막 callback 시각은 미확정이다.
-- first confirmed Runtime popup 관측은 10:46:36.764~10:47:08.204.
-  last confirmed absent가 없어 popup 최초 시각과 callback stop의 인과 순서는 미확정이다.
-- dump는 약 11:30:43에 생성된 사후 minidump이며 first-failure dump가 아니다.
+상세 구현·한계는 [전용 계약](docs/SESSION_ASSESSMENT.md)에만 둔다.
+프로세스/창/lease 관측 연결, source-clock 정책, 연구 실행 진입점의 diagnostic 강제 배제는 아직 별도다.
+새 상태 표시를 기존 시작/재시작 권한에 연결하지 않는다. collector/queue/OCX 기본 동작은 변경하지 않는다.
+수정 후 최종 HEAD·집중/전체 CI 로그는 PR #21에서 확인한다. 중복 검사는 합산하지 않고 deselected는 통과가 아니다.
 
-### native dump 재감사
+다음 독립 작업은 PR #20의 코드/실험 설계 리뷰다. 아직 시장에서 실행하지 않았다.
+None으로 생략한 FID는 COM 호출 수뿐 아니라 문자열/JSON/저장 비용도 바꾸므로 완전한 단일 비용 실험이라고
+과장하지 않는다. 30초 phase의 carry-over, 표본 종목 차이, source clock 해석, 진단 데이터 연구 제외 가드를
+실행 전에 대조한다. 이 인계만으로 새 collector를 실행하지 않는다.
 
-기존 x86 CDB와 로컬 image/symbol로 읽기 전용 감사했다.
+## 2026-09-23 장애 — 사용자 전달 로컬 보고
 
-- `OPComms → operator new → malloc NULL → AfxNewHandler → AfxThrowMemoryException`
-  경로를 stack/register/disassembly로 대조했다.
-- 실패 요청 크기: 정확히 `0x3e14 = 15,892 bytes`.
-- 실제 python.exe는 Large Address Aware OFF.
-- dump-time VA metadata: commit 약 199.6 MiB, reserve 약 1757.4 MiB,
-  free 약 91.0 MiB, largest free region 약 60.3 MiB.
-- dump가 failure/10:08 peak보다 훨씬 뒤이므로 이 VA 지도를 failure 순간으로 소급하지 않는다.
-  native allocation failure는 SUPPORTED지만 x86 VA exhaustion/fragmentation 원인은 여전히 UNRESOLVED.
-- heap metadata는 불충분해 heap corruption/fragmentation 직접 분석은 unavailable.
-- allocation failure가 10:36 callback stop의 최초 원인이라는 인과도 미확정이다.
+아래 native/운영 수치는 사용자가 전달한 로컬 에이전트 보고다. 이 GitHub 작업이 원본을 직접 재검증한 것은 아니다.
+절대 시각은 KST이며 보고 시점 이후 현재 프로세스 상태를 인증하지 않는다.
 
-## 규모별 canary와 offline 분리 결과
+session `7a35b11eddff4dcea88c98acdc8b37df`, collection revision `5b5156f...`,
+PID 13572, CPython 3.10.11 x86, live, telemetry ON / explicit teardown OFF.
+accepted=committed=12,416,350, final_seq=12,428,917 보고. raw 전체 품질은 미검증이다.
 
-### 1종목 / 10종목
+09:00 이후 FID20/FID21 차이가 증가해 약 1,700초에 도달했다.
+memory recorded peak 10:08:19.624(commit 1,767.7 MiB/WS 1,747.7 MiB), 하락 첫 관측 10:11:22.124.
+마지막 저빈도 표본 10:36:18~19, status last_commit 10:36:21.189, stall 10:38:21.937,
+silence shutdown 10:46:21대. last_commit/표본을 전수 마지막 callback 시각과 동일시하지 않는다.
+source progression과 lag slope는 같은 source/receive 시계에서 계산하므로 독립 증거가 아니다.
+종목 교차 표본의 비율 중앙값도 전체 이벤트 service rate가 아니다.
+작은 sampled processing_ns, poll 왕복, empty Python queue로 callback/Qt/GIL 전체 병목을 배제하지 않는다.
 
-1종목 60초 mock/live와 10종목 60초 ABBA는 모두:
-저장 clean close, drop 0, queue/pending 0, PID/관련 창 종료, lease 해제.
-FID clock difference는 대체로 1~3초였고 지속 증가가 없었다.
+popup 최초 시각은 미확정. 디스크 직접 관측은 10:46:36.764~10:47:08.204 창 안에 있으며
+first appearance ≤ 10:47:08.204라는 상한만 있다. last-absent 없음.
+과거 대화의 10:36:33 존재 주장은 이 보존 파일 감사로 재입증되지 않았다.
+WER 14:08:01.477은 늦은 APPCRASH 기록이며 popup 최초 시각이 아니다.
+저장·Qt finally·lease 해제 뒤에도 PID/Runtime 창이 남았다는 사전점검 보고가 있다.
+이후 canary들 전에는 부재를 다시 확인했다는 보고다. lease alone으로 재시작을 승인하지 않는다.
 
-### 전종목 3,757개 / 60초
+### 보존 dump 재감사 — 로컬 보고와 해석
 
-Mock 약 1,602 callbacks/s, Live 약 1,533 callbacks/s.
-양쪽 모두 FID clock difference가 약 2초에서 16~20초로 증가했다.
-Python 저장 queue sampled/reported peak는 71~82 수준이었고 accepted=committed, drop 0.
-즉 전종목 규모가 lag 현상과 강하게 연관되지만 backlog 위치는 provider/OCX/COM/Qt 중 미확정이다.
+11:30:43경 사후 dump, 4,538,551 bytes, SHA-256
+`5BCA2EFC651DBCEB5CE1C09642FF0CE5E729890069A099EFA662BDEE78B50C68`.
+exception stream은 없지만 stack의 저장 context와 로컬 image 대조로
+`OPComms → operator new → malloc NULL → AfxNewHandler → AfxThrowMemoryException`,
+요청 `0x3e14=15,892 bytes`를 복원했다는 보고다. 실제 python.exe LAA OFF.
+dump-time VA: commit 199.59 MiB, reserve 1,757.36 MiB, free 90.98 MiB, 최대 free 60.31 MiB.
+full-memory는 아니나 memory-region metadata 7,358개가 있고 heap header는 부족했다.
+allocation failure는 지지되지만 failure-time VA exhaustion/fragmentation/최초 callback stop 인과는 미확정이다.
+dump-time free를 10:08이나 최초 실패 순간으로 소급하지 않는다.
 
-### x86 offline raw-v2 replay
+### 규모별 분리 시험 — 재실행하지 말고 보고를 재사용
 
-Qt/COM/Kiwoom 없이 CPython 3.10.11 x86에서 1,600 callbacks/s × 60초,
-총 96,000 callback을 deterministic pacing했다.
+1종목 60초 mock/live 및 10종목 60초 ABBA: FID 차이 약 1~3초, 저장 닫힘/PID·창 부재 보고.
+3,757 후보 전종목 60초: Mock 약 1,602/s, Live 약 1,533/s; 차이는 약 2→16~20초,
+메모리 약 +20~31 MiB, 저장 queue reported peak 71~82, accepted=committed/drop 0.
+별도 진단 launcher 사용, 등록 중 callback 포함 약 63초 평균이며 CLI full-universe 제한과 구분한다.
+실수집 순차 입력은 같지 않고 mock 외부 sampler는 wrapper PID를 측정해 비교에서 제외됐다.
 
-- producer schedule 유지, final drift 약 -1ms
-- queue sampled peak 32, pending peak 56
-- accepted=committed, drop 0
-- drain 약 0.016초
-- producer 구간 memory 증가 약 3 MiB
+x86 offline raw-v2: 96,000 callback/60초/1,600/s, capacity8192/batch512,
+계획 유지·queue sampled peak32·drain0.016초·메모리 약+3 MiB 보고.
+이는 그 고정 입력의 저장 경로 근거일 뿐 실제 burst/Qt/COM/GIL 병목 배제나 native 해결이 아니다.
 
-따라서 Python raw-v2/SQLite writer가 실제 upstream lag의 주 병목이라는 가설은 상당히 약해졌다.
-이 시험은 Qt/COM/GetCommRealData 처리율을 검증한 것이 아니다.
+로컬 근거 위치는 사용자 보고된 repository-relative 경로다. 원격에서 존재/해시 확인한 것이 아니다.
+- `operations_state/offline_queue_replay/20260923T154733KST/`
+- `operations_state/forensics/20260923_session_7a35_timeline_20260923T161353/`
+- `operations_state/forensics/20260923_runtime_timing_20260923T162202/`
+- `operations_state/forensics/20260923_dump_va_audit_20260923T163251/`
 
-## PR #20 — 다음 정규장 진단
+## 계속 유효한 과거 차단 조건 — 삭제하거나 완료로 바꾸지 않기
 
-PR #20은 동일 전종목 구독을 유지한 한 Mock 세션에서:
+직전 원문: [master 기준 HANDOFF](https://github.com/Peter-jackson12/Stock/blob/5b5156f810b7852c6b5fa4b5c42b77ddfbca0a70/HANDOFF.md).
+CI #156 flush 예외 close 누락 / #162 일회성 raw startup 실패 이력을 유지한다.
+보강 후 통과와 별개로 #162 근본 원인은 미확정이다. PR #19 중간 실패 #205/#206도 최종 성공으로 지우지 않는다.
 
-`FULL 30초 → ESSENTIAL 30초 → FULL 30초`
+9월 21일 session `6f39117671c048f6b60477ceafbf40b6`, revision `4821762fd93230b658339fee084d6c08e3e53ce9`:
+raw 50,635,071,488 bytes; callbacks42,796,226/final_seq42,836,791.
+파일 SHA 주장 `E4304FE3C1CAD8A85EC6C297CEB9CFDADCA2D20001E93756303D567EC5077569`,
+payload SHA 주장 `a988d3bf86e36f44a209480658f537088a8910768c68c9fec83349f3de7f1755`는 대상이 다르고 재검증 안 됐다.
+계수 차이 40,564는 parse_error 예상 단서이지 SQL 집계/무부호 체결 수가 아니다.
+말미 unsigned FID15 5건 및 대응 parse_error로 FIRST_RESEARCH_CANDIDATE 미승격.
+-wal 0 bytes / -shm 32,768 bytes는 보존. 원본 in-place writable 재연결/cleanup 미채택.
+whole-file 무결성·품질/시간/종목 분포와 첫 실제 연구는 미완료다.
+복제·sidecar 작업은 identity/namespace/외부 접근 배제/free space/I/O·시간 예산/실패 보존 설계와 별도 승인 필요.
+합성 clone lab 성공으로 실제 50.6GB 처리나 삭제가 승인되지 않는다.
 
-로 callback 내부 GetCommRealData 호출 수만 바꾸는 diagnostic-only 모드다.
+9월 22일 session `39b5af8b45024458be9a3ae2a2259685`, revision `6a6d6076649befc767e5d8d59151cbcfb2f27c34`:
+마지막 callback10:23:47, 종료10:33:48, accepted=committed11,198,913/final_seq11,212,670 보고.
+raw12,940,107,776 bytes와 21일50.6GB를 혼동하지 않는다. 17:07 WER는 최초 popup 시각이 아니다.
 
-- FULL: trade 6 FID / quote 41 FID.
-- ESSENTIAL: trade 3 FID / quote 23 FID.
-- skip key는 raw dict에 남기되 값은 None. stale 값을 만들지 않는다.
-- SetRealReg, REAL_FIDS, screen, 종목 수는 phase에서 바꾸지 않는다.
-- Mock-only guard, 90초 고정, telemetry 필수.
-- diagnostic feed_scope/sidecar로 research eligible이 아님을 명시.
-- 실제 정규장 실행 전까지 merge/실행하지 않는다.
+`Daily_baseline`, `old_data`, 운영 raw/dump/기존 operations_state를 보존한다.
+closed != process exited != research eligible; stream integrity != strategy validation.
+원본 폐기·시간 절단·방향/venue 보정·LAA·queue 확대·자동 kill/restart/relogin은 승인하지 않는다.
 
-## 컨트롤타워 재구축 — 현재 작업
+## 일반 ChatGPT / 로컬 에이전트 인계
 
-2026-09-23 장애에서 다음 상태들이 서로 독립임이 확인됐다.
-
-- storage finalization / writer close
-- Qt event-loop return
-- lease release
-- OS process exit
-- Runtime/OCX native window absence
-- callback activity
-- source FID freshness
-- research eligibility
-
-특히 과거 장애에서는 storage closed + main finally/lease release 뒤에도 PID/Runtime popup/OCX가 남았다.
-따라서 lease availability나 storage close를 process termination으로 승격하면 안 된다.
-Python queue 0도 OCX/Qt/provider 앞단 backlog 부재를 뜻하지 않는다.
-
-현재 branch는 `control_tower/session_assessment.py`를 추가해 다음 축을 독립적으로 유지한다.
-
-- storage
-- process
-- native UI
-- lease
-- callback activity
-- source freshness
-- research eligibility
-
-`verified_exited`는 process absent + native UI clear일 때만 파생한다.
-lease state는 termination 계산에 사용하지 않는다.
-dashboard는 bounded 기존 status/log에서 storage와 callback activity만 읽고, source freshness/process/native/lease/research는 별도 근거가 없으면 unverified로 둔다.
-새 process/window scan, lease probe, raw 검사, qualification을 이 1단계에서 자동 실행하지 않는다.
-
-## 현재 금지/보존 경계
-
-- 운영 raw, dump, operations_state 기존 evidence를 수정하지 않는다.
-- 현재 장애 원인 확정 전 collector 기본 FID, queue, LAA, Python bitness, teardown 기본값을 바꾸지 않는다.
-- PR #18/#19/#20을 자동 merge하지 않는다.
-- diagnostic raw를 연구 입력으로 승격하지 않는다.
-- closed != process exited; lease free != process exited; queue 0 != upstream healthy; recent heartbeat != source freshness.
-- stream integrity != research eligibility; qualification != strategy validation.
-- 자동 PID kill/restart/relogin을 컨트롤타워 재구축에 추가하지 않는다.
-
-## 바로 다음 행동
-
-1. 컨트롤타워 상태 축 branch의 pure reducer/dashboard/docs 회귀와 전체 Git-only CI를 확인한다.
-2. 이 branch는 collector/native 실행부를 건드리지 않은 상태로 draft PR에서 독립 리뷰한다.
-3. 휴장 기간에는 read-only 상태 모델·dashboard·계약 테스트를 계속 개선할 수 있다.
-4. 다음 정규장에는 별도 승인 후 PR #20 A-B-A Mock 한 세션으로 FID read 병목 가설을 검증한다.
-5. 그 결과 전까지 collector 제어/자동 복구/기본 FID 정책은 동결한다.
+GitHub에서 가능한 읽기·수정·PR·Actions는 일반 채팅에서 직접 처리한다. Work 자동 위임 금지.
+Windows/OCX/실제 raw가 필요한 일만 완성형 복사 프롬프트로 넘긴다.
+모델·추론·상향 조건·새 스레드 권장은 **프롬프트 코드블록 밖**에 둔다.
+목표·금지선·예산 안의 방법/순서는 자율적으로 맡기되 권한 확대는 금지한다.
+이미 시킨 작업에 중복 실행 프롬프트를 주지 않는다. 결과 검토 후 필요한 보충만 분리한다.
