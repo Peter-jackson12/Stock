@@ -276,12 +276,18 @@ def test_python_bits_and_v2_phase_contract_are_identity_evidence(tmp_path):
     _write_json(session / "status.json", status)
     sidecar = json.loads((session / "fid_read_ab_test.json").read_text(encoding="utf-8"))
     sidecar["strict_phase_windows"] = False
+    sidecar["pure_com_cost_experiment"] = True
+    sidecar["backlog_reset_between_phases"] = True
+    sidecar["duration_is_shutdown_request_not_hard_cutoff"] = False
     sidecar["phase_counters"]["a2_includes_shutdown_tail"] = True
     _write_json(session / "fid_read_ab_test.json", sidecar)
     report = analyze_fid_read_ab_session(session)
     assert report["result"] == RESULT_INVALID
     ids = {i["id"] for i in report["issues"]}
-    assert {"python_bits", "phase_window_contract", "a2_tail_contract"} <= ids
+    assert {
+        "python_bits", "phase_window_contract", "duration_contract",
+        "cost_coupling_contract", "backlog_contract", "a2_tail_contract",
+    } <= ids
 
 
 def test_closed_status_with_queue_accounting_conflict_is_incomplete(tmp_path):
@@ -321,4 +327,26 @@ def test_resource_pid_mismatch_is_invalid(tmp_path):
     report = analyze_fid_read_ab_session(session)
     assert report["result"] == RESULT_INVALID
     assert any(i["id"] == "resource_pid" for i in report["issues"])
+
+def test_cli_prints_bounded_ready_report(tmp_path, capsys):
+    from scripts.analyze_fid_read_ab import main
+    session, raw = make_session(tmp_path)
+    code = main(["--session-dir", str(session), "--expected-revision", REV])
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["result"] == RESULT_READY
+    assert payload["identity"]["code_revision"] == REV
+    assert not raw.exists()
+
+
+def test_cli_missing_session_returns_unavailable_without_creating_files(tmp_path, capsys):
+    from scripts.analyze_fid_read_ab import main
+    missing = tmp_path / "missing"
+    code = main(["--session-dir", str(missing)])
+    assert code == 2
+    captured = capsys.readouterr()
+    payload = json.loads(captured.err)
+    assert payload["status"] == "unavailable"
+    assert "raw database was not opened or scanned" in payload["note"]
+    assert not missing.exists()
 
