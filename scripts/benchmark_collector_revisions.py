@@ -299,6 +299,13 @@ def one_run(module, root: Path, revision: str, pairs: int, telemetry: bool):
     submitted = time.perf_counter()
     logger._shutdown("fixed-input revision benchmark")
     finished = time.perf_counter()
+    # Current production main() performs process-resource cleanup in finally
+    # after the Qt shutdown path returns. Keep it outside the measured service
+    # interval, but execute it so optional telemetry/teardown handles follow
+    # the real lifetime and temporary evidence can be released on Windows.
+    finish_resources = getattr(logger, "_finish_process_resources", None)
+    if finish_resources is not None:
+        finish_resources()
 
     snapshot = logger.raw_capture.queue.snapshot()
     if logger.exit_code != 0:
