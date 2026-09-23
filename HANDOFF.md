@@ -111,7 +111,8 @@ PR #20은 동일 전종목 구독을 유지한 한 Mock 세션에서:
 - lease release
 - OS process exit
 - Runtime/OCX native window absence
-- feed freshness
+- callback activity
+- source FID freshness
 - research eligibility
 
 특히 과거 장애에서는 storage closed + main finally/lease release 뒤에도 PID/Runtime popup/OCX가 남았다.
@@ -124,12 +125,13 @@ Python queue 0도 OCX/Qt/provider 앞단 backlog 부재를 뜻하지 않는다.
 - process
 - native UI
 - lease
-- feed freshness
+- callback activity
+- source freshness
 - research eligibility
 
 `verified_exited`는 process absent + native UI clear일 때만 파생한다.
 lease state는 termination 계산에 사용하지 않는다.
-dashboard는 bounded 기존 status/log만으로 아는 축만 표시하며 모르는 값은 unverified로 둔다.
+dashboard는 bounded 기존 status/log에서 storage와 callback activity만 읽고, source freshness/process/native/lease/research는 별도 근거가 없으면 unverified로 둔다.
 새 process/window scan, lease probe, raw 검사, qualification을 이 1단계에서 자동 실행하지 않는다.
 
 ## 현재 금지/보존 경계
@@ -138,7 +140,7 @@ dashboard는 bounded 기존 status/log만으로 아는 축만 표시하며 모�
 - 현재 장애 원인 확정 전 collector 기본 FID, queue, LAA, Python bitness, teardown 기본값을 바꾸지 않는다.
 - PR #18/#19/#20을 자동 merge하지 않는다.
 - diagnostic raw를 연구 입력으로 승격하지 않는다.
-- closed != process exited; lease free != process exited; queue 0 != upstream healthy.
+- closed != process exited; lease free != process exited; queue 0 != upstream healthy; recent heartbeat != source freshness.
 - stream integrity != research eligibility; qualification != strategy validation.
 - 자동 PID kill/restart/relogin을 컨트롤타워 재구축에 추가하지 않는다.
 
