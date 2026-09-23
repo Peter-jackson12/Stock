@@ -61,6 +61,13 @@ jobs:
           uv run --locked --offline python -m pytest -q -ra
           tests/test_ocx_teardown.py tests/test_capture_diagnostics.py
           tests/test_tick_collector_shutdown.py tests/test_live_collector.py
+      - name: Audit FID read diagnostic boundaries
+        timeout-minutes: 2
+        run: >-
+          uv run --locked --offline python -m pytest -q -ra
+          tests/test_fid_read_ab_diagnostic.py
+          tests/test_fid_read_ab_safety.py
+          tests/test_fid_read_ab_logger_safety.py
       - name: Check collector syntax for Python 3.10
         run: >-
           uv run --locked --offline python -c

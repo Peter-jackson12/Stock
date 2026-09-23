@@ -162,7 +162,8 @@ class CaptureTelemetry:
         return True
 
     def callback_sample(self, *, code, real_type, fids, received_ns, received_at_utc,
-                        accepted, finished_ns=None):
+                        accepted, finished_ns=None, diagnostic_phase=None,
+                        fid_call_count=None, fid_read_ns=None, queue_submit_ns=None):
         if (self.error or self.closed or self.stream is None
                 or threading.get_ident() != self.owner_thread):
             return
@@ -180,13 +181,24 @@ class CaptureTelemetry:
             receive_clock, receive_truncated, _ = _text(received_at_utc, 64)
             safe_code, code_truncated, _ = _text(code, 32)
             duration = finished_ns - received_ns
-            self._samples.append(dict(code=safe_code, code_truncated=code_truncated,
+            row = dict(code=safe_code, code_truncated=code_truncated,
                 real_type=real_type, source_fid=fid, source_clock_raw=raw_clock,
                 source_clock_type=raw_type, source_clock_truncated=truncated,
                 received_at_utc=receive_clock, receive_clock_truncated=receive_truncated,
                 received_ns=received_ns, processing_ns=duration if duration >= 0 else None,
                 processing_scope="callback_entry_to_queue_submit_return",
-                accepted=accepted if type(accepted) is bool else None))
+                accepted=accepted if type(accepted) is bool else None)
+            # Optional diagnostic fields — omitted when unused so default payload
+            # shape stays unchanged for non-diagnostic sessions.
+            if diagnostic_phase is not None:
+                row["diagnostic_phase"] = str(diagnostic_phase)[:40]
+            if fid_call_count is not None and type(fid_call_count) is int and fid_call_count >= 0:
+                row["fid_call_count"] = fid_call_count
+            if fid_read_ns is not None and type(fid_read_ns) is int and fid_read_ns >= 0:
+                row["fid_read_ns"] = fid_read_ns
+            if queue_submit_ns is not None and type(queue_submit_ns) is int and queue_submit_ns >= 0:
+                row["queue_submit_ns"] = queue_submit_ns
+            self._samples.append(row)
         finally:
             self._samples_lock.release()
 
