@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-23 / PR #20 독립 안전성 감사
+# 현재 인계 — 2026-09-23 / PR #23 A2 90초 tail 분리
 
 [문서 인덱스](README.md) · [실험/감사 계약](tests/FID_READ_AB_DIAGNOSTIC.md) ·
 [파이프라인 지도](docs/PIPELINE_MAP.md) · [첫 시험 체크리스트](BACKTEST_TODO.md) ·
@@ -6,10 +6,11 @@
 
 ## ref와 작업 경계
 
-이 인계는 `audit/fid-read-aba-safety-20260923`의 별도 보강이다.
-base는 PR #20 branch `diag/fid-read-aba-20260923`, 검토 시작 HEAD는
-`c263003da6be82cefe740d6b22896babfcc89cbc`다. master로 직접 올리는 통합 PR이 아니다.
-작업 시작과 쓰기 전 PR #20의 HEAD 불변, open/draft/unmerged와 댓글 없음이 확인됐다.
+이 인계는 PR #22의 안전성 보강 위에 둔 **PR #23의 90초 tail 분리**다.
+base는 `audit/fid-read-aba-safety-20260923`, 시작 HEAD는
+`f50bd55120d1a3f754fc135cd98c5e2eadf4438d`이고 head는
+`diag/fid-read-post-tail-20260923`다. master로 직접 올리는 통합 PR이 아니다.
+작업 시작·branch 생성·PR 생성 전후로 PR #22가 open/draft/unmerged이고 HEAD가 위 SHA임을 확인했다.
 원격 GitHub에 보이지 않는 로컬 동시 작업까지 없다고 인증하는 것은 아니다.
 
 확인한 master는 `5b5156f810b7852c6b5fa4b5c42b77ddfbca0a70`, 최신 master CI #195 success다.
@@ -26,6 +27,8 @@ base는 PR #20 branch `diag/fid-read-aba-20260923`, 검토 시작 HEAD는
 | #19 | 과거 revision 고정 합성 입력 비교 | `32e6285e2bd5a224a63152c2ed1f492b57afd841` |
 | #20 | 전종목 Mock FID A-B-A 준비 | `c263003da6be82cefe740d6b22896babfcc89cbc` |
 | #21 | 독립 근거 UI 표시·회귀 보강 | `4ce504dabca9baf37fd5c0a8dc062f484511c7ad` |
+| #22 | FID 진단 연구 배제·예외 보존 독립 보강 | `f50bd55120d1a3f754fc135cd98c5e2eadf4438d` |
+| #23 | A2 90초 이후 POST phase 분리 | 이 HANDOFF가 있는 현재 branch HEAD; PR/Actions에서 재확인 |
 
 PR #21이 미병합이므로 master 인계는 과거 상태다. 최신 장애 보고와 로컬 근거 경로는
 [PR #21 고정 HANDOFF](https://github.com/Peter-jackson12/Stock/blob/4ce504dabca9baf37fd5c0a8dc062f484511c7ad/HANDOFF.md)에 있다.
@@ -46,12 +49,17 @@ logger의 구독/종료 실행 코드는 바꾸지 않고 대역+작은 합성 D
 30초 phase 간 backlog는 초기화되지 않는다. 종류별 5초 최초 callback은 종목별 표본이 아니다.
 source progression과 lag slope는 같은 시계에서 나온 값이며 독립 증거가 아니다.
 
-기존 duration은 종료 요청 기준이다. 90초 이후 입력 차단 전 callback도 A2_FULL 계수에 포함된다.
-엄격한 [60,90) 처리율 비교에는 추가 구간 근거가 필요하며 A2 계수를 무조건 30으로 나누지 않는다.
+duration 90초가 종료 **요청** 기준이고 hard cutoff가 아니라는 점은 유지한다.
+다만 PR #23에서는 FID 읽기 정책 결정 시점이 [60,90)이면 A2_FULL, >=90이면
+POST_90S_FULL로 분리한다. POST도 읽기 정책은 FULL이며 종료 처리 tail을 버리지 않는다.
+따라서 A2 누적치에 post-90 시작 callback이 섞이는 문제는 제거되지만, phase 간 backlog를
+초기화하지 않으므로 A2 callback 수/30을 독립 정상상태의 순수 service rate로 과장하지 않는다.
+sidecar schema는 `fid_read_ab_test_v2`이고 A1/B/A2만 analysis_window=true다.
 sidecar 누락/flush 실패/진단 오류가 있는 결과를 완전한 실험으로 해석하지 않는다.
 임의로 출처 정보를 버린 normalized stream까지 진단 데이터라고 알아낼 수는 없다.
 
-**다음 기본 행동은 이 별도 보강 PR의 diff/CI를 확인하고 남은 실험 설계 판단을 정리하는 것**이다.
+**다음 기본 행동은 PR #23의 최종 diff와 집중/전체 CI를 확인한 뒤,
+의존 PR #20→#22→#23의 통합 여부와 실제 Mock 실험 준비를 별도 판단하는 것**이다.
 이 문서는 실제 OCX/시장 실행, master/PR 병합, 로컬 배포 승인이나 실행 지시가 아니다.
 GitHub에서 가능한 작업은 일반 채팅에서 수행한다. 로컬 원본/OCX가 필요한 일만 별도 승인 후 넘긴다.
 

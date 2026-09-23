@@ -14,6 +14,7 @@ from collector.kiwoom.fid_read_ab_diagnostic import (
     FEED_SCOPE_DIAGNOSTIC,
     PHASE_A1,
     PHASE_A2,
+    PHASE_POST,
     PHASE_B,
     PHASE_PRE,
     QUOTE_ESSENTIAL_FIDS,
@@ -91,7 +92,8 @@ class PhaseBoundaryTests(unittest.TestCase):
             (59.999999, PHASE_B),
             (60.0, PHASE_A2),
             (89.999999, PHASE_A2),
-            (90.0, PHASE_A2),
+            (90.0, PHASE_POST),
+            (120.0, PHASE_POST),
         ]
         for elapsed, expected in cases:
             with self.subTest(elapsed=elapsed):
@@ -152,6 +154,12 @@ class FidSelectionTests(unittest.TestCase):
     def test_a2_restores_full(self):
         calls = []
         _, n = read_fids_for_phase("주식체결", PHASE_A2, lambda f: calls.append(f) or "x")
+        self.assertEqual(calls, list(TRADE_FIDS))
+        self.assertEqual(n, 6)
+
+    def test_post_90s_keeps_full_policy(self):
+        calls = []
+        _, n = read_fids_for_phase("주식체결", PHASE_POST, lambda f: calls.append(f) or "x")
         self.assertEqual(calls, list(TRADE_FIDS))
         self.assertEqual(n, 6)
 
@@ -359,6 +367,7 @@ class ControllerCounterTests(unittest.TestCase):
             (10.0, PHASE_A1, "주식체결", 6),
             (40.0, PHASE_B, "주식호가잔량", 23),
             (70.0, PHASE_A2, "주식체결", 6),
+            (100.0, PHASE_POST, "주식체결", 6),
         ]:
             clock["t"] = t
             self.assertEqual(ctl.current_phase(), phase)
@@ -371,6 +380,9 @@ class ControllerCounterTests(unittest.TestCase):
         self.assertEqual(snap["fid_calls_by_phase"][PHASE_A1], 6)
         self.assertEqual(snap["fid_calls_by_phase"][PHASE_B], 23)
         self.assertEqual(snap["fid_calls_by_phase"][PHASE_A2], 6)
+        self.assertEqual(snap["fid_calls_by_phase"][PHASE_POST], 6)
+        self.assertFalse(snap["a2_includes_shutdown_tail"])
+        self.assertEqual(snap["post_90s_phase"], PHASE_POST)
 
 
 class DefaultPathInvariantTests(unittest.TestCase):
@@ -388,8 +400,12 @@ class DefaultPathInvariantTests(unittest.TestCase):
 class SubscriptionInvariantDocTests(unittest.TestCase):
     def test_independent_variable_is_fid_call_count(self):
         payload = sidecar_payload(code_revision="x")
+        self.assertEqual(payload["schema"], "fid_read_ab_test_v2")
         self.assertEqual(payload["independent_variable"], "GetCommRealData_call_count")
         self.assertTrue(payload["subscription_unchanged"])
+        self.assertTrue(payload["strict_phase_windows"])
+        self.assertFalse(payload["phases"][PHASE_A2]["includes_shutdown_tail_after_nominal_end"])
+        self.assertFalse(payload["phases"][PHASE_POST]["analysis_window"])
 
 
 if __name__ == "__main__":

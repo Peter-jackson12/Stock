@@ -1,4 +1,4 @@
-# Mock 전종목 FID 읽기 A-B-A — 진단 계약과 독립 감사
+# Mock 전종목 FID 읽기 A-B-A — 진단 계약과 90초 tail 분리
 
 [현재 인계](../HANDOFF.md) · [수신 계측](../docs/COLLECTOR_TELEMETRY.md) ·
 [종료 계약](../docs/COLLECTOR_TEARDOWN.md) · [파이프라인](../docs/PIPELINE_MAP.md)
@@ -6,7 +6,9 @@
 ## 상태와 범위
 
 PR #20의 검토 기준은 `c263003da6be82cefe740d6b22896babfcc89cbc`다.
-이 문서의 보강은 그 위의 별도 `audit/fid-read-aba-safety-20260923` 브랜치이며,
+독립 안전성 보강 PR #22의 최종 HEAD는
+`f50bd55120d1a3f754fc135cd98c5e2eadf4438d`이며, 이 문서의 현재 후속 변경은
+그 위의 `diag/fid-read-post-tail-20260923` 브랜치다.
 PR #18의 운영 판단 계약이나 PR #21의 UI 구현을 가져오지 않는다.
 **실제 시장 실행, master 병합, 로컬 동기화 또는 새 로그인 승인이 아니다.**
 
@@ -46,15 +48,19 @@ FID를 읽는 도중 30/60초 경계를 넘더라도 그 callback 안에서는 �
 | 완료 전 | PRE_SUBSCRIPTION_FULL | 별도 집계; A1 표본에 섞지 않는다 |
 | [0, 30)초 | A1_FULL | 명목상 첫 30초 |
 | [30, 60)초 | B_ESSENTIAL | 명목상 가운데 30초 |
-| [60, 90)초 | A2_FULL | 명목상 마지막 30초 |
-| 90초 이후 실제 입력 차단까지 | A2_FULL 유지 | 종료 처리 꼬리; 엄격한 90초 cutoff가 아니다 |
+| [60, 90)초 | A2_FULL | 마지막 분석 구간 |
+| 90초 이후 실제 입력 차단까지 | POST_90S_FULL | FULL 읽기는 유지하지만 분석 구간에서 제외 |
 
 종료는 기존 stats 루프가 duration 초과를 보고 Qt 경로가 종료 요청을 처리하는 방식이다.
-스케줄링 지연·긴 callback·native 정지 시 90초에 정확히 끝난다는 보장은 없다.
-현재 A2 누적 계수는 그 꼬리를 포함하며, 기존 telemetry에는 callback별 구독 후 경과 시간이 없다.
-따라서 **A2 전체 계수를 무조건 30으로 나눈 처리율을 비교하지 않는다.** 엄격한 [60,90) 분석이
-필요하면 실제 구간을 구분할 추가 경계 근거/계측이 별도 필요하다. 이를 위해 자동 실행 시간을
-늘리거나 강제 종료를 추가하지 않았다.
+스케줄링 지연·긴 callback·native 정지 시 90초에 정확히 입력이 차단된다는 보장은 없다.
+그래서 읽기 정책을 바꾸거나 강제 종료하는 대신 **90초 이후 callback을 별도 POST phase로 분리**한다.
+A2 누적치는 FID 읽기 정책을 결정한 monotonic 시점이 [60,90)인 callback만 포함하고,
+POST 누적치는 종료 요청 뒤 실제 입력 차단까지의 꼬리를 보존한다.
+
+경계 직전에 시작해 FID 읽기 도중 90초를 넘긴 callback은 시작 시 결정된 A2에 남는다.
+이는 callback 중간에 정책을 바꾸지 않는 기존 계약과 일치한다. 따라서 A2에서 post-90 시작 callback이
+섞이는 문제는 제거되지만, 30초 phase마다 backlog를 초기화하지 않으므로 callback 수/30을
+독립 정상상태의 순수 service rate로 해석하지 않는다. 자동 실행 시간을 늘리거나 강제 종료를 추가하지 않았다.
 
 ## 누적 backlog와 표본의 한계
 
@@ -119,6 +125,8 @@ logger는 관측 서버 flag가 mock `1`이 아닐 때 backend/구독 전에 중
 초기 sidecar 쓰기 실패는 구독 전에 시작 실패로 처리하고 새 저장 worker 종료를 시도한다.
 종료 시 counter snapshot 쓰기/replace 실패는 경고를 남기고 기존 sidecar와 raw 종료 경로를 보존한다.
 기존 sidecar가 없거나 counter flush가 실패한 실행은 완전한 실험 근거로 사용하지 않는다.
+sidecar schema는 tail 분리로 `fid_read_ab_test_v2`이며 A1/B/A2를
+`analysis_window=true`, PRE/POST를 false로 표시한다. POST가 0이어도 90초 정시 종료를 인증하지 않는다.
 sidecar counter snapshot은 저장 drain 전에 쓰이며 정상 drain/프로세스 종료 증거가 아니다.
 
 저장 close, Qt quit, PID 부재, native 창 부재, lease free는 다른 사실이다.
@@ -134,5 +142,6 @@ CI 집중 실행과 전체 실행에는 중복이 있으므로 합산하지 않�
 정확한 최종 HEAD/run/job와 결과는 별도 감사 PR의 최종 보고를 따른다.
 
 남은 실제 실험 판단에는 현재 원격 ref, 공식 거래일/시장 구간, RUNBOOK/현재 CLI,
-별도 종료 관측과 승인, A2 꼬리 구간 분석 여부를 다시 대조해야 한다.
+별도 종료 관측과 승인을 다시 대조해야 한다. A2/POST 분리는 분석 오염을 줄이는 합성 보강일 뿐
+실제 시장 실행 승인이나 native 원인 확정은 아니다.
 이번 패치/CI만으로 실행이나 병합을 승인하지 않는다.

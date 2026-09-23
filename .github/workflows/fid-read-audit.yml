@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - diag/fid-read-aba-20260923
+      - audit/fid-read-aba-safety-20260923
 
 permissions:
   contents: read
