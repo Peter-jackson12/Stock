@@ -424,6 +424,12 @@ def analyze_fid_read_ab_session(session_dir: Path, *, expected_revision: str | N
         issues.append({"severity": "invalid", "id": "sidecar_server", "reason": str(sidecar.get("intended_server"))})
     if sidecar.get("strict_phase_windows") is not True or sidecar.get("post_90s_callbacks_separated") is not True:
         issues.append({"severity": "invalid", "id": "phase_window_contract", "reason": "v2_phase_contract_required"})
+    if sidecar.get("duration_is_shutdown_request_not_hard_cutoff") is not True:
+        issues.append({"severity": "invalid", "id": "duration_contract", "reason": "shutdown_request_required"})
+    if sidecar.get("pure_com_cost_experiment") is not False:
+        issues.append({"severity": "invalid", "id": "cost_coupling_contract", "reason": "pure_com_must_be_false"})
+    if sidecar.get("backlog_reset_between_phases") is not False:
+        issues.append({"severity": "invalid", "id": "backlog_contract", "reason": "backlog_reset_must_be_false"})
     phase_meta = sidecar.get("phases")
     if not isinstance(phase_meta, dict):
         issues.append({"severity": "invalid", "id": "phase_metadata", "reason": "missing_or_not_object"})
