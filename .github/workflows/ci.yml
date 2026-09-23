@@ -29,6 +29,11 @@ jobs:
           enable-cache: false
       - name: Install locked dependencies
         run: uv sync --locked --group dev --python 3.14
+      - name: Compare historical collector revisions with fixed synthetic input
+        timeout-minutes: 4
+        run: >-
+          uv run --locked --offline python scripts/benchmark_collector_revisions.py
+          --pairs 2000 --repeats 3
       - name: Audit protected synthetic clone and failure preservation
         timeout-minutes: 2
         run: |
