@@ -71,6 +71,7 @@ jobs:
           tests/test_fid_read_ab_analysis.py
           tests/test_fid_read_ab_assessment.py
           tests/test_fid_read_ab_admission.py
+          tests/test_fid_read_ab_run_plan.py
       - name: Check collector syntax for Python 3.10
         run: >-
           uv run --locked --offline python -c
