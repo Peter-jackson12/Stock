@@ -146,7 +146,7 @@ $windows = @(Get-Process | Where-Object { $_.MainWindowTitle } |
             collector.append({
                 "pid": pid,
                 "name": item.get("Name"),
-                "command_line": command_text[:2048],
+                "collector_marker_matched": True,
                 "executable": executable,
             })
             continue
@@ -156,7 +156,7 @@ $windows = @(Get-Process | Where-Object { $_.MainWindowTitle } |
                 same_runtime_other.append({
                     "pid": pid,
                     "name": item.get("Name"),
-                    "command_line": command_text[:2048] if command_text else None,
+                    "command_line_present": bool(command_text),
                     "executable": executable,
                 })
 
