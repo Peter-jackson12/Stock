@@ -63,9 +63,13 @@ sidecar 누락/flush 실패/진단 오류가 있는 결과를 완전한 실험�
 통합 후보에서는 제거하고 전용 FID 회귀를 기존 `CI`의 조기 단계에 편입한다.
 이렇게 해야 master 기준 PR에서도 같은 경계 검사가 유지되고 죽은 workflow를 남기지 않는다.
 
-**다음 기본 행동은 이 통합 후보의 master-base 전체 CI와 누적 diff를 확인한 뒤,
-기존 스택의 정리 여부와 실제 Mock 실험 준비를 별도 판단하는 것**이다.
-이 문서는 실제 OCX/시장 실행, master/PR 병합, 로컬 배포 승인이나 실행 지시가 아니다.
+통합 후보의 master-base CI와 누적 diff 검증 뒤, 실제 실행 절차는
+[COLLECTION_RUNBOOK의 Mock 전종목 FID A-B-A 절](docs/COLLECTION_RUNBOOK.md#mock-전종목-fid-a-b-a--실행-전-사전점검과-1회-실행-계약)에 고정했다.
+다음 기본 행동은 Windows 전용 clean checkout/worktree에서 **로그인 없는 `--preflight`**를 실행해
+32비트 Python·OCX 등록·정확한 revision·기존 collector/PID/Runtime 잔류·free space를 확인하는 것이다.
+preflight 자체는 실제 Mock 로그인·수집 승인이 아니다.
+
+실제 Mock 90초 1회는 공식 거래일/시장 구간을 당일 다시 확인하고 사전점검이 모두 통과한 뒤 별도 실행한다.
 GitHub에서 가능한 작업은 일반 채팅에서 수행한다. 로컬 원본/OCX가 필요한 일만 별도 승인 후 넘긴다.
 
 ## 2026-09-23 장애 — 사용자 전달 로컬 보고
