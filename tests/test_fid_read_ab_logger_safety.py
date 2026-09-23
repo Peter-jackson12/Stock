@@ -103,6 +103,7 @@ def test_actual_registration_is_not_repeated_at_phase_switches(diagnostic, monke
 
 def test_sidecar_initial_write_failure_prevents_subscription_and_drains(diagnostic, monkeypatch):
     logger, _, messages, _, _ = diagnostic
+    unstarted_legacy_path = logger.db_path
     original = Path.write_text
     def write(path, *args, **kwargs):
         if path.name == SIDECAR_NAME:
@@ -115,8 +116,13 @@ def test_sidecar_initial_write_failure_prevents_subscription_and_drains(diagnost
     assert logger._shutdown_done and logger.exit_code == 2 and registered == []
     assert logger.raw_capture is not None and logger.raw_capture.queue.done.is_set()
     assert any("sidecar initial write sentinel" in message for message in messages)
-    assert logger.db_path is None or Path(logger.db_path).is_file()
+    # db_path is published only after sidecar setup; the backend owns the new raw.
+    assert logger.db_path == unstarted_legacy_path
+    assert not Path(unstarted_legacy_path).exists()
     assert logger.raw_capture.path.is_file()
+    with read_raw_v2(logger.raw_capture.path) as (manifest, rows):
+        assert manifest["feed_scope"] == FEED_SCOPE_DIAGNOSTIC
+        assert len(list(rows)) == 1  # session_start only; no subscription callback
 
 
 def test_sidecar_final_replace_failure_preserves_old_evidence_and_storage_completion(diagnostic, monkeypatch):
@@ -152,14 +158,18 @@ def test_diagnostic_read_failure_survives_in_stored_callback_error(diagnostic):
     assert logger.exit_code == 2 and logger.raw_capture.queue.done.is_set()
     conn = sqlite3.connect(logger.raw_capture.path)
     try:
+        manifest = json.loads(conn.execute("SELECT value FROM metadata").fetchone()[0])
         rows = [json.loads(row[0]) for row in conn.execute("SELECT payload FROM events ORDER BY seq")]
     finally:
         conn.close()
+    assert manifest["state"] == "incomplete"
     failures = [row for row in rows if row["event"].get("control_type") == "callback_error"]
     assert len(failures) == 1
-    assert failures[0]["raw_fields"]["fids"]["20"] == "090000"
-    assert failures[0]["raw_fields"]["fids"]["10"] == " -10000 "
-    assert "_read_error" in failures[0]["raw_fields"]["fids"]
+    # CaptureControl stores partial raw FIDs in event.details, not normalized raw_fields.
+    fids = failures[0]["event"]["details"]["fids"]
+    assert fids["20"] == "090000"
+    assert fids["10"] == " -10000 "
+    assert "_read_error" in fids and "15" not in fids
     sidecar = json.loads((logger.raw_capture.directory / SIDECAR_NAME).read_text(encoding="utf-8"))
     assert sidecar["phase_counters"]["fid_attempts_by_phase"][PHASE_B] == 3
     assert sidecar["phase_counters"]["fid_calls_by_phase"][PHASE_B] == 2

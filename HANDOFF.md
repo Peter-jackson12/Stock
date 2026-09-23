@@ -1,7 +1,8 @@
 # 현재 인계 — 2026-09-23 / PR #20 독립 안전성 감사
 
 [문서 인덱스](README.md) · [실험/감사 계약](tests/FID_READ_AB_DIAGNOSTIC.md) ·
-[파이프라인 지도](docs/PIPELINE_MAP.md) · [첫 시험 체크리스트](BACKTEST_TODO.md)
+[파이프라인 지도](docs/PIPELINE_MAP.md) · [첫 시험 체크리스트](BACKTEST_TODO.md) ·
+[보존본 안내](docs/archive/README.md)
 
 ## ref와 작업 경계
 
@@ -89,6 +90,13 @@ whole-file 무결성/품질 분포와 첫 실제 연구는 미완료이고 FIRST
 9월 22일 12,940,107,776바이트 raw와 이 50.6GB 원본을 혼동하지 않는다.
 
 ## 계속 보존할 실패와 금지선
+
+PR #22 최초 HEAD `a19cbd88cd8de85fd4d0fe77621abd6af487397e`의 집중 run `35853068603`은
+129 passed / 2 failed였다. 새 테스트가 시작 전 legacy db_path를 실제 raw-v2 경로로 오인했고,
+callback_error의 FID 위치를 event.details 대신 raw_fields로 읽었다. 실제 경로/스키마로 교정하고
+원본 보존·미완료 manifest 검증은 강화했다. 전체 CI #230(run `35853068700`)은 사전 회귀에서
+132 passed / 2 failed로 중단돼 전체 단계가 실행되지 않았다. 추가된 정책 hash에 따른 파일 수
+기대값과 빠진 archive 링크를 수정했다. 이 실패를 운영 collector/native 장애나 전체 통과로 쓰지 않는다.
 
 CI #156의 flush 예외 close 누락, #162의 raw startup 실패 이력을 지우지 않는다.
 #162 근본 원인은 미확정이다. PR #19의 #205/#206 harness 실패와 최종 성공도 구분한다.
