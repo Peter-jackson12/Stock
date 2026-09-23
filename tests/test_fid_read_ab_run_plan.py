@@ -219,6 +219,8 @@ def test_tampered_manual_executable_is_rejected_even_when_admission_digest_is_va
     with pytest.raises(FidReadRunPlanError, match="manual command changed"):
         verify_plan_for_manual_command(
             plan,
+            trusted_expected_revision=REV,
+            execution_approved_now=True,
             now_kst=now + timedelta(seconds=1),
             admission_runner=lambda *_a, **_k: fresh,
         )
