@@ -92,6 +92,44 @@ C:\Projects\Stock\.venv32\Scripts\python.exe scripts\check_fid_read_ab_admission
 
 `RUN_READY`라도 서버 가용성·실시간 수신·native 안정성·실험 성공은 미인증이다.
 
+### 3-2. short-lived run plan 생성과 fresh verify
+
+`RUN_READY` admission을 그대로 오래 들고 있다가 실행하지 않는다. admission 관측 후 **60초 안**에
+create-only run plan을 만들고, plan은 **5분 뒤 만료**시킨다. plan은 admission 전체와 canonical
+SHA-256을 보존하지만 서명이 아니므로, 실제 명령을 보여주기 전에 trusted SHA와 실행 승인을 다시 받는다.
+
+plan 생성:
+
+```powershell
+C:\Projects\Stock\.venv32\Scripts\python.exe scripts\prepare_fid_read_ab_run.py `
+  --repo-root <clean execution worktree> `
+  --expected-revision <컨트롤타워가 방금 확인한 정확한 SHA> `
+  --official-market-date YYYY-MM-DD `
+  --official-market-source-note "<공식 KRX 근거와 확인 시각>" `
+  --execution-approved `
+  --output <새 plan JSON 경로>
+```
+
+prepare는 fresh admission을 직접 다시 수행한다. READY가 아니면 plan을 만들지 않는다.
+output은 새 파일만 허용하고 기존 plan을 덮어쓰지 않는다. collector는 실행하지 않는다.
+
+실제 명령을 보기 직전 fresh verify:
+
+```powershell
+C:\Projects\Stock\.venv32\Scripts\python.exe scripts\verify_fid_read_ab_run_plan.py `
+  --plan <방금 만든 plan JSON> `
+  --expected-revision <컨트롤타워가 다시 확인한 정확한 SHA> `
+  --execution-approved
+```
+
+verify는 plan 만료·embedded admission digest·trusted revision을 확인한 뒤 admission checker를 또 실행한다.
+HEAD/clean tree/preflight/process/window/lease/시간 중 하나라도 달라지면 명령을 숨기고 NOT_READY로 끝난다.
+READY여도 plan에 저장된 명령을 그대로 믿지 않고 fresh admission의 Python executable과 현재 worktree의
+`kiwoom_universe_logger.py` 경로로 exact command를 다시 계산해 plan과 일치할 때만 출력한다.
+
+verify의 `MANUAL_COMMAND_READY`도 **자동 실행 승인이 아니다**. 출력된 명령은 사람이 확인해 수동으로
+실행할 대상일 뿐이고 verify/prepare 어느 쪽도 collector launch·OCX login·SetRealReg를 호출하지 않는다.
+
 ### 4. 승인 후 실제 Mock 1회 실행
 
 사전점검과 당일 거래일/구간 확인이 통과한 경우에만 다음 **한 번의 독립 실행**을 사용한다.
