@@ -28,8 +28,11 @@ PR #29 branch `audit/fid-chain-fail-closed-20260924`는 PR #28 `c156108c269ffec5
 production도 plan에 admission 사본을 넣는다. 감사 assertion 자체는 약화하지 않았다.
 
 CI는 감사 전용 workflow 대신 PR #28의 정상 CI로 복원하고 FID 집중 단계에 감사/보강 회귀를 넣었다.
-정확한 최종 HEAD·run·job·결과는 PR #29의 checks와 완료 보고에서 확인한다(이 파일에 고정하지 않음).
-집중·전체·반복·subtest 결과를 합산하지 않는다.
+R1 보강 HEAD `e653194f532d61fa908c6161eb423302530fa9b4`에서 PR CI #325는 success였다.
+같은 SHA의 push CI #324는 제품 assertion이 아니라 감사의 PowerShell AST parser subprocess가
+정확히 10초 제한에 걸려 `TimeoutExpired`로 실패했다. 컨트롤타워가 job 로그를 직접 확인한 뒤
+그 **감사 테스트의 parser timeout만 30초로 늘렸고 production 코드는 건드리지 않았다**.
+#324 failure 이력은 보존한다. 집중·전체·반복·subtest 결과를 합산하지 않는다.
 
 ## 검증 범위와 남는 한계
 

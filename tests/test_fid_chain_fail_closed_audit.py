@@ -238,8 +238,10 @@ def test_powershell_display_is_a_parseable_invocation():
               "$env:FID_AUDIT_COMMAND,[ref]$t,[ref]$e) | Out-Null; "
               "Write-Output (@($e).Count)")
     env = dict(os.environ, FID_AUDIT_COMMAND=command)
+    # GitHub-hosted Windows에서 powershell.exe cold start + AST parser가 10초를 넘긴
+    # #324 flake를 보존한다. 제품 동작 timeout이 아니라 감사용 parser subprocess 예산이다.
     r = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
-                       env=env, check=True, capture_output=True, text=True, timeout=10)
+                       env=env, check=True, capture_output=True, text=True, timeout=30)
     errors = int(r.stdout.strip())
     print("AUDIT powershell_parse_errors", errors)
     assert errors == 0
