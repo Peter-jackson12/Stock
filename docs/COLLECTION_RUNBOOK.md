@@ -107,11 +107,13 @@ C:\Projects\Stock\.venv32\Scripts\python.exe scripts\prepare_fid_read_ab_run.py 
   --official-market-date YYYY-MM-DD `
   --official-market-source-note "<공식 KRX 근거와 확인 시각>" `
   --execution-approved `
-  --output <새 plan JSON 경로>
+  --output <repo-root>\operations_state\fid_read_ab_run_plans\<새 plan 이름>.json
 ```
 
 prepare는 fresh admission을 직접 다시 수행한다. READY가 아니면 plan을 만들지 않는다.
-output은 새 파일만 허용하고 기존 plan을 덮어쓰지 않는다. collector는 실행하지 않는다.
+output은 gitignored `operations_state/fid_read_ab_run_plans/` 아래 새 파일만 허용하며 기존 plan을
+덮어쓰지 않는다. plan 생성 자체가 다음 fresh `git status`를 dirty로 만들지 않게 하는 계약이다.
+collector는 실행하지 않는다.
 
 실제 명령을 보기 직전 fresh verify:
 
