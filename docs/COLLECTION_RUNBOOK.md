@@ -89,6 +89,19 @@ C:\Projects\Stock\.venv32\Scripts\python.exe scripts\analyze_fid_read_ab.py `
 analyzer가 READY를 반환해도 연구 적격이나 native 원인 규명으로 해석하지 않는다.
 LIMITED/DIAGNOSTIC_ERROR/INCOMPLETE/INVALID이면 두 번째 실행으로 덮지 말고 해당 작은 근거를 보존한다.
 
+READY인 경우에만 실제 결과 전에 고정한 `fid_read_ab_assessment_v1` 규칙을 적용한다.
+
+```powershell
+C:\Projects\Stock\.venv32\Scripts\python.exe scripts\assess_fid_read_ab.py `
+  --session-dir operations_state\capture_sessions\<session_id> `
+  --expected-revision <실행한 정확한 SHA>
+```
+
+1차 자동 판정은 체결/호가를 분리한 `fid_read_ns` A1/B/A2 중앙값의 방향만 본다.
+각 phase·real_type 유효 표본 3개 미만이면 not-assessable이다. 효과크기 threshold와 p-value는 없고,
+`processing_ns`는 보조, `queue_submit_ns`는 guardrail일 뿐이다.
+source clock difference·callback/30·resource history·PRE/POST는 자동 판정에 넣지 않는다.
+
 - raw manifest `feed_scope == "kiwoom_universe_fid_read_diagnostic"`
 - sidecar `fid_read_ab_test.json`은 `fid_read_ab_test_v2`, `diagnostic_only=true`, `research_eligible=false`
 - 최종 저장 snapshot의 closed/writer_closed, pending callback 0

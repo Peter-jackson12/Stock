@@ -12,29 +12,14 @@
 통합 후보는 master에 아직 병합되지 않았고 실제 시장 실행·로컬 배포 승인도 아니다.
 원격 GitHub에 보이지 않는 로컬 동시 작업까지 없다고 인증하는 것은 아니다.
 
-확인한 master는 `5b5156f810b7852c6b5fa4b5c42b77ddfbca0a70`, 최신 master CI #195 success다.
-기존 전체 기준은 1,565 passed / 6 deselected다. PR #20의 기존 CI #210
-(run `35835764747`, job `107098720365`) 로그는 1,588 passed / 6 deselected였다.
-PR #22 최종 전체 CI #234는 1,636 passed / 6 deselected, PR #23 최종 전체 CI #244는
-1,638 passed / 6 deselected였다. PR #23 집중 audit #5는 133 passed였다.
-통합 후보 자체의 정확한 HEAD와 master-base CI 결과는 현재 consolidation PR/Actions를 확인한다.
-집중·전체·반복 실행은 합산하지 않으며 deselected는 통과가 아니다.
-
-함께 열린 PR은 별개이며 자동 병합하지 않는다.
-
-| PR | 역할 | 인계 기준 HEAD |
-|---|---|---|
-| #18 | 일반 ChatGPT 운영 판단/수집 시각 계약 | `65a2feb333d81f3666ce41ee58d23e15199e0b69` |
-| #19 | 과거 revision 고정 합성 입력 비교 | `32e6285e2bd5a224a63152c2ed1f492b57afd841` |
-| #20 | 전종목 Mock FID A-B-A 준비 | `c263003da6be82cefe740d6b22896babfcc89cbc` |
-| #21 | 독립 근거 UI 표시·회귀 보강 | `4ce504dabca9baf37fd5c0a8dc062f484511c7ad` |
-| #22 | FID 진단 연구 배제·예외 보존 독립 보강 | `f50bd55120d1a3f754fc135cd98c5e2eadf4438d` |
-| #23 | A2 90초 이후 POST phase 분리 | `b5ae402aac0088d27382aa54ff29a619fc078185` |
-
-PR #21이 미병합이므로 master 인계는 과거 상태다. 최신 장애 보고와 로컬 근거 경로는
-[PR #21 고정 HANDOFF](https://github.com/Peter-jackson12/Stock/blob/4ce504dabca9baf37fd5c0a8dc062f484511c7ad/HANDOFF.md)에 있다.
-이 감사에 #18 문서 변경이나 #21 UI 코드를 무단 통합하지 않았다. #21의 1,622/6 및
-집중 114 성공은 그 PR의 결과이지 이번 감사의 테스트 수가 아니다. 그 검사를 재실행하지 않는다.
+확인한 master는 `5b5156f810b7852c6b5fa4b5c42b77ddfbca0a70`다.
+FID 진단 스택은 PR #20→#22→#23, master 기준 통합 후보는 PR #24,
+bounded analyzer는 PR #25, 실제 결과 전 사전등록 판정은 현재 후속 PR에서 진행 중이다.
+모두 draft/open/unmerged이며 자동 병합하지 않는다. PR #18/#19/#21도 별개 범위로 유지한다.
+과거 HEAD/CI와 중간 실패는 각 PR/Actions 및
+[PR #21 고정 HANDOFF](https://github.com/Peter-jackson12/Stock/blob/4ce504dabca9baf37fd5c0a8dc062f484511c7ad/HANDOFF.md),
+[PR #20 검토 기준 HANDOFF](https://github.com/Peter-jackson12/Stock/blob/c263003da6be82cefe740d6b22896babfcc89cbc/HANDOFF.md)에 보존한다.
+집중·전체·반복 테스트는 합산하지 않고 deselected는 통과로 세지 않는다.
 
 ## 이번 보강과 남은 한계
 
@@ -72,28 +57,33 @@ preflight 자체는 실제 Mock 로그인·수집 승인이 아니다.
 실제 Mock 90초 1회는 공식 거래일/시장 구간을 당일 다시 확인하고 사전점검이 모두 통과한 뒤 별도 실행한다.
 GitHub에서 가능한 작업은 일반 채팅에서 수행한다. 로컬 원본/OCX가 필요한 일만 별도 승인 후 넘긴다.
 
+## FID A-B-A 결과 판정 사전등록 — 실제 운영 결과 전
+
+PR #25의 bounded analyzer 위에서 `fid_read_ab_assessment_v1` 규칙을 별도 후속 브랜치에 고정했다.
+이 작업은 실제 Mock A-B-A 운영 결과를 보기 전에 완료하는 pre-registration이며 collector hot path를 수정하지 않는다.
+
+- analyzer가 `CAPTURE_COMPLETE_ANALYSIS_READY`가 아니면 자동 A-B-A 판정을 하지 않는다.
+- 1차 지표는 `fid_read_ns`; 체결/호가는 절대 합치지 않는다.
+- A1/B/A2 각 phase·real_type의 유효 표본 최소 3개는 coverage guardrail이며 통계적 power 기준이 아니다.
+- 효과크기 threshold와 p-value는 두지 않고 실제 결과 뒤 조정하지 않는다.
+- B 중앙값이 A1/A2 둘보다 낮음/높음/그 외만 기술적으로 분류한다.
+- `processing_ns`는 보조, `queue_submit_ns`는 guardrail, source clock·callback/30·resource history는 자동 판정에서 제외한다.
+- PRE/POST는 A-B-A 비교에서 제외한다.
+- 결과 label은 causal verdict, research eligibility, 실시장 승인, Qt/COM/GIL/native 원인 규명이 아니다.
+
+실제 실행일에는 그 시점의 최종 PR 스택 HEAD를 다시 확인하고, 동일 revision에서 preflight를 재실행한 뒤
+`scripts/assess_fid_read_ab.py`로 bounded analyzer + 사전등록 판정을 함께 보존한다.
+
 ## 2026-09-23 FID A-B-A 로컬 preflight — 사용자 전달 보고
 
-아래는 일반 ChatGPT가 원격 GitHub에서 직접 관측한 사실이 아니라 **사용자가 전달한 로컬 에이전트 보고**다.
-preflight는 실제 로그인·Mock/Live 수집·SetRealReg·90초 실험 없이 수행됐다고 보고됐다.
-
-- 기존 저장소: `C:\Projects\Stock` — branch `diag/fid-read-aba-20260923` / `c263003…`, clean.
-- 전용 sibling worktree: `C:\Projects\Stock-preflight-fid-aba-20260923` — detached
-  `1bd0266b70bf0126c01bca5b8c53234a00aa4753`, origin consolidation branch와 일치, clean.
-- Python: `C:\Projects\Stock\.venv32\Scripts\python.exe`, CPython 3.10.11 x86 / 32-bit.
-- preflight JSON: `login_attempted=false`, `ocx_instantiated=false`, `ready=true`,
-  `ocx_registered=true`, `ocx_file_exists=true`, OCX path `C:\OpenAPI\KHOpenAPI.ocx`.
-- C: free bytes 보고값: `1,273,824,886,784`.
-- preflight 전후 `python.exe`/`pythonw.exe` 및 `kiwoom_universe_logger` 실행 없음,
-  Runtime/OpenAPI/Kiwoom 관련 창 없음으로 보고됐다.
-- 실제 raw session/operations_state 생성 없음. worktree에 import 부산물 `collector/**/__pycache__/*.cpython-310.pyc`만
-  생겼고 gitignored 상태로 보고됐다.
-- 최종 로컬 판정은 `LOCAL_PREFLIGHT_READY`다.
-
-`ready=true`와 이 로컬 판정은 Mock 로그인 성공, 서버 가용성, 실시간 수신, 전종목 처리 안정성,
-native 오류 부재를 인증하지 않는다. 실제 Mock 90초 1회는 실행 당일 공식 거래일/시장 구간과
-원격 PR #24 HEAD, clean worktree, collector/PID/Runtime 잔류를 다시 확인한 뒤에만 진행한다.
-첫 실제 실행 결과 검토 전에는 live 비교·동시 두 계정 비교·반복 전종목 실험으로 확대하지 않는다.
+일반 ChatGPT의 직접 관측이 아니라 사용자 전달 로컬 보고다.
+전용 sibling worktree에서 당시 PR #24 HEAD `1bd0266…`를 clean 상태로 사용했고,
+`C:\Projects\Stock\.venv32\Scripts\python.exe` CPython 3.10.11 x86,
+OCX `C:\OpenAPI\KHOpenAPI.ocx` 등록/파일 존재, C: free 1,273,824,886,784 bytes,
+collector/python/pythonw 및 Runtime/OpenAPI/Kiwoom 잔류 없음이 보고됐다.
+`--preflight`는 `login_attempted=false`, `ocx_instantiated=false`, `ready=true`였고
+실제 로그인·SetRealReg·raw session 생성 없이 `LOCAL_PREFLIGHT_READY`로 끝났다.
+이는 서버 가용성·실시간 수신·native 안정성을 인증하지 않으며 **실행 당일 현재 HEAD에서 다시 확인**한다.
 
 ## 2026-09-23 장애 — 사용자 전달 로컬 보고
 
@@ -131,21 +121,14 @@ whole-file 무결성/품질 분포와 첫 실제 연구는 미완료이고 FIRST
 
 ## 계속 보존할 실패와 금지선
 
-PR #22 최초 HEAD `a19cbd88cd8de85fd4d0fe77621abd6af487397e`의 집중 run `35853068603`은
-129 passed / 2 failed였다. 새 테스트가 시작 전 legacy db_path를 실제 raw-v2 경로로 오인했고,
-callback_error의 FID 위치를 event.details 대신 raw_fields로 읽었다. 실제 경로/스키마로 교정하고
-원본 보존·미완료 manifest 검증은 강화했다. 전체 CI #230(run `35853068700`)은 사전 회귀에서
-132 passed / 2 failed로 중단돼 전체 단계가 실행되지 않았다. 추가된 정책 hash에 따른 파일 수
-기대값과 빠진 archive 링크를 수정했다. 이 실패를 운영 collector/native 장애나 전체 통과로 쓰지 않는다.
-
-CI #156의 flush 예외 close 누락, #162의 raw startup 실패 이력을 지우지 않는다.
-#162 근본 원인은 미확정이다. PR #19의 #205/#206 harness 실패와 최종 성공도 구분한다.
-이전 인계 원문은
-[검토 기준 HANDOFF](https://github.com/Peter-jackson12/Stock/blob/c263003da6be82cefe740d6b22896babfcc89cbc/HANDOFF.md)에 보존된다.
+PR #22의 초기 focused/full harness 실패, CI #156의 flush 예외 close 누락,
+CI #162의 raw startup 실패(근본 원인 미확정), PR #19 #205/#206 harness 실패와 최종 성공을
+성공 이력으로 덮어쓰지 않는다. 세부 원문은 각 PR/Actions와 위 고정 HANDOFF에 보존한다.
 
 운영 raw/dump/operations_state/Daily_baseline/old_data/사용자 변경은 보존한다.
-자동 kill/restart/relogin, LAA 변경, queue 확대, 기본 FID 축소, 원본 시간 절단/방향 보정은 하지 않는다.
+자동 kill/restart/relogin, lock 삭제, Runtime 창 강제 종료, LAA 변경, queue 확대,
+기본 FID 축소, 원본 시간 절단/방향 보정은 하지 않는다.
 closed ≠ quality pass, 표본 clean ≠ whole-file clean, 무결성 ≠ 연구 적격성,
 qualification ≠ 전략 검증, CI 성공 ≠ native/실시장 인증이다.
 raw→LOB/feature 변환은 현 raw-v2 틱 연구의 필수 선행 단계가 아니다.
-시장 실행이 별도 승인되면 당일 공식 거래일·시장 구간과 RUNBOOK/market_sessions/현재 CLI를 다시 대조한다.
+시장 실행 전 당일 공식 거래일·시장 구간과 RUNBOOK/market_sessions/현재 CLI를 다시 대조한다.

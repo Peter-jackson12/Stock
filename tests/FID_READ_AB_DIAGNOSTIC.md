@@ -133,6 +133,39 @@ sidecar counter snapshot은 저장 drain 전에 쓰이며 정상 drain/프로세
 새 PID/창/lease 조회나 자동 collector 제어는 추가하지 않았다. sidecar 파일 원자 교체도
 전원 장애·native abort·모든 파일시스템 장애에서 완전 보존을 보장하지 않는다.
 
+## 실제 결과 보기 전 사전등록한 A-B-A 판정 규칙
+
+실제 Mock A-B-A 운영 결과를 보기 전에 `fid_read_ab_assessment_v1` 규칙을 코드와 회귀로 고정한다.
+이 규칙은 원인 판정기가 아니라 **표본의 A-B-A 방향을 사후 변경 없이 기술하기 위한 pre-registration**이다.
+
+- bounded analyzer 결과가 `CAPTURE_COMPLETE_ANALYSIS_READY`가 아니면 자동 A-B-A 판정을 하지 않는다.
+- 1차 지표는 `fid_read_ns`다. callback 진입~FID 읽기·진단 bookkeeping 구간이며 순수 COM 시간이 아니다.
+- 체결과 호가는 FID 수가 다르므로 절대 한 표본으로 합치지 않고 각각 따로 판정한다.
+- A1/B/A2 각 phase·real_type에서 `fid_read_ns` 유효 표본이 **최소 3개** 있어야 한다.
+  3개는 통계적 power 기준이 아니라 30초/5초 sampling에서 절반 이상의 phase coverage를 요구하는 고정 guardrail이다.
+- 효과크기 임계값은 두지 않고 p-value/유의성 검정도 하지 않는다. 실제 결과를 본 뒤 threshold를 조정하지 않는다.
+- 각 real_type의 중앙값 순서만 `B < A1 & A2`, `B > A1 & A2`, 그 외 mixed/tied로 분류한다.
+- 체결·호가가 둘 다 `B < A1 & A2`이면 `PRIMARY_B_LOWER_BOTH_REAL_TYPES`,
+  둘 다 반대면 `PRIMARY_B_HIGHER_BOTH_REAL_TYPES`, 나머지는 mixed 또는 not-assessable이다.
+- `processing_ns`는 보조 corroboration일 뿐 1차 `fid_read_ns` 판정을 뒤집지 않는다.
+- `queue_submit_ns`는 guardrail 기술만 하고, source clock difference·callback/30·resource history는 자동 판정에서 제외한다.
+- PRE와 POST는 A-B-A 비교에서 제외한다. POST는 증거로 보존하지만 A2에 섞지 않는다.
+
+`B_LOWER_THAN_BOTH_FULL`은 ESSENTIAL 구간에서 **표본화된 FID-read 경로 시간이 낮은 순서와 양립**한다는 뜻뿐이다.
+COM 호출 감소가 원인이라고 증명하지 않으며 문자열·dict·JSON·저장 payload·worker 비용이 함께 달라진다.
+`B_HIGHER_THAN_BOTH_FULL`도 fewer reads가 해롭다는 증명이 아니다. 시장 부하·누적 backlog·표본 종목 차이는 남는다.
+
+실행 명령은 bounded analyzer와 같은 세션 근거만 사용하며 raw DB를 열지 않는다.
+
+```powershell
+C:\Projects\Stock\.venv32\Scripts\python.exe scripts\assess_fid_read_ab.py `
+  --session-dir operations_state\capture_sessions\<session_id> `
+  --expected-revision <실행한 정확한 SHA>
+```
+
+출력의 `analysis`와 `assessment`를 함께 보존한다. `assessment`는 causal verdict, research eligibility,
+실시장 승인, Qt/COM/GIL/native 원인 규명이 아니다.
+
 ## 실행 후 bounded 결과 analyzer
 
 실제 90초 실행 뒤에는 raw DB 전체를 열기 전에 세션 폴더의 작은 근거만 먼저 대조한다.
