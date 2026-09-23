@@ -74,6 +74,14 @@ PR #25의 bounded analyzer 위에서 `fid_read_ab_assessment_v1` 규칙을 별�
 실제 실행일에는 그 시점의 최종 PR 스택 HEAD를 다시 확인하고, 동일 revision에서 preflight를 재실행한 뒤
 `scripts/assess_fid_read_ab.py`로 bounded analyzer + 사전등록 판정을 함께 보존한다.
 
+## FID A-B-A 실행 당일 admission
+
+`check_fid_read_ab_admission.py`는 로그인 전에 exact HEAD·clean tree·32비트 OCX preflight·
+free space·collector/Runtime 창·기존 lease·09:15~15:15 KST·사용자 1회 승인을 묶어
+`RUN_READY / RUN_BLOCKED / RUN_UNCERTAIN`으로 판정한다. 공식 거래일은 도구가 추정하지 않고
+컨트롤타워가 확인한 날짜·근거를 attestation으로 입력한다. 도구는 git fetch, OCX 생성/로그인,
+kill/restart, lock 삭제, raw scan을 하지 않는다. READY도 실제 수집 성공 인증은 아니다.
+
 ## 2026-09-23 FID A-B-A 로컬 preflight — 사용자 전달 보고
 
 일반 ChatGPT의 직접 관측이 아니라 사용자 전달 로컬 보고다.
