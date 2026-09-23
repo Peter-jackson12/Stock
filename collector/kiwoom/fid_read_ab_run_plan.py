@@ -16,6 +16,8 @@ from collector.kiwoom.fid_read_ab_admission import (
     AdmissionInputs,
     KST,
     RUN_READY,
+    TARGET_END,
+    TARGET_START,
     collect_and_evaluate,
 )
 
@@ -74,12 +76,51 @@ def _require_ready_admission(admission: dict, *, expected_revision: str, now_kst
         raise FidReadRunPlanError("explicit execution approval missing from admission")
     git = checks.get("git")
     preflight = checks.get("preflight")
+    disk = checks.get("disk")
+    processes = checks.get("processes")
+    lease = checks.get("lease")
+    cli_contract = checks.get("cli_contract")
+    market = checks.get("market_attestation")
     if not isinstance(git, dict) or git.get("head") != expected_revision or git.get("clean") is not True:
         raise FidReadRunPlanError("admission git identity is not exact and clean")
-    if not isinstance(preflight, dict) or preflight.get("executable") in (None, ""):
+    required_preflight = {
+        "python_bits": 32,
+        "login_attempted": False,
+        "ocx_instantiated": False,
+        "ready": True,
+        "ocx_registered": True,
+        "ocx_file_exists": True,
+    }
+    if not isinstance(preflight, dict) or any(preflight.get(k) != v for k, v in required_preflight.items()):
+        raise FidReadRunPlanError("admission preflight contract is not ready")
+    if not isinstance(preflight.get("executable"), str) or not preflight.get("executable"):
         raise FidReadRunPlanError("preflight executable missing")
+    if not isinstance(disk, dict) or disk.get("meets_code_minimum") is not True:
+        raise FidReadRunPlanError("admission disk contract is not ready")
+    if not isinstance(processes, dict) or processes.get("probe_ok") is not True:
+        raise FidReadRunPlanError("admission process probe is not ready")
+    if any(processes.get(name) for name in (
+        "collector_processes", "same_python_runtime_other_processes", "runtime_or_openapi_windows"
+    )):
+        raise FidReadRunPlanError("admission process state is not clear")
+    if not isinstance(lease, dict) or lease.get("confirmed_free") is not True:
+        raise FidReadRunPlanError("admission collector lease is not confirmed free")
+    if not isinstance(cli_contract, dict) or cli_contract.get("valid") is not True:
+        raise FidReadRunPlanError("admission CLI contract is not valid")
+    if not isinstance(market, dict) or market.get("external_attestation_only") is not True:
+        raise FidReadRunPlanError("external market attestation required")
 
     observed = _parse_kst(admission.get("observed_at_kst"), "admission observed_at_kst")
+    market_date = inputs.get("official_market_date")
+    source_note = inputs.get("official_market_source_note")
+    if market_date != observed.date().isoformat() or market.get("date") != market_date:
+        raise FidReadRunPlanError("market date attestation does not match admission observation date")
+    if not isinstance(source_note, str) or not source_note.strip() or market.get("source_note") != source_note:
+        raise FidReadRunPlanError("market source attestation mismatch")
+    local_time = observed.time().replace(tzinfo=None)
+    if not (TARGET_START <= local_time < TARGET_END):
+        raise FidReadRunPlanError("admission observation is outside the target execution window")
+
     age = (now_kst - observed).total_seconds()
     if age < 0:
         raise FidReadRunPlanError("admission observation is from the future")
