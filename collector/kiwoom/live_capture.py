@@ -14,6 +14,7 @@ from uuid import uuid4
 from collector.kiwoom.queued_capture import QueuedCapture
 from collector.kiwoom.queue_control import QueueStopReports
 from collector.kiwoom.capture_telemetry import observe
+from collector.research_input_policy import FID_READ_DIAGNOSTIC_SCOPE
 from control_tower.lifecycle import CaptureReport, ProcessIdentity
 from control_tower.report_journal import ReportJournal
 from control_tower.windows_process import WindowsProcess
@@ -21,6 +22,15 @@ from control_tower.storage_guard import require_disk_space
 
 TRADE_FIDS = (20, 10, 15, 14, 27, 28)
 QUOTE_FIDS = (21, *range(41, 81))
+
+
+def _diagnostic_clock(probe):
+    """선택된 표본의 시계 실패를 FID/큐 실패로 바꾸지 않는다."""
+    value = observe(probe, "clock_ns")
+    if type(value) is not int or value < 0:
+        observe(probe, "disable", "diagnostic_clock:invalid_value")
+        return None
+    return value
 
 
 class LiveRawCapture:
@@ -31,6 +41,15 @@ class LiveRawCapture:
                  feed_scope=None, fid_read_ab=None):
         if server not in ("mock", "live"):
             raise ValueError("observed mock/live server required")
+        # 직접 백엔드 호출에서도 OS 조회/파일 생성보다 먼저 진단 identity를 고정한다.
+        if fid_read_ab is not None:
+            if server != "mock":
+                raise ValueError("FID read diagnostic is mock-only")
+            if feed_scope is not None and feed_scope != FID_READ_DIAGNOSTIC_SCOPE:
+                raise ValueError("FID read diagnostic requires diagnostic feed_scope")
+            feed_scope = FID_READ_DIAGNOSTIC_SCOPE
+        elif feed_scope == FID_READ_DIAGNOSTIC_SCOPE:
+            raise ValueError("diagnostic feed_scope requires a FID read controller")
         if facts is None:
             with WindowsProcess(os.getpid()) as process:
                 facts = process.facts
@@ -99,16 +118,14 @@ class LiveRawCapture:
         diagnostic_phase = None
         fid_read_ns = None
         queue_submit_ns = None
+        progress = {"attempted": 0, "completed": 0} if controller is not None else None
         try:
             if controller is not None:
                 from collector.kiwoom.fid_read_ab_diagnostic import read_fids_for_phase
+                # 한 콜백의 FID 목록은 읽기 시작 전에 한 번만 정한다.
                 diagnostic_phase = controller.current_phase()
-                fids, fid_calls = read_fids_for_phase(real_type, diagnostic_phase, read_fid)
-                controller.note_callback(real_type, diagnostic_phase, fid_calls)
-                if sampled and probe is not None:
-                    # Extra clocks only on the already-selected low-frequency sample.
-                    mid = probe.clock_ns()
-                    fid_read_ns = mid - received_ns if mid >= received_ns else None
+                fids, fid_calls = read_fids_for_phase(
+                    real_type, diagnostic_phase, read_fid, fids=fids, progress=progress)
             else:
                 for fid in TRADE_FIDS if real_type == "주식체결" else QUOTE_FIDS:
                     fids[str(fid)] = read_fid(fid)  # Preserve source strings, including signs/whitespace.
@@ -116,6 +133,15 @@ class LiveRawCapture:
             self._error = f"FID read failed: {type(exc).__name__}: {exc}"
             fids["_read_error"] = self._error
             event_type = "callback_error"  # Worker preserves partial input as an error record.
+        if controller is not None and diagnostic_phase is not None:
+            fid_calls = progress["completed"]
+            observe(controller, "note_callback", real_type, diagnostic_phase, fid_calls,
+                    attempted_calls=progress["attempted"], read_failed=event_type == "callback_error")
+        if sampled and controller is not None and probe is not None:
+            # callback 진입부터 읽기/분기/계수 기록까지. 순수 COM 시간은 아니다.
+            mid = _diagnostic_clock(probe)
+            if mid is not None and mid >= received_ns:
+                fid_read_ns = mid - received_ns
         accepted = None
         try:
             accepted = self.queue.submit_tick(code=code, venue="unknown", real_type=event_type,
@@ -126,17 +152,21 @@ class LiveRawCapture:
                 kwargs = dict(code=code, real_type=real_type, fids=fids,
                               received_ns=received_ns, received_at_utc=received_at_utc,
                               accepted=accepted)
+                timing_available = True
                 if controller is not None and probe is not None:
-                    finished_ns = probe.clock_ns()
-                    kwargs["finished_ns"] = finished_ns
-                    if fid_read_ns is not None:
-                        q = finished_ns - received_ns - fid_read_ns
-                        queue_submit_ns = q if q >= 0 else None
-                    kwargs["diagnostic_phase"] = diagnostic_phase
-                    kwargs["fid_call_count"] = fid_calls
-                    kwargs["fid_read_ns"] = fid_read_ns
-                    kwargs["queue_submit_ns"] = queue_submit_ns
-                observe(probe, "callback_sample", **kwargs)
+                    finished_ns = _diagnostic_clock(probe)
+                    timing_available = finished_ns is not None and finished_ns >= received_ns
+                    if timing_available:
+                        kwargs["finished_ns"] = finished_ns
+                        if fid_read_ns is not None:
+                            q = finished_ns - received_ns - fid_read_ns
+                            queue_submit_ns = q if q >= 0 else None
+                        kwargs["diagnostic_phase"] = diagnostic_phase
+                        kwargs["fid_call_count"] = fid_calls
+                        kwargs["fid_read_ns"] = fid_read_ns
+                        kwargs["queue_submit_ns"] = queue_submit_ns
+                if timing_available:
+                    observe(probe, "callback_sample", **kwargs)
         if accepted:
             if real_type == "주식체결":
                 self.received_trades += 1

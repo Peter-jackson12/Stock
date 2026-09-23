@@ -20,6 +20,7 @@ import uuid
 
 from collector.raw_archive import reject_sqlite_sidecars, sealed_source
 from collector.raw_v2 import CaptureControl, _read_raw_v2_connection
+from collector.research_input_policy import research_exclusion_reason
 
 
 SCHEMA = "raw_v2_qualification_v1"
@@ -37,7 +38,7 @@ def _file_hash(path):
 def _code_provenance():
     root = Path(__file__).resolve().parents[1]
     names = ("collector/raw_v2_qualification.py", "collector/raw_v2.py",
-             "collector/raw_archive.py")
+             "collector/raw_archive.py", "collector/research_input_policy.py")
     return {name: _file_hash(root / name) for name in names}
 
 
@@ -319,6 +320,11 @@ def qualify_raw_v2(path, *, output_root, expected_session_id, closure_evidence):
             "eligible": False,
             "reasons": ["stream integrity was not fully verified"],
             "paired_tick_and_parse_error_are_one_logical_issue": True}
+    exclusion = research_exclusion_reason(manifest)
+    if exclusion is not None:
+        detail["research_eligible"] = False
+        detail["research_eligibility"]["eligible"] = False
+        detail["research_eligibility"]["reasons"].append(exclusion)
     report = {
         "schema": SCHEMA, "run_id": run_id,
         "status": "completed" if integrity else "failed",

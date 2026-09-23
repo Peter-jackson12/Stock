@@ -1,14 +1,13 @@
-"""FID read A-B-A diagnostic helpers (Mock-only experiment prep).
+"""Mock 전용 FID 읽기 정책 A-B-A 진단.
 
-Independent variable: number of GetCommRealData calls inside the callback.
-Subscription (SetRealReg / REAL_FIDS / screens) must not change across phases.
-Default collector path is unchanged when the diagnostic flag is off.
+구독은 고정하지만 COM 호출·반환 문자열·JSON/저장 비용은 함께 변한다.
+순수 COM 비용의 단일변수 실험이 아니다. 기본 OFF 경로는 유지한다.
 """
 from __future__ import annotations
 
 from collector.kiwoom.live_capture import QUOTE_FIDS, TRADE_FIDS
+from collector.research_input_policy import FID_READ_DIAGNOSTIC_SCOPE
 
-# Phase labels used in telemetry / counters.
 PHASE_PRE = "PRE_SUBSCRIPTION_FULL"
 PHASE_A1 = "A1_FULL"
 PHASE_B = "B_ESSENTIAL"
@@ -19,12 +18,10 @@ PHASE_A1_END = 30.0
 PHASE_B_END = 60.0
 PHASE_A2_END = 90.0
 
-# Source fields actually required by tick_normalizer.normalize_tick for a
-# successful parse of the fields it emits (verified against tick_normalizer.py).
 TRADE_ESSENTIAL_FIDS = (20, 10, 15)
 QUOTE_ESSENTIAL_FIDS = (21, 41, 51, *range(61, 81))
 
-FEED_SCOPE_DIAGNOSTIC = "kiwoom_universe_fid_read_diagnostic"
+FEED_SCOPE_DIAGNOSTIC = FID_READ_DIAGNOSTIC_SCOPE
 SIDECAR_NAME = "fid_read_ab_test.json"
 SIDECAR_SCHEMA = "fid_read_ab_test_v1"
 RESOURCE_INTERVAL_SEC = 5.0
@@ -47,10 +44,10 @@ def full_fids_for(real_type: str) -> tuple[int, ...]:
 
 
 def phase_for_elapsed(elapsed_sec, *, subscribed: bool) -> str:
-    """Map seconds since _subscribed_at to A-B-A phase.
+    """읽기 정책: [0,30) FULL, [30,60) ESSENTIAL, 이후 FULL.
 
-    Pre-subscription callbacks stay on FULL. Boundaries use half-open intervals:
-    [0,30) A1 FULL, [30,60) B ESSENTIAL, [60,90) A2 FULL.
+    90초 이후에도 종료 요청 처리 전까지 FULL이다. 엄격한 90초 cutoff나
+    그 이후 콜백이 없는 분석 구간을 보장하는 함수가 아니다.
     """
     if not subscribed:
         return PHASE_PRE
@@ -73,31 +70,42 @@ def active_fids_for(real_type: str, phase: str) -> tuple[int, ...]:
     return full_fids_for(real_type)
 
 
-def read_fids_for_phase(real_type: str, phase: str, read_fid):
-    """Build a full-key fids dict; unread FIDs are explicitly None (never invented)."""
+def read_fids_for_phase(real_type: str, phase: str, read_fid, *, fids=None, progress=None):
+    """미조회 값은 None. 예외까지 읽은 원문과 호출 시도/완료 계수는 caller에 남긴다.
+
+    오류 뒤 아직 방문하지 않은 key는 만들지 않는다. None은 의도적으로
+    생략한 FID이지 성공적인 COM 반환이나 이전 callback 값이 아니다.
+    """
     full = full_fids_for(real_type)
     active = set(active_fids_for(real_type, phase))
-    fids = {}
-    calls = 0
+    if fids is None:
+        fids = {}
+    if progress is None:
+        progress = {"attempted": 0, "completed": 0}
     for fid in full:
         key = str(fid)
         if fid in active:
+            progress["attempted"] += 1
             fids[key] = read_fid(fid)
-            calls += 1
+            progress["completed"] += 1
         else:
             fids[key] = None
-    return fids, calls
+    return fids, progress["completed"]
 
 
 class FidReadAbController:
-    """Tiny in-memory phase counters + phase clock. No disk I/O on the hot path."""
+    """진단 정책 시계와 제한된 누적 계수. hot path 파일 I/O는 없다."""
 
     def __init__(self, *, monotonic=None):
         self._monotonic = monotonic
         self.subscribed_at = None
-        self.trade_by_phase = {PHASE_PRE: 0, PHASE_A1: 0, PHASE_B: 0, PHASE_A2: 0}
-        self.quote_by_phase = {PHASE_PRE: 0, PHASE_A1: 0, PHASE_B: 0, PHASE_A2: 0}
-        self.fid_calls_by_phase = {PHASE_PRE: 0, PHASE_A1: 0, PHASE_B: 0, PHASE_A2: 0}
+        self.diagnostic_error = None
+        phases = (PHASE_PRE, PHASE_A1, PHASE_B, PHASE_A2)
+        self.trade_by_phase = dict.fromkeys(phases, 0)
+        self.quote_by_phase = dict.fromkeys(phases, 0)
+        self.fid_calls_by_phase = dict.fromkeys(phases, 0)
+        self.fid_attempts_by_phase = dict.fromkeys(phases, 0)
+        self.read_failures_by_phase = dict.fromkeys(phases, 0)
 
     def mark_subscribed(self, at):
         self.subscribed_at = at
@@ -112,19 +120,35 @@ class FidReadAbController:
             now = clock()
         return phase_for_elapsed(now - self.subscribed_at, subscribed=True)
 
-    def note_callback(self, real_type: str, phase: str, fid_calls: int) -> None:
+    def disable(self, reason):
+        if self.diagnostic_error is None:
+            self.diagnostic_error = str(reason)[:256]
+
+    def note_callback(self, real_type: str, phase: str, fid_calls: int, *,
+                      attempted_calls=None, read_failed=False) -> None:
+        if self.diagnostic_error is not None:
+            return
         if real_type == "주식체결":
             self.trade_by_phase[phase] = self.trade_by_phase.get(phase, 0) + 1
         elif real_type == "주식호가잔량":
             self.quote_by_phase[phase] = self.quote_by_phase.get(phase, 0) + 1
         self.fid_calls_by_phase[phase] = self.fid_calls_by_phase.get(phase, 0) + int(fid_calls)
+        attempts = fid_calls if attempted_calls is None else attempted_calls
+        self.fid_attempts_by_phase[phase] = self.fid_attempts_by_phase.get(phase, 0) + int(attempts)
+        if read_failed:
+            self.read_failures_by_phase[phase] = self.read_failures_by_phase.get(phase, 0) + 1
 
     def snapshot(self) -> dict:
         return {
             "trade_callbacks_by_phase": dict(self.trade_by_phase),
             "quote_callbacks_by_phase": dict(self.quote_by_phase),
             "fid_calls_by_phase": dict(self.fid_calls_by_phase),
+            "fid_attempts_by_phase": dict(self.fid_attempts_by_phase),
+            "fid_read_failures_by_phase": dict(self.read_failures_by_phase),
             "subscribed_at_set": self.subscribed_at is not None,
+            "diagnostic_error": self.diagnostic_error,
+            "counter_scope": "callback_read_attempts_not_accepted_or_committed",
+            "a2_includes_shutdown_tail": True,
         }
 
 
@@ -135,12 +159,15 @@ def sidecar_payload(*, code_revision: str, intended_server: str = "mock") -> dic
         "research_eligible": False,
         "intended_server": intended_server,
         "subscription_unchanged": True,
+        "subscription_unchanged_is_design_claim": True,
         "duration_seconds": DURATION_SECONDS,
+        "duration_is_shutdown_request_not_hard_cutoff": True,
         "phases": {
             PHASE_PRE: {"fid_set": "FULL", "note": "callbacks before _subscribed_at"},
             PHASE_A1: {"elapsed": [0, PHASE_A1_END], "fid_set": "FULL"},
             PHASE_B: {"elapsed": [PHASE_A1_END, PHASE_B_END], "fid_set": "ESSENTIAL"},
-            PHASE_A2: {"elapsed": [PHASE_B_END, PHASE_A2_END], "fid_set": "FULL"},
+            PHASE_A2: {"elapsed": [PHASE_B_END, PHASE_A2_END], "fid_set": "FULL",
+                       "includes_shutdown_tail_after_nominal_end": True},
         },
         "full_fids": {"trade": list(TRADE_FIDS), "quote": list(QUOTE_FIDS)},
         "essential_fids": {
@@ -151,6 +178,19 @@ def sidecar_payload(*, code_revision: str, intended_server: str = "mock") -> dic
         "code_revision": code_revision,
         "resource_sample_interval_sec": RESOURCE_INTERVAL_SEC,
         "independent_variable": "GetCommRealData_call_count",
+        "independent_variable_is_nominal_treatment": True,
+        "pure_com_cost_experiment": False,
+        "co_varying_costs": ["source_string_allocation", "python_fid_dict_work",
+                             "json_serialization", "stored_payload_bytes", "worker_processing"],
+        "phase_clock": "time.monotonic_once_per_callback_before_fid_reads",
+        "backlog_reset_between_phases": False,
+        "sample_design": "first_callback_per_real_type_per_5_seconds_not_per_symbol",
+        "timing_scopes": {
+            "fid_read_ns": "callback_entry_through_fid_read_and_diagnostic_bookkeeping",
+            "queue_submit_ns": "post_read_clock_to_submit_return_including_python_overhead",
+            "processing_ns": "callback_entry_to_queue_submit_return_not_storage_drain",
+            "fid_call_count": "successfully_returned_reads_not_attempted_reads",
+        },
     }
 
 
