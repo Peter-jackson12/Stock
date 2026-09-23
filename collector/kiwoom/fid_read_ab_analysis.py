@@ -238,6 +238,24 @@ def _counter_summary(sidecar: dict, status: dict, issues: list[dict]) -> dict | 
     }
 
 
+def _sample_metrics(samples: list[dict]) -> dict:
+    codes = {s.get("code") for s in samples if isinstance(s.get("code"), str)}
+    clock_values = []
+    for sample in samples:
+        comparison = sample.get("clock_comparison")
+        if isinstance(comparison, dict) and comparison.get("status") == "unverified_clock_difference":
+            clock_values.append(comparison.get("difference_seconds"))
+    return {
+        "samples": len(samples),
+        "sampled_code_count": len(codes),
+        "processing_ns": _metric(s.get("processing_ns") for s in samples),
+        "fid_read_ns": _metric(s.get("fid_read_ns") for s in samples),
+        "queue_submit_ns": _metric(s.get("queue_submit_ns") for s in samples),
+        "fid_call_count": _metric(s.get("fid_call_count") for s in samples),
+        "clock_difference_seconds": _metric(clock_values),
+    }
+
+
 def _telemetry_summary(rows: list[dict] | None, *, session_id: str | None,
                        code_revision: str | None, issues: list[dict]) -> dict:
     if not rows:
@@ -274,26 +292,18 @@ def _telemetry_summary(rows: list[dict] | None, *, session_id: str | None,
                 issues.append({"severity": "invalid", "id": "telemetry_sample", "reason": "not_object"})
 
     by_phase = {}
+    by_phase_real_type = {}
     unlabeled = 0
     for phase in PHASES:
         phase_samples = [s for s in samples if s.get("diagnostic_phase") == phase]
-        codes = {s.get("code") for s in phase_samples if isinstance(s.get("code"), str)}
-        clock_values = []
-        for sample in phase_samples:
-            comparison = sample.get("clock_comparison")
-            if isinstance(comparison, dict) and comparison.get("status") == "unverified_clock_difference":
-                clock_values.append(comparison.get("difference_seconds"))
-        by_phase[phase] = {
-            "samples": len(phase_samples),
-            "trade_samples": sum(s.get("real_type") == "주식체결" for s in phase_samples),
-            "quote_samples": sum(s.get("real_type") == "주식호가잔량" for s in phase_samples),
-            "sampled_code_count": len(codes),
-            "processing_ns": _metric(s.get("processing_ns") for s in phase_samples),
-            "fid_read_ns": _metric(s.get("fid_read_ns") for s in phase_samples),
-            "queue_submit_ns": _metric(s.get("queue_submit_ns") for s in phase_samples),
-            "fid_call_count": _metric(s.get("fid_call_count") for s in phase_samples),
-            "clock_difference_seconds": _metric(clock_values),
-        }
+        phase_summary = _sample_metrics(phase_samples)
+        phase_summary["trade_samples"] = sum(s.get("real_type") == "주식체결" for s in phase_samples)
+        phase_summary["quote_samples"] = sum(s.get("real_type") == "주식호가잔량" for s in phase_samples)
+        by_phase[phase] = phase_summary
+        by_phase_real_type[phase] = {}
+        for real_type in ("주식체결", "주식호가잔량"):
+            typed = [s for s in phase_samples if s.get("real_type") == real_type]
+            by_phase_real_type[phase][real_type] = _sample_metrics(typed)
     unlabeled = sum(s.get("diagnostic_phase") not in PHASES for s in samples)
     if unlabeled:
         issues.append({"severity": "limited", "id": "telemetry_phase", "reason": f"{unlabeled}_unlabeled_samples"})
@@ -310,6 +320,7 @@ def _telemetry_summary(rows: list[dict] | None, *, session_id: str | None,
         "diagnostic_samples_dropped_max": dropped_max,
         "unlabeled_samples": unlabeled,
         "by_phase": by_phase,
+        "by_phase_real_type": by_phase_real_type,
         "clock_difference_note": (
             "sample-only signed clock difference under same-KST-day assumption; "
             "not network latency and not a feed-wide distribution"
