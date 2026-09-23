@@ -24,10 +24,19 @@ from collector.kiwoom.fid_read_ab_run_plan import (
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", type=Path, required=True)
+    parser.add_argument("--expected-revision", required=True,
+                        help="exact SHA freshly supplied by the control tower")
+    parser.add_argument("--execution-approved", action="store_true",
+                        help="fresh explicit approval for this one manual run")
     args = parser.parse_args(argv)
     try:
         plan = read_run_plan(args.plan)
-        result = verify_plan_for_manual_command(plan, now_kst=datetime.now(KST))
+        result = verify_plan_for_manual_command(
+            plan,
+            trusted_expected_revision=args.expected_revision,
+            execution_approved_now=args.execution_approved,
+            now_kst=datetime.now(KST),
+        )
     except (OSError, ValueError, TypeError, FidReadRunPlanError) as exc:
         print(json.dumps({
             "schema": "fid_read_ab_run_plan_verification_v1",
