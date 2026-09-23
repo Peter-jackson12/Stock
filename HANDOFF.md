@@ -5,8 +5,11 @@
 
 ## 이번 branch의 상태
 
-PR #29 branch `audit/fid-chain-fail-closed-20260924`는 PR #28 `c156108c269ffec55fc1bf7c843397d56781f112` 위의
-감사 커밋 `8faa80ee1194bbabb3245862fb18f3355377d7e9`와 그 반례를 해소하는 보강 커밋으로 구성된다.
+PR #29(draft/open/unmerged)의 현재 대상은 **master** `5b5156f810b7852c6b5fa4b5c42b77ddfbca0a70`이다.
+FID 누적 변경(#24~#28 개발 이력 포함)은 이 PR 한 곳에서 master 기준으로 검토한다. #24~#28은 이력 보존용이며
+merge/close/retarget하지 않는다. 개발 조상 관계로는 branch `audit/fid-chain-fail-closed-20260924`가 PR #28
+`c156108c269ffec55fc1bf7c843397d56781f112` 위의 감사 커밋 `8faa80ee1194bbabb3245862fb18f3355377d7e9`와
+그 반례를 해소하는 보강 커밋들로 구성된다(PR #28이 현재 대상이라는 뜻이 아니다).
 감사 CI #321(run 35926442378, job 107402550106)은 원래 production에서 26개 중 23개 실패였다.
 이 실패 이력은 지우지 않는다. 23개는 parameter case 수이며 독립 근본 원인 수가 아니다.
 
@@ -33,6 +36,20 @@ R1 보강 HEAD `e653194f532d61fa908c6161eb423302530fa9b4`에서 PR CI #325는 su
 정확히 10초 제한에 걸려 `TimeoutExpired`로 실패했다. 컨트롤타워가 job 로그를 직접 확인한 뒤
 그 **감사 테스트의 parser timeout만 30초로 늘렸고 production 코드는 건드리지 않았다**.
 #324 failure 이력은 보존한다. 집중·전체·반복·subtest 결과를 합산하지 않는다.
+
+`9b94dbf61876167094af8b4a43de8ef600d0d477`의 CI #327(run 35934021661, job 107426874350, retarget 전
+old-base merge ref)은 FID 집중 259 passed였지만 전체 **1 failed / 1,823 passed / 6 deselected**였다.
+실패는 `tests/test_live_collector.py::test_silence_stop_requests_shutdown_even_if_final_dump_fails[False]`의
+`len(calls) == 0`이고, fixture 로그에 `raw v2 시작 실패`가 있었다. 테스트가 시작 성공을 확인하지 않아
+최초 startup 예외 전문은 남지 않았다. **원인은 미확정이다.** 로컬(64비트 3.14) 단독·파일 전체·teardown
+인접 순서 실행에서 재현되지 않았고, 같은 임시 fixture의 LiveRawCapture 시작은 약 0.03초였다.
+#327 전체 실행 시간(371초)은 #323(192초)의 약 2배였지만 5초 queue ready 대기와의 관련은 추정일 뿐이며
+운영 timeout은 바꾸지 않았다. 보강은 테스트 범위로 한정했다. 시작 성공이 필요한 live 테스트는 목표
+assertion 전에 시작 성공을 검사하고, 실패하면 `raw v2 시작 실패: ...` 원문과 exit/shutdown/queue
+ready·done·state 같은 작은 상태를 실패 메시지에 남긴다(재시도 없음). 실제 writer 스레드의 의도한
+시작 실패 대조군도 추가했다. 재발하면 이 메시지로 원인을 확인한다.
+
+CI는 master push와 pull_request에서 실행한다. feature branch push의 중복 전체 실행은 없앴다.
 
 ## 검증 범위와 남는 한계
 
@@ -83,7 +100,8 @@ FID clock difference는 network latency가 아니고 progression/lag slope는 �
 작은 processing_ns·queue 0·offline 성공으로 Qt/COM/GIL/native 병목을 배제하지 않는다.
 
 CI #156/#162, PR #19 #205/#206, PR #22 초기 harness 실패, PR #26 CI #280 HANDOFF 초과 실패,
-PR #29 감사 CI #321의 23 failed를 보존한다. #162의 근본 원인은 미확정이다. deselected는 통과가 아니다.
+PR #29 감사 CI #321의 23 failed, #324 AST timeout, #327 live startup 실패를 보존한다.
+#162의 근본 원인은 미확정이다. deselected는 통과가 아니다.
 
 운영 raw/dump/operations_state/Daily_baseline/old_data/사용자 변경을 보존한다.
 자동 kill/restart/relogin, lock 삭제, Runtime 창 닫기, LAA 변경, queue 확대, 기본 FID 축소는 금지한다.
@@ -91,7 +109,8 @@ raw→LOB/feature 변환을 현 raw-v2 연구의 필수 선행 단계로 바꾸�
 
 ## 다음 행동
 
-1. PR #29 보강 HEAD의 자동 CI(push/pull_request) 결과를 확인하고, 별도 독립 재검토로 새 반례를 찾는다.
+1. PR #29 최신 HEAD의 자동 pull_request CI 결과를 확인한다. #327 유형 실패가 재발하면 새 실패 메시지의
+   startup 원문으로 원인을 좁히며, 재시도·skip·timeout 완화로 숨기지 않는다. green 전에는 병합 후보가 아니다.
 2. 병합 순서와 여부는 사용자가 결정한다. #24~#29 readiness를 운영 승인처럼 쓰지 않는다.
 3. 실제 Mock A-B-A는 별도 승인 후 당일 공식 거래일/시장 구간·최종 revision·현재 CLI를 다시 대조하고
    RUNBOOK 3-1/3-2 절차를 따른다. 이 branch 자체를 로컬 수집에 사용하지 않는다.

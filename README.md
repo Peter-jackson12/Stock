@@ -87,7 +87,7 @@ LOB/초봉 변환과 기존 런 비교는 유지하는 레거시 경로이며 �
 
 ## 개발 검증과 GitHub Actions
 
-push/PR마다 Windows + 64비트 Python 3.14 + 고정 uv/lock으로 Git-only pytest를 실행한다.
+master push와 PR마다 Windows + 64비트 Python 3.14 + 고정 uv/lock으로 Git-only pytest를 실행한다.
 Windows 파일 잠금·프로세스·소켓 합성 회귀를 포함한다. 상세 범위는 [테스트 안내](docs/TESTING.md)를 따른다.
 
 ```powershell

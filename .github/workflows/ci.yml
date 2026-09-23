@@ -1,7 +1,9 @@
 name: CI
 
 on:
+  # feature branch는 pull_request로 검사한다. push 검사는 master만 실행해 중복 전체 실행을 줄인다.
   push:
+    branches: [master]
   pull_request:
 
 permissions:

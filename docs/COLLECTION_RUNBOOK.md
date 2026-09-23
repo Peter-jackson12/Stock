@@ -22,7 +22,8 @@ GitHub CI 통과나 이 문서 자체는 로그인·실행 승인이 아니다.
 
 ### 2. 로그인 없는 사전점검
 
-전용 clean checkout/worktree에서 원격 PR #24의 현재 HEAD를 먼저 확인한다.
+전용 clean checkout/worktree가 사용자가 선택·승인한 최종 실행 revision의 exact SHA인지 먼저 확인한다.
+특정 PR 번호를 영구 최신 기준으로 쓰지 않는다.
 사용자 변경이 있는 checkout을 reset/stash/clean하지 않는다. 필요하면 새 worktree를 사용한다.
 실제 실행과 같은 인자에 `--preflight`만 추가한다.
 
@@ -49,7 +50,7 @@ git status --short
 
 아래 하나라도 충족하면 **로그인하지 않고 중단**한다.
 
-- checkout HEAD가 승인된 PR #24 HEAD와 다르거나 working tree가 깨끗하지 않다.
+- checkout HEAD가 사용자가 선택·승인한 최종 실행 revision의 exact SHA와 다르거나 working tree가 깨끗하지 않다.
 - 32비트 Python/OCX preflight가 실패한다.
 - 다른 `kiwoom_universe_logger.py` collector가 살아 있거나 기존 OCX/Runtime 오류 상태 종료가 미확인이다.
 - collector lease를 안전하게 획득할 조건이 불명확하다. lock 파일 존재만으로 생존/종료를 단정하지 않는다.
@@ -71,7 +72,7 @@ git status --short
 
 ```powershell
 C:\Projects\Stock\.venv32\Scripts\python.exe scripts\check_fid_read_ab_admission.py `
-  --repo-root <PR 스택의 clean 실행 worktree> `
+  --repo-root <승인된 exact SHA의 clean 실행 worktree> `
   --expected-revision <컨트롤타워가 방금 확인한 정확한 SHA> `
   --official-market-date YYYY-MM-DD `
   --official-market-source-note "<확인한 공식 KRX 근거와 시각>" `
