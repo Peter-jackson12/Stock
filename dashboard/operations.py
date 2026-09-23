@@ -8,6 +8,7 @@ import streamlit as st
 from control_tower.jobs import JobStore
 from control_tower.service import queue_inspection, plan_replay, start_inspection_worker
 from control_tower.status import observe_collector, observe_raw_capture
+from control_tower.session_assessment import assess_session
 from control_tower.managed_capture import ManagedCaptures, start_managed_capture, ACTIVE
 from control_tower.offline_worker import start_replay_worker, retry_replay_worker
 from control_tower.capture_health import CaptureHealth
@@ -16,6 +17,17 @@ from control_tower.replay_schedule import schedule_replay, schedules, expire_mis
 ROOT = Path(__file__).resolve().parents[1]
 JOB_STATUS = {"planned": "장외 계획", "queued": "실행 대기", "running": "실행 중 · 상태 확인 필요 시 이력 보존",
               "succeeded": "작업 완료", "failed": "작업 실패", "cancelled": "취소됨"}
+ASSESSMENT_LABEL = {
+    "unverified": "미확인", "active": "활성", "draining": "저장 마무리", "closed": "저장 닫힘",
+    "interrupted": "중단", "failed": "실패", "alive": "프로세스 존재", "absent": "프로세스 부재",
+    "access_denied": "접근 거부", "mismatch": "식별 불일치", "clear": "관련 창 없음",
+    "runtime_error": "Runtime 오류 창", "ocx_window_present": "OCX 창 존재", "held": "lease 보유",
+    "free": "lease 해제", "recent": "최근 수신", "stale": "오래된 수신", "clock_ahead": "시각 이상",
+    "lagging": "지연 증가", "stopped": "수신 정지", "diagnostic_only": "진단 전용",
+    "ineligible": "연구 부적격", "eligible": "연구 적격", "verified_exited": "종료 확인",
+    "residual_native": "native 잔류", "process_alive": "프로세스 존재",
+    "process_absent_native_unverified": "프로세스 부재·native 미확인", "contradictory": "근거 충돌",
+}
 
 
 def render_control_tower(root=None):
@@ -41,6 +53,20 @@ def render_control_tower(root=None):
         elif raw["status"] != "recent":
             st.warning("상태 파일이 오래됐거나 시각 확인이 필요합니다. 현재 수집기 생존은 미확인입니다.")
         st.caption("콜백 수와 raw 수는 다릅니다. 상태 파일은 관측 자료이며 프로세스 생존·데이터 품질 인증이 아닙니다.")
+    assessment = assess_session(raw, observation)
+    st.subheader("수집 상태 축")
+    axes = [
+        ("저장", assessment.storage), ("프로세스", assessment.process), ("native UI", assessment.native_ui),
+        ("lease", assessment.lease), ("feed freshness", assessment.feed), ("research", assessment.research),
+    ]
+    for offset in (0, 3):
+        columns = st.columns(3)
+        for column, (name, value) in zip(columns, axes[offset:offset + 3]):
+            column.metric(name, ASSESSMENT_LABEL.get(value, value))
+    st.caption(
+        "종료 근거: " + ASSESSMENT_LABEL.get(assessment.termination, assessment.termination)
+        + " · 저장 closed, lease free, queue 0은 각각 다른 근거이며 서로를 대신하지 않습니다."
+    )
     st.subheader("오늘 수집")
     heartbeat = observation["heartbeat"]
     if heartbeat:
