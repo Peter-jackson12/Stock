@@ -12,6 +12,7 @@ PHASE_PRE = "PRE_SUBSCRIPTION_FULL"
 PHASE_A1 = "A1_FULL"
 PHASE_B = "B_ESSENTIAL"
 PHASE_A2 = "A2_FULL"
+PHASE_POST = "POST_90S_FULL"
 
 DURATION_SECONDS = 90
 PHASE_A1_END = 30.0
@@ -23,7 +24,7 @@ QUOTE_ESSENTIAL_FIDS = (21, 41, 51, *range(61, 81))
 
 FEED_SCOPE_DIAGNOSTIC = FID_READ_DIAGNOSTIC_SCOPE
 SIDECAR_NAME = "fid_read_ab_test.json"
-SIDECAR_SCHEMA = "fid_read_ab_test_v1"
+SIDECAR_SCHEMA = "fid_read_ab_test_v2"
 RESOURCE_INTERVAL_SEC = 5.0
 
 
@@ -44,10 +45,10 @@ def full_fids_for(real_type: str) -> tuple[int, ...]:
 
 
 def phase_for_elapsed(elapsed_sec, *, subscribed: bool) -> str:
-    """읽기 정책: [0,30) FULL, [30,60) ESSENTIAL, 이후 FULL.
+    """읽기 정책: [0,30) FULL, [30,60) ESSENTIAL, [60,90) FULL, 이후 POST FULL.
 
-    90초 이후에도 종료 요청 처리 전까지 FULL이다. 엄격한 90초 cutoff나
-    그 이후 콜백이 없는 분석 구간을 보장하는 함수가 아니다.
+    90초 이후에도 종료 요청 처리 전까지 FID 읽기는 FULL을 유지하되,
+    분석 phase는 POST_90S_FULL로 분리해 A2 누적치에 종료 꼬리를 섞지 않는다.
     """
     if not subscribed:
         return PHASE_PRE
@@ -57,7 +58,9 @@ def phase_for_elapsed(elapsed_sec, *, subscribed: bool) -> str:
         return PHASE_A1
     if elapsed_sec < PHASE_B_END:
         return PHASE_B
-    return PHASE_A2
+    if elapsed_sec < PHASE_A2_END:
+        return PHASE_A2
+    return PHASE_POST
 
 
 def is_essential_phase(phase: str) -> bool:
@@ -100,7 +103,7 @@ class FidReadAbController:
         self._monotonic = monotonic
         self.subscribed_at = None
         self.diagnostic_error = None
-        phases = (PHASE_PRE, PHASE_A1, PHASE_B, PHASE_A2)
+        phases = (PHASE_PRE, PHASE_A1, PHASE_B, PHASE_A2, PHASE_POST)
         self.trade_by_phase = dict.fromkeys(phases, 0)
         self.quote_by_phase = dict.fromkeys(phases, 0)
         self.fid_calls_by_phase = dict.fromkeys(phases, 0)
@@ -148,7 +151,8 @@ class FidReadAbController:
             "subscribed_at_set": self.subscribed_at is not None,
             "diagnostic_error": self.diagnostic_error,
             "counter_scope": "callback_read_attempts_not_accepted_or_committed",
-            "a2_includes_shutdown_tail": True,
+            "a2_includes_shutdown_tail": False,
+            "post_90s_phase": PHASE_POST,
         }
 
 
@@ -163,12 +167,21 @@ def sidecar_payload(*, code_revision: str, intended_server: str = "mock") -> dic
         "duration_seconds": DURATION_SECONDS,
         "duration_is_shutdown_request_not_hard_cutoff": True,
         "phases": {
-            PHASE_PRE: {"fid_set": "FULL", "note": "callbacks before _subscribed_at"},
-            PHASE_A1: {"elapsed": [0, PHASE_A1_END], "fid_set": "FULL"},
-            PHASE_B: {"elapsed": [PHASE_A1_END, PHASE_B_END], "fid_set": "ESSENTIAL"},
+            PHASE_PRE: {"fid_set": "FULL", "analysis_window": False,
+                        "note": "callbacks before _subscribed_at"},
+            PHASE_A1: {"elapsed": [0, PHASE_A1_END], "fid_set": "FULL",
+                       "analysis_window": True},
+            PHASE_B: {"elapsed": [PHASE_A1_END, PHASE_B_END], "fid_set": "ESSENTIAL",
+                      "analysis_window": True},
             PHASE_A2: {"elapsed": [PHASE_B_END, PHASE_A2_END], "fid_set": "FULL",
-                       "includes_shutdown_tail_after_nominal_end": True},
+                       "analysis_window": True,
+                       "includes_shutdown_tail_after_nominal_end": False},
+            PHASE_POST: {"elapsed": [PHASE_A2_END, None], "fid_set": "FULL",
+                         "analysis_window": False,
+                         "note": "callbacks after nominal 90s until input stop"},
         },
+        "strict_phase_windows": True,
+        "post_90s_callbacks_separated": True,
         "full_fids": {"trade": list(TRADE_FIDS), "quote": list(QUOTE_FIDS)},
         "essential_fids": {
             "trade": list(TRADE_ESSENTIAL_FIDS),
