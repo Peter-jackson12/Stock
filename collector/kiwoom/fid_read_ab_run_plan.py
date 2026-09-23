@@ -3,28 +3,58 @@
 The plan binds one RUN_READY admission observation to an exact revision and exact
 collector command. It never launches the collector. Verification reruns the
 read-only admission checks before revealing the manual command.
+
+Time contract: an instant ``t`` is valid for a plan when ``created <= t < expires``.
+Verification evaluates its START and its COMPLETION (after the fresh admission and
+command recomputation). Passing verification says nothing about the interval between
+completion and a human actually running the command.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timedelta
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
+import re
+import time
 
 from collector.kiwoom.fid_read_ab_admission import (
+    CLOCK_TOLERANCE_SECONDS,
+    COLLECTOR_ARGS,
+    COLLECTOR_ENTRYPOINT,
+    MAX_ADMISSION_AGE_SECONDS,
+    AdmissionContractError,
     AdmissionInputs,
     KST,
     RUN_READY,
-    TARGET_END,
-    TARGET_START,
+    TARGET_WINDOW_TEXT,
     collect_and_evaluate,
+    in_target_window,
+    parse_kst,
+    require_kst,
+    require_ready_admission,
 )
 
 PLAN_SCHEMA = "fid_read_ab_run_plan_v1"
+VERIFICATION_SCHEMA = "fid_read_ab_run_plan_verification_v1"
 MAX_PLAN_BYTES = 1024 * 1024
-MAX_ADMISSION_AGE_SECONDS = 60
 PLAN_TTL_SECONDS = 300
+EXECUTION_CONTRACT = {
+    "automatic_execution": False,
+    "requires_manual_review": True,
+    "requires_fresh_verification": True,
+}
+PLAN_KEYS = {
+    "schema", "created_at_kst", "expires_at_kst", "ttl_seconds", "expected_revision",
+    "working_directory", "admission_sha256", "admission", "manual_command", "execution",
+    "forbidden_automatic_actions", "note",
+}
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+# PowerShell treats these as single quotes too; each is escaped by doubling.
+_PS_SINGLE_QUOTES = "'\u2018\u2019\u201a\u201b"
 
 
 class FidReadRunPlanError(ValueError):
@@ -49,85 +79,18 @@ def admission_sha256(admission: dict) -> str:
     return hashlib.sha256(_canonical_bytes(admission)).hexdigest()
 
 
-def _parse_kst(value: str, name: str) -> datetime:
+def _parse_kst(value, name: str) -> datetime:
     try:
-        parsed = datetime.fromisoformat(value)
-    except (TypeError, ValueError) as exc:
-        raise FidReadRunPlanError(f"invalid {name}") from exc
-    if parsed.utcoffset() != timedelta(hours=9):
-        raise FidReadRunPlanError(f"{name} must use explicit UTC+09:00")
-    return parsed
+        return parse_kst(value, name)
+    except AdmissionContractError as exc:
+        raise FidReadRunPlanError(str(exc)) from exc
 
 
-def _require_ready_admission(admission: dict, *, expected_revision: str, now_kst: datetime) -> None:
-    if not isinstance(admission, dict) or admission.get("schema") != "fid_read_ab_admission_v1":
-        raise FidReadRunPlanError("fid_read_ab_admission_v1 required")
-    if admission.get("status") != RUN_READY:
-        raise FidReadRunPlanError("RUN_READY admission required")
-    if admission.get("blockers") != [] or admission.get("uncertain") != []:
-        raise FidReadRunPlanError("RUN_READY admission must have no blockers or uncertainty")
-    inputs = admission.get("inputs")
-    checks = admission.get("checks")
-    if not isinstance(inputs, dict) or not isinstance(checks, dict):
-        raise FidReadRunPlanError("complete admission inputs/checks required")
-    if inputs.get("expected_revision") != expected_revision:
-        raise FidReadRunPlanError("admission expected revision mismatch")
-    if inputs.get("execution_approved") is not True:
-        raise FidReadRunPlanError("explicit execution approval missing from admission")
-    git = checks.get("git")
-    preflight = checks.get("preflight")
-    disk = checks.get("disk")
-    processes = checks.get("processes")
-    lease = checks.get("lease")
-    cli_contract = checks.get("cli_contract")
-    market = checks.get("market_attestation")
-    if not isinstance(git, dict) or git.get("head") != expected_revision or git.get("clean") is not True:
-        raise FidReadRunPlanError("admission git identity is not exact and clean")
-    required_preflight = {
-        "python_bits": 32,
-        "login_attempted": False,
-        "ocx_instantiated": False,
-        "ready": True,
-        "ocx_registered": True,
-        "ocx_file_exists": True,
-    }
-    if not isinstance(preflight, dict) or any(preflight.get(k) != v for k, v in required_preflight.items()):
-        raise FidReadRunPlanError("admission preflight contract is not ready")
-    if not isinstance(preflight.get("executable"), str) or not preflight.get("executable"):
-        raise FidReadRunPlanError("preflight executable missing")
-    if not isinstance(disk, dict) or disk.get("meets_code_minimum") is not True:
-        raise FidReadRunPlanError("admission disk contract is not ready")
-    if not isinstance(processes, dict) or processes.get("probe_ok") is not True:
-        raise FidReadRunPlanError("admission process probe is not ready")
-    if any(processes.get(name) for name in (
-        "collector_processes", "same_python_runtime_other_processes", "runtime_or_openapi_windows"
-    )):
-        raise FidReadRunPlanError("admission process state is not clear")
-    if not isinstance(lease, dict) or lease.get("confirmed_free") is not True:
-        raise FidReadRunPlanError("admission collector lease is not confirmed free")
-    if not isinstance(cli_contract, dict) or cli_contract.get("valid") is not True:
-        raise FidReadRunPlanError("admission CLI contract is not valid")
-    if not isinstance(market, dict) or market.get("external_attestation_only") is not True:
-        raise FidReadRunPlanError("external market attestation required")
-
-    observed = _parse_kst(admission.get("observed_at_kst"), "admission observed_at_kst")
-    market_date = inputs.get("official_market_date")
-    source_note = inputs.get("official_market_source_note")
-    if market_date != observed.date().isoformat() or market.get("date") != market_date:
-        raise FidReadRunPlanError("market date attestation does not match admission observation date")
-    if not isinstance(source_note, str) or not source_note.strip() or market.get("source_note") != source_note:
-        raise FidReadRunPlanError("market source attestation mismatch")
-    local_time = observed.time().replace(tzinfo=None)
-    if not (TARGET_START <= local_time < TARGET_END):
-        raise FidReadRunPlanError("admission observation is outside the target execution window")
-
-    age = (now_kst - observed).total_seconds()
-    if age < 0:
-        raise FidReadRunPlanError("admission observation is from the future")
-    if age > MAX_ADMISSION_AGE_SECONDS:
-        raise FidReadRunPlanError(
-            f"admission observation is stale ({age:.3f}s > {MAX_ADMISSION_AGE_SECONDS}s)"
-        )
+def _require_ready(admission, *, expected_revision: str, now_kst: datetime, context: str) -> dict:
+    try:
+        return require_ready_admission(admission, expected_revision=expected_revision, now_kst=now_kst)
+    except AdmissionContractError as exc:
+        raise FidReadRunPlanError(f"{context}: {exc}") from exc
 
 
 def _manual_command_from_admission(admission: dict) -> tuple[str, list[str]]:
@@ -139,30 +102,27 @@ def _manual_command_from_admission(admission: dict) -> tuple[str, list[str]]:
     if not isinstance(preflight, dict):
         raise FidReadRunPlanError("preflight evidence required")
     python_executable = preflight.get("executable")
-    if not isinstance(python_executable, str) or not python_executable.strip():
-        raise FidReadRunPlanError("preflight executable missing")
-    repo_root = Path(inputs.get("repo_root", "")).resolve()
-    collector = repo_root / "collector" / "kiwoom" / "kiwoom_universe_logger.py"
+    if not isinstance(python_executable, str) or not os.path.isabs(python_executable):
+        raise FidReadRunPlanError("absolute preflight executable missing")
+    repo_root = inputs.get("repo_root")
+    if not isinstance(repo_root, str) or not os.path.isabs(repo_root):
+        raise FidReadRunPlanError("absolute repo_root required")
+    root = Path(repo_root).resolve()
+    collector = root.joinpath(*COLLECTOR_ENTRYPOINT.split("/"))
     if not collector.is_file():
         raise FidReadRunPlanError(f"collector entrypoint missing: {collector}")
-    command = [
-        python_executable,
-        str(collector),
-        "--storage", "raw-v2",
-        "--capture-telemetry",
-        "--fid-read-ab-test",
-        "--duration-seconds", "90",
-    ]
-    return str(repo_root), command
+    return str(root), [python_executable, str(collector), *COLLECTOR_ARGS]
 
 
 def build_run_plan(admission: dict, *, expected_revision: str, now_kst: datetime) -> dict:
-    if now_kst.utcoffset() != timedelta(hours=9):
-        raise FidReadRunPlanError("now_kst must use explicit UTC+09:00")
-    _require_ready_admission(admission, expected_revision=expected_revision, now_kst=now_kst)
-
-    working_directory, command = _manual_command_from_admission(admission)
-    created = now_kst
+    try:
+        created = require_kst(now_kst, "now_kst")
+    except ValueError as exc:
+        raise FidReadRunPlanError(str(exc)) from exc
+    _require_ready(admission, expected_revision=expected_revision, now_kst=created,
+                   context="admission is not valid for a new plan")
+    embedded = deepcopy(admission)  # later caller mutation cannot alter the plan.
+    working_directory, command = _manual_command_from_admission(embedded)
     expires = created + timedelta(seconds=PLAN_TTL_SECONDS)
     return {
         "schema": PLAN_SCHEMA,
@@ -171,14 +131,10 @@ def build_run_plan(admission: dict, *, expected_revision: str, now_kst: datetime
         "ttl_seconds": PLAN_TTL_SECONDS,
         "expected_revision": expected_revision,
         "working_directory": working_directory,
-        "admission_sha256": admission_sha256(admission),
-        "admission": admission,
+        "admission_sha256": admission_sha256(embedded),
+        "admission": embedded,
         "manual_command": command,
-        "execution": {
-            "automatic_execution": False,
-            "requires_manual_review": True,
-            "requires_fresh_verification": True,
-        },
+        "execution": dict(EXECUTION_CONTRACT),
         "forbidden_automatic_actions": [
             "collector launch",
             "OCX login",
@@ -190,7 +146,8 @@ def build_run_plan(admission: dict, *, expected_revision: str, now_kst: datetime
         ],
         "note": (
             "This plan is short-lived evidence binding only. It does not launch the collector "
-            "and does not certify server availability, feed delivery, native stability, or capture success."
+            "and does not certify server availability, feed delivery, native stability, or capture success. "
+            "The admission SHA-256 is an integrity check, not a signature or user authentication."
         ),
     }
 
@@ -211,7 +168,42 @@ def write_new_plan(path: Path, plan: dict) -> Path:
     return target
 
 
+def _reject_constant(token):
+    raise ValueError(f"non-finite JSON constant {token}")
+
+
+def _finite_float(text):
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError("non-finite JSON number")
+    return value
+
+
+def _command_key(working_directory, command):
+    """Compare path tokens case-insensitively (Windows) and the arguments exactly."""
+    if not isinstance(working_directory, str) or not isinstance(command, list) or len(command) < 2 \
+            or not all(isinstance(item, str) for item in command):
+        return None
+
+    def norm(path):
+        return os.path.normcase(os.path.normpath(path))
+    return norm(working_directory), norm(command[0]), norm(command[1]), tuple(command[2:])
+
+
+def _unique_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON object key")
+        value[key] = item
+    return value
+
+
 def read_run_plan(path: Path) -> dict:
+    """Read at most MAX_PLAN_BYTES + 1 bytes; the earlier stat is only a fast path.
+
+    The byte bound limits memory, not the time the OS may take to serve the read.
+    """
     target = Path(path).resolve()
     if not target.is_file():
         raise FidReadRunPlanError(f"run plan not found: {target}")
@@ -219,8 +211,16 @@ def read_run_plan(path: Path) -> dict:
     if size > MAX_PLAN_BYTES:
         raise FidReadRunPlanError(f"run plan exceeds bounded size ({size} > {MAX_PLAN_BYTES})")
     try:
-        value = json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        with target.open("rb") as stream:
+            data = stream.read(MAX_PLAN_BYTES + 1)
+    except OSError as exc:
+        raise FidReadRunPlanError(f"run plan unreadable: {type(exc).__name__}") from exc
+    if len(data) > MAX_PLAN_BYTES:
+        raise FidReadRunPlanError(f"run plan exceeds bounded size (>{MAX_PLAN_BYTES} bytes read)")
+    try:
+        value = json.loads(data.decode("utf-8"), parse_constant=_reject_constant,
+                           parse_float=_finite_float, object_pairs_hook=_unique_object)
+    except (UnicodeError, ValueError) as exc:
         raise FidReadRunPlanError(f"invalid run plan JSON: {type(exc).__name__}") from exc
     if not isinstance(value, dict) or value.get("schema") != PLAN_SCHEMA:
         raise FidReadRunPlanError(f"{PLAN_SCHEMA} required")
@@ -228,21 +228,28 @@ def read_run_plan(path: Path) -> dict:
 
 
 def validate_plan_integrity(plan: dict, *, now_kst: datetime) -> None:
-    if now_kst.utcoffset() != timedelta(hours=9):
-        raise FidReadRunPlanError("now_kst must use explicit UTC+09:00")
-    if plan.get("schema") != PLAN_SCHEMA:
+    """Check the plan at ``now_kst`` and that its admission was valid when it was created."""
+    try:
+        require_kst(now_kst, "now_kst")
+    except ValueError as exc:
+        raise FidReadRunPlanError(str(exc)) from exc
+    if not isinstance(plan, dict) or plan.get("schema") != PLAN_SCHEMA:
         raise FidReadRunPlanError(f"{PLAN_SCHEMA} required")
+    if set(plan) != PLAN_KEYS:
+        raise FidReadRunPlanError("run plan fields do not match the schema")
     admission = plan.get("admission")
     if not isinstance(admission, dict):
         raise FidReadRunPlanError("embedded admission required")
-    if plan.get("admission_sha256") != admission_sha256(admission):
+    digest = plan.get("admission_sha256")
+    if not isinstance(digest, str) or not _SHA256.fullmatch(digest) or digest != admission_sha256(admission):
         raise FidReadRunPlanError("embedded admission digest mismatch")
     expected = plan.get("expected_revision")
     if not isinstance(expected, str) or not expected:
         raise FidReadRunPlanError("expected revision required")
-    if admission.get("inputs", {}).get("expected_revision") != expected:
+    inputs = admission.get("inputs")
+    if not isinstance(inputs, dict) or inputs.get("expected_revision") != expected:
         raise FidReadRunPlanError("plan/admission revision mismatch")
-    if plan.get("ttl_seconds") != PLAN_TTL_SECONDS:
+    if type(plan.get("ttl_seconds")) is not int or plan.get("ttl_seconds") != PLAN_TTL_SECONDS:
         raise FidReadRunPlanError("unexpected run-plan TTL")
     created = _parse_kst(plan.get("created_at_kst"), "plan created_at_kst")
     expires = _parse_kst(plan.get("expires_at_kst"), "plan expires_at_kst")
@@ -250,21 +257,66 @@ def validate_plan_integrity(plan: dict, *, now_kst: datetime) -> None:
         raise FidReadRunPlanError("run-plan expiration contract mismatch")
     if now_kst < created:
         raise FidReadRunPlanError("run plan is from the future")
-    if now_kst > expires:
-        raise FidReadRunPlanError("run plan expired")
-    execution = plan.get("execution")
-    if not isinstance(execution, dict) or execution.get("automatic_execution") is not False:
-        raise FidReadRunPlanError("automatic execution must remain disabled")
-    if execution.get("requires_fresh_verification") is not True:
-        raise FidReadRunPlanError("fresh verification contract required")
+    if now_kst >= expires:
+        raise FidReadRunPlanError("run plan expired (valid for created <= t < expires)")
+    if plan.get("execution") != EXECUTION_CONTRACT:
+        raise FidReadRunPlanError("automatic execution must remain disabled with fresh verification")
+    # A plan re-timestamped later cannot reuse an admission that was stale at that time.
+    _require_ready(admission, expected_revision=expected, now_kst=created,
+                   context="embedded admission was not valid at plan creation")
+    working_directory, command = _manual_command_from_admission(admission)
+    stored = _command_key(plan.get("working_directory"), plan.get("manual_command"))
+    expected_key = _command_key(working_directory, command)
+    if stored is None or stored[0] != expected_key[0]:
+        raise FidReadRunPlanError("working directory changed since plan creation")
+    if stored != expected_key:
+        raise FidReadRunPlanError("manual command changed or no longer matches the embedded admission")
 
 
 def powershell_command(command: list[str]) -> str:
-    if not isinstance(command, list) or not all(isinstance(item, str) and item for item in command):
+    """Display-only PowerShell invocation: call operator plus single-quoted tokens."""
+    if not isinstance(command, list) or not command or not all(isinstance(item, str) and item for item in command):
         raise FidReadRunPlanError("nonempty string command list required")
+    for item in command:
+        if '"' in item or any(ord(ch) < 32 or ord(ch) == 127 for ch in item):
+            raise FidReadRunPlanError("command token contains a double quote or control character")
+
     def quote(value: str) -> str:
-        return "'" + value.replace("'", "''") + "'"
-    return " ".join(quote(item) for item in command)
+        escaped = "".join(ch * 2 if ch in _PS_SINGLE_QUOTES else ch for ch in value)
+        return "'" + escaped + "'"
+
+    return "& " + " ".join(quote(item) for item in command)
+
+
+def _not_ready(reason: str, *, fresh=None, **extra) -> dict:
+    return {
+        "schema": VERIFICATION_SCHEMA,
+        "status": "NOT_READY",
+        "fresh_admission": fresh,
+        "manual_command": None,
+        "automatic_execution": False,
+        "note": reason,
+        **extra,
+    }
+
+
+def _clock_reader(now_kst, monotonic):
+    """Return read() -> (wall instant, monotonic elapsed since start).
+
+    ``now_kst`` pins only the start (tests); later instants advance with the
+    monotonic clock, so a fixed start cannot disable the completion checks.
+    """
+    mono_start = monotonic()
+    if now_kst is None:
+        def read():
+            return datetime.now(KST), monotonic() - mono_start
+    else:
+        start = require_kst(now_kst, "now_kst")
+
+        def read():
+            elapsed = monotonic() - mono_start
+            return start + timedelta(seconds=max(elapsed, 0.0)), elapsed
+    return read
 
 
 def verify_plan_for_manual_command(
@@ -274,21 +326,17 @@ def verify_plan_for_manual_command(
     execution_approved_now: bool,
     now_kst: datetime | None = None,
     admission_runner=collect_and_evaluate,
+    monotonic=time.monotonic,
 ) -> dict:
-    observed = datetime.now(KST) if now_kst is None else now_kst
-    validate_plan_integrity(plan, now_kst=observed)
+    read_clock = _clock_reader(now_kst, monotonic)
+    started, _ = read_clock()
+    validate_plan_integrity(plan, now_kst=started)
     if not isinstance(trusted_expected_revision, str) or not trusted_expected_revision:
         raise FidReadRunPlanError("trusted expected revision required")
     if plan.get("expected_revision") != trusted_expected_revision:
         raise FidReadRunPlanError("plan revision does not match trusted expected revision")
     if execution_approved_now is not True:
-        return {
-            "schema": "fid_read_ab_run_plan_verification_v1",
-            "status": "NOT_READY",
-            "fresh_admission": None,
-            "manual_command": None,
-            "note": "Fresh explicit execution approval is required before revealing the command.",
-        }
+        return _not_ready("Fresh explicit execution approval is required before revealing the command.")
 
     embedded = plan["admission"]
     try:
@@ -296,37 +344,61 @@ def verify_plan_for_manual_command(
     except (KeyError, TypeError) as exc:
         raise FidReadRunPlanError("invalid embedded admission inputs") from exc
 
-    fresh = admission_runner(inputs, now_kst=observed)
-    if fresh.get("status") != RUN_READY:
-        return {
-            "schema": "fid_read_ab_run_plan_verification_v1",
-            "status": "NOT_READY",
-            "fresh_admission": fresh,
-            "manual_command": None,
-            "note": "Collector command is withheld because fresh admission is not RUN_READY.",
-        }
-    if fresh.get("inputs", {}).get("expected_revision") != plan.get("expected_revision"):
-        raise FidReadRunPlanError("fresh admission revision mismatch")
-
-    fresh_working_directory, fresh_command = _manual_command_from_admission(fresh)
-    if plan.get("working_directory") != fresh_working_directory:
+    fresh = admission_runner(inputs)
+    if not isinstance(fresh, dict) or fresh.get("status") != RUN_READY:
+        return _not_ready("Collector command is withheld because fresh admission is not RUN_READY.",
+                          fresh=fresh)
+    if fresh.get("inputs") != embedded["inputs"]:
+        return _not_ready("Collector command is withheld because fresh admission inputs changed.",
+                          fresh=fresh)
+    try:
+        fresh_working_directory, fresh_command = _manual_command_from_admission(fresh)
+    except FidReadRunPlanError as exc:
+        return _not_ready(f"Collector command is withheld: {exc}", fresh=fresh)
+    stored = _command_key(plan.get("working_directory"), plan.get("manual_command"))
+    fresh_key = _command_key(fresh_working_directory, fresh_command)
+    if stored is None or stored[0] != fresh_key[0]:
         raise FidReadRunPlanError("working directory changed since plan creation")
-    if plan.get("manual_command") != fresh_command:
+    if stored != fresh_key:
         raise FidReadRunPlanError("manual command changed or no longer matches fresh admission")
-    command = fresh_command
+
+    # Completion instant: every time-dependent condition is re-evaluated here.
+    completed, elapsed = read_clock()
+    wall = (completed - started).total_seconds()
+    if wall < 0 or not math.isfinite(float(elapsed)) or elapsed < 0 \
+            or abs(wall - elapsed) > CLOCK_TOLERANCE_SECONDS:
+        return _not_ready(f"Clock inconsistency during verification (wall={wall:.3f}s, "
+                          f"monotonic={elapsed:.3f}s); command withheld.", fresh=fresh)
+    validate_plan_integrity(plan, now_kst=completed)
+    expires = _parse_kst(plan["expires_at_kst"], "plan expires_at_kst")
+    if started + timedelta(seconds=elapsed) >= expires:
+        raise FidReadRunPlanError("run plan expired by monotonic elapsed time during verification")
+    if not in_target_window(completed):
+        return _not_ready(f"Verification completed outside {TARGET_WINDOW_TEXT}.", fresh=fresh)
+    created = _parse_kst(plan["created_at_kst"], "plan created_at_kst")
+    try:
+        freshness = require_ready_admission(fresh, expected_revision=trusted_expected_revision,
+                                            now_kst=completed)
+    except AdmissionContractError as exc:
+        return _not_ready(f"Fresh admission contract failed: {exc}", fresh=fresh)
+    if freshness["observation_started"] < created:
+        return _not_ready("Fresh admission started before the plan was created.", fresh=fresh)
 
     return {
-        "schema": "fid_read_ab_run_plan_verification_v1",
+        "schema": VERIFICATION_SCHEMA,
         "status": "MANUAL_COMMAND_READY",
-        "verified_at_kst": observed.isoformat(),
+        "verification_started_at_kst": started.isoformat(),
+        "verified_at_kst": completed.isoformat(),
+        "verification_elapsed_monotonic_seconds": elapsed,
+        "plan_expires_at_kst": plan["expires_at_kst"],
         "plan_admission_sha256": plan["admission_sha256"],
         "fresh_admission": fresh,
         "working_directory": plan["working_directory"],
-        "manual_command": command,
-        "manual_command_powershell": powershell_command(command),
+        "manual_command": fresh_command,
+        "manual_command_powershell": powershell_command(fresh_command),
         "automatic_execution": False,
         "note": (
-            "The command is displayed for explicit manual execution only. "
-            "Verification does not launch the collector."
+            "The command is displayed for explicit manual execution only. Verification does not "
+            "launch the collector, and conditions may change after verified_at_kst."
         ),
     }

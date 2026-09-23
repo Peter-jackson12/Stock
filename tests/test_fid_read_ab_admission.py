@@ -34,11 +34,36 @@ def inputs(**overrides):
     return AdmissionInputs(**value)
 
 
+ENTRY_BLOB = "2" * 40  # synthetic tracked blob id; no Git object is read.
+
+
+def git_facts(root="C:/fixture"):
+    return {
+        "head": REV,
+        "clean": True,
+        "status_lines": [],
+        "status_truncated": False,
+        "toplevel": root,
+        "checker_source_root": root,
+        "entrypoint": {
+            "path": "collector/kiwoom/kiwoom_universe_logger.py",
+            "tracked": True,
+            "index_stage": 0,
+            "index_blob": ENTRY_BLOB,
+            "head_blob": ENTRY_BLOB,
+            "worktree_blob": ENTRY_BLOB,
+        },
+        "hidden_index_flag_count": 0,
+        "network_used": False,
+    }
+
+
 def facts():
     return dict(
         now_kst=datetime(2026, 9, 28, 10, 0, tzinfo=KST),
-        git={"head": REV, "clean": True, "status_lines": [], "network_used": False},
+        git=git_facts(),
         preflight={
+            "executable": "C:/Python310-32/python.exe",
             "python_bits": 32,
             "login_attempted": False,
             "ocx_instantiated": False,
@@ -52,10 +77,11 @@ def facts():
             "collector_processes": [],
             "same_python_runtime_other_processes": [],
             "runtime_or_openapi_windows": [],
+            "unidentified_python_processes": [],
             "actions_taken": [],
         },
         lease={"state": "absent", "confirmed_free": True, "file_created": False},
-        cli_contract={"valid": True, "error": None},
+        cli_contract=exact_diagnostic_cli_contract(),
     )
 
 
@@ -185,10 +211,14 @@ def test_process_probe_excludes_self_and_classifies_collector_runtime_and_same_p
             {"ProcessId": 303, "Name": "python.exe", "CommandLine": "python other.py",
              "ExecutablePath": same_exe},
         ],
+        "python_process_count": 3,
+        "marker_processes": [],
+        "marker_process_count": 0,
         "titled_windows": [
             {"Id": 404, "ProcessName": "python", "MainWindowTitle": "Microsoft Visual C++ Runtime Error"},
             {"Id": 505, "ProcessName": "notepad", "MainWindowTitle": "notes"},
         ],
+        "titled_window_count": 2,
     })
     report = inspect_processes(tmp_path, own_pid=own)
     assert [p["pid"] for p in report["collector_processes"]] == [202]

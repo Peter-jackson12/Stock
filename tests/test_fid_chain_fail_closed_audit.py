@@ -1,6 +1,7 @@
 """독립 fail-closed 감사. 정상이어야 할 계약을 assert하며 실패를 숨기지 않는다.
 
-대상 production은 PR #28 c156108c269ffec55fc1bf7c843397d56781f112 그대로다.
+감사 원본은 PR #28 c156108c269ffec55fc1bf7c843397d56781f112 production에서 26개 중 23개가
+실패했다(CI #321, run 35926442378). 이후 보강 커밋의 production은 같은 assertion을 통과해야 한다.
 기존 fixture는 입력 구성에만 재사용한다. oracle는 이 파일의 독립 안전 조건이다.
 OS/시장 관측은 대역, Git은 pytest 임시 저장소, PowerShell은 AST 파싱만 수행한다.
 실제 collector/OCX/raw 데이터에는 접근하지 않는다.
@@ -84,11 +85,17 @@ def test_control_valid_plan_still_verifies(tmp_path):
     assert r["automatic_execution"] is False
 
 
-def test_control_explicit_block_withholds_command(tmp_path):
+@pytest.mark.parametrize("status", [ad.RUN_BLOCKED, ad.RUN_UNCERTAIN])
+def test_control_explicit_block_withholds_command(tmp_path, status):
+    # 수정 전 harness는 plan에 공유된 입력 객체를 바꿔 digest mismatch로 먼저 거부됐다.
+    # fresh 응답을 deepcopy로 분리해야 BLOCKED/UNCERTAIN 분기 자체를 검증한다.
     a, p = make_plan(tmp_path)
-    a["status"] = ad.RUN_BLOCKED
-    a["blockers"] = [{"id": "fixture"}]
-    must_not_reveal(lambda: verify(p, a), "explicit_block")
+    fresh = deepcopy(a)
+    fresh["status"] = status
+    fresh["blockers" if status == ad.RUN_BLOCKED else "uncertain"] = [{"id": "fixture"}]
+    must_not_reveal(lambda: verify(p, fresh), "explicit_" + status)
+    result = verify(p, fresh)  # 예외가 아니라 fresh 비READY 분기에서 명령을 숨겨야 한다.
+    assert result["status"] == "NOT_READY" and result["fresh_admission"]["status"] == status
 
 
 def test_control_command_path_tamper_is_rejected(tmp_path):

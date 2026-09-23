@@ -46,9 +46,10 @@ def main(argv=None) -> int:
         official_market_source_note=args.official_market_source_note,
         execution_approved=args.execution_approved,
     )
-    now = datetime.now(KST)
     try:
-        admission = collect_and_evaluate(inputs, now_kst=now)
+        # The admission reads its own start and completion instants; the plan's creation
+        # time is read only after the admission finished, never pinned beforehand.
+        admission = collect_and_evaluate(inputs)
         if admission.get("status") != RUN_READY:
             print(json.dumps({
                 "schema": "fid_read_ab_run_plan_prepare_v1",
@@ -57,7 +58,8 @@ def main(argv=None) -> int:
                 "automatic_execution": False,
             }, ensure_ascii=False, indent=2))
             return 3 if admission.get("status") == "RUN_UNCERTAIN" else 2
-        plan = build_run_plan(admission, expected_revision=args.expected_revision, now_kst=now)
+        created = datetime.now(KST)
+        plan = build_run_plan(admission, expected_revision=args.expected_revision, now_kst=created)
         path = write_new_plan(output, plan)
     except (OSError, ValueError, TypeError, FidReadRunPlanError) as exc:
         print(json.dumps({

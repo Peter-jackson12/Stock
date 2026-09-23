@@ -8,7 +8,13 @@ import sys
 
 import pytest
 
-from collector.kiwoom.fid_read_ab_admission import KST, RUN_BLOCKED, RUN_READY, RUN_UNCERTAIN
+from collector.kiwoom.fid_read_ab_admission import (
+    KST,
+    RUN_BLOCKED,
+    RUN_READY,
+    RUN_UNCERTAIN,
+    exact_diagnostic_cli_contract,
+)
 from collector.kiwoom.fid_read_ab_run_plan import (
     MAX_ADMISSION_AGE_SECONDS,
     PLAN_TTL_SECONDS,
@@ -23,6 +29,7 @@ from collector.kiwoom.fid_read_ab_run_plan import (
 )
 
 REV = "337212fd7fd0d9c2bc6597d7bb80005374bff651"
+ENTRY_BLOB = "1" * 40  # synthetic tracked blob id; no Git object is read.
 
 
 def make_repo(tmp_path: Path) -> Path:
@@ -33,8 +40,40 @@ def make_repo(tmp_path: Path) -> Path:
     return root
 
 
+def git_evidence(root: Path) -> dict:
+    return {
+        "head": REV,
+        "clean": True,
+        "status_lines": [],
+        "status_truncated": False,
+        "execution_root": str(root),
+        "toplevel": str(root),
+        "checker_source_root": str(root),
+        "entrypoint": {
+            "path": "collector/kiwoom/kiwoom_universe_logger.py",
+            "tracked": True,
+            "index_mode": "100644",
+            "index_stage": 0,
+            "index_blob": ENTRY_BLOB,
+            "head_blob": ENTRY_BLOB,
+            "worktree_blob": ENTRY_BLOB,
+        },
+        "hidden_index_flag_count": 0,
+        "hidden_index_flag_paths": [],
+        "network_used": False,
+        "git_fetch_performed": False,
+    }
+
+
+def retarget(admission: dict, root: Path) -> dict:
+    """Point a synthetic admission at another synthetic checkout consistently."""
+    admission["inputs"]["repo_root"] = str(root.resolve())
+    admission["checks"]["git"] = git_evidence(root.resolve())
+    return admission
+
+
 def ready_admission(tmp_path: Path, *, observed=None, status=RUN_READY):
-    root = make_repo(tmp_path)
+    root = make_repo(tmp_path).resolve()
     observed = observed or datetime(2026, 9, 28, 10, 0, 0, tzinfo=KST)
     blockers = [] if status == RUN_READY else [{"id": "fixture", "reason": "blocked"}]
     uncertain = [] if status != RUN_UNCERTAIN else [{"id": "fixture", "reason": "uncertain"}]
@@ -43,22 +82,18 @@ def ready_admission(tmp_path: Path, *, observed=None, status=RUN_READY):
     return {
         "schema": "fid_read_ab_admission_v1",
         "status": status,
+        "observation_started_at_kst": observed.isoformat(),
         "observed_at_kst": observed.isoformat(),
+        "observation_elapsed_monotonic_seconds": 0.0,
         "inputs": {
-            "repo_root": str(root.resolve()),
+            "repo_root": str(root),
             "expected_revision": REV,
             "official_market_date": "2026-09-28",
             "official_market_source_note": "KRX official page checked at 09:59 KST",
             "execution_approved": True,
         },
         "checks": {
-            "git": {
-                "head": REV,
-                "clean": True,
-                "status_lines": [],
-                "network_used": False,
-                "git_fetch_performed": False,
-            },
+            "git": git_evidence(root),
             "preflight": {
                 "python_bits": 32,
                 "executable": sys.executable,
@@ -74,10 +109,11 @@ def ready_admission(tmp_path: Path, *, observed=None, status=RUN_READY):
                 "collector_processes": [],
                 "same_python_runtime_other_processes": [],
                 "runtime_or_openapi_windows": [],
+                "unidentified_python_processes": [],
                 "actions_taken": [],
             },
             "lease": {"state": "absent", "confirmed_free": True, "file_created": False},
-            "cli_contract": {"valid": True, "error": None},
+            "cli_contract": exact_diagnostic_cli_contract(),
             "market_attestation": {
                 "date": "2026-09-28",
                 "source_note": "KRX official page checked at 09:59 KST",
@@ -88,6 +124,7 @@ def ready_admission(tmp_path: Path, *, observed=None, status=RUN_READY):
         "blockers": blockers,
         "uncertain": uncertain,
         "non_actions": ["no OCX instantiation/login/SetRealReg"],
+        "note": "synthetic admission fixture",
     }
 
 
@@ -133,13 +170,13 @@ def test_ready_label_is_revalidated_for_process_and_market_contracts(tmp_path):
     now = datetime(2026, 9, 28, 10, 0, 20, tzinfo=KST)
     admission = ready_admission(tmp_path, observed=now)
     admission["checks"]["processes"]["collector_processes"] = [{"pid": 999}]
-    with pytest.raises(FidReadRunPlanError, match="process state"):
+    with pytest.raises(FidReadRunPlanError, match="collector_process"):
         build_run_plan(admission, expected_revision=REV, now_kst=now)
 
     admission = ready_admission(tmp_path / "market", observed=now)
     admission["inputs"]["official_market_date"] = "2026-09-27"
     admission["checks"]["market_attestation"]["date"] = "2026-09-27"
-    with pytest.raises(FidReadRunPlanError, match="market date"):
+    with pytest.raises(FidReadRunPlanError, match="market_date"):
         build_run_plan(admission, expected_revision=REV, now_kst=now)
 
 
@@ -181,10 +218,11 @@ def test_fresh_ready_admission_recomputes_and_reveals_manual_command(tmp_path):
     plan = build_run_plan(admission, expected_revision=REV, now_kst=now)
 
     fresh = deepcopy(admission)
+    fresh["observation_started_at_kst"] = (now + timedelta(seconds=10)).isoformat()
     fresh["observed_at_kst"] = (now + timedelta(seconds=10)).isoformat()
     seen = []
-    def runner(inputs, *, now_kst):
-        seen.append((inputs, now_kst))
+    def runner(inputs):
+        seen.append(inputs)
         return fresh
 
     result = verify_plan_for_manual_command(
@@ -197,7 +235,7 @@ def test_fresh_ready_admission_recomputes_and_reveals_manual_command(tmp_path):
     assert result["status"] == "MANUAL_COMMAND_READY"
     assert result["manual_command"] == plan["manual_command"]
     assert result["automatic_execution"] is False
-    assert result["manual_command_powershell"].startswith("'")
+    assert result["manual_command_powershell"].startswith("& '")
     assert len(seen) == 1
 
 
@@ -291,7 +329,7 @@ def test_fresh_execution_approval_is_required_to_reveal_command(tmp_path):
 def test_powershell_command_quotes_single_quotes_without_shell_execution():
     command = ["C:/Program Files/Python/python.exe", "C:/repo/o'hare/script.py", "--flag"]
     text = powershell_command(command)
-    assert text == "'C:/Program Files/Python/python.exe' 'C:/repo/o''hare/script.py' '--flag'"
+    assert text == "& 'C:/Program Files/Python/python.exe' 'C:/repo/o''hare/script.py' '--flag'"
 
 
 def test_prepare_cli_creates_plan_only_for_ready_admission(tmp_path, monkeypatch, capsys):
@@ -304,10 +342,8 @@ def test_prepare_cli_creates_plan_only_for_ready_admission(tmp_path, monkeypatch
         def now(cls, tz=None):
             return now if tz is not None else now.replace(tzinfo=None)
     monkeypatch.setattr(script, "datetime", FixedDatetime)
-    admission = ready_admission(tmp_path / "fixture", observed=now)
-    admission["inputs"]["repo_root"] = str(root.resolve())
+    admission = retarget(ready_admission(tmp_path / "fixture", observed=now), root)
     admission["checks"]["preflight"]["executable"] = sys.executable
-    admission["checks"]["git"]["head"] = REV
     monkeypatch.setattr(script, "collect_and_evaluate", lambda *_a, **_k: admission)
 
     output = root / "operations_state" / "fid_read_ab_run_plans" / "plan.json"

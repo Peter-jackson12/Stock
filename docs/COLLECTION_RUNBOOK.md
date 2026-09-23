@@ -78,25 +78,47 @@ C:\Projects\Stock\.venv32\Scripts\python.exe scripts\check_fid_read_ab_admission
   --execution-approved
 ```
 
+checker는 **검사 대상 worktree 루트에서** 그 worktree의 `scripts\...`로 실행하고 `--repo-root`도 같은
+worktree를 준다. 실제로 import된 checker 코드의 checkout, `git rev-parse --show-toplevel`, `--repo-root`가
+하나라도 다르면 BLOCKED다. Python 실행 파일은 `C:\Projects\Stock\.venv32`처럼 다른 경로여도 된다
+(정상 sibling worktree). ignored 하위 폴더가 부모 저장소의 HEAD/clean을 빌리지 못한다.
+
 판정:
 
-- `RUN_READY` — 현재 관측 시점의 로그인 전 계약이 모두 충족됨. 실제 수집 성공 인증은 아님.
-- `RUN_BLOCKED` — wrong HEAD/dirty tree/preflight 실패/저장공간 하한/collector 또는 Runtime 창/
+- `RUN_READY` — 관측 **시작과 완료** 두 시점 모두에서 로그인 전 계약이 충족됨. 실제 수집 성공 인증은 아님.
+- `RUN_BLOCKED` — wrong HEAD/dirty tree/실행 root·checker 출처 불일치/collector entrypoint가 HEAD의 tracked
+  blob과 다름/skip-worktree·assume-unchanged 항목/preflight 실패/저장공간 하한/collector 또는 Runtime 창/
   lease 미확인/시장 날짜·09:15~15:15 구간/승인 중 하나라도 차단.
-- `RUN_UNCERTAIN` — process probe 실패 또는 같은 `.venv32` Python의 다른 프로세스처럼
-  안전하게 정체를 확정하지 못한 상태. 실제 로그인 금지.
+- `RUN_UNCERTAIN` — process probe 실패·누락·잘림, 명령줄/실행 경로를 읽을 수 없는 Python, 같은 `.venv32`
+  Python의 다른 프로세스, 벽시계 역행·단조 시계와 2초 초과 불일치처럼 정체나 시각을 확정하지 못한 상태.
+  실제 로그인 금지.
 
-프로세스 탐색은 checker 자신의 PID를 제외한다. 다른 `kiwoom_universe_logger.py`는 BLOCKED,
-같은 32비트 Python의 정체불명 프로세스는 UNCERTAIN이다. 기존 lease 파일은 새로 만들거나 삭제하지 않고
+READY 판정은 `RUN_READY` 문자열이나 `valid`/`meets_code_minimum` 플래그가 아니라 기록된 근거를 같은
+엄격한 pure evaluator로 다시 계산한 결과다. 필수 필드 누락·타입 오류(bool을 숫자로 보지 않음)·내부 모순은
+READY가 아니다. prepare와 verify도 같은 evaluator로 재검증한다.
+
+프로세스 탐색은 checker 자신, 조회용 PowerShell, 그리고 checker를 띄운 venv launcher(직계 부모이며 같은
+`python.exe` 경로이고 collector marker가 없는 경우만)를 제외한다. 조회 결과는 목록과 개수가 함께 있어야
+하며, 명시적 빈 목록만 "없음"이다. 명령줄에 `kiwoom_universe_logger`가 있는 프로세스는 interpreter와
+script/`-m` module 형식에 관계없이 BLOCKED다(편집기 등도 보수적으로 차단). 임의 CommandLine 원문은
+출력하지 않고 일치 여부만 남긴다. 프로세스·창 조작은 하지 않는다. 기존 lease 파일은 새로 만들거나 삭제하지 않고
 존재할 때만 잠금 가능 여부를 순간 확인한다. 파일이 없으면 실제 collector가 실행 시 다시 lease를 획득한다.
 
 `RUN_READY`라도 서버 가용성·실시간 수신·native 안정성·실험 성공은 미인증이다.
 
 ### 3-2. short-lived run plan 생성과 fresh verify
 
-`RUN_READY` admission을 그대로 오래 들고 있다가 실행하지 않는다. admission 관측 후 **60초 안**에
-create-only run plan을 만들고, plan은 **5분 뒤 만료**시킨다. plan은 admission 전체와 canonical
-SHA-256을 보존하지만 서명이 아니므로, 실제 명령을 보여주기 전에 trusted SHA와 실행 승인을 다시 받는다.
+`RUN_READY` admission을 그대로 오래 들고 있다가 실행하지 않는다. 시간 경계는 모두 반개구간이다.
+
+- admission 근거: 관측 **시작** 기준 `0 <= age < 60초`. 완료 시각이 판단 시각보다 늦으면 거부.
+- plan: `created <= t < expires`(TTL 300초). 정확히 `expires`인 순간은 이미 만료.
+- verify: 시작 시각과, fresh admission·명령 재계산 뒤의 **완료 시각** 모두에서 TTL·09:15~15:15 구간·
+  fresh admission 신선도를 검사한다. 단조 시계 경과로도 만료를 재확인하고 벽시계 역행/불일치면 명령을 숨긴다.
+- prepare/verify CLI는 시작 시각을 고정하지 않는다. plan 생성 시각은 admission 완료 뒤에 읽는다.
+
+plan은 admission 사본과 canonical SHA-256을 보존한다. digest는 서명이 아니며 사용자 승인을 인증하지 않으므로,
+verify는 embedded admission이 **plan 생성 시각에도** READY·60초 이내였는지 재검증하고(created/expires만
+옮긴 plan 거부), 실제 명령을 보여주기 전에 trusted SHA와 실행 승인을 다시 받는다.
 
 plan 생성:
 
@@ -128,6 +150,12 @@ verify는 plan 만료·embedded admission digest·trusted revision을 확인한 
 HEAD/clean tree/preflight/process/window/lease/시간 중 하나라도 달라지면 명령을 숨기고 NOT_READY로 끝난다.
 READY여도 plan에 저장된 명령을 그대로 믿지 않고 fresh admission의 Python executable과 현재 worktree의
 `kiwoom_universe_logger.py` 경로로 exact command를 다시 계산해 plan과 일치할 때만 출력한다.
+PowerShell 표시는 `& '<exe>' '<arg>' ...` 형식이며 작은따옴표류는 이중화하고 큰따옴표·제어문자 token은 거부한다.
+plan reader는 실제로 읽은 byte에도 1 MiB 상한을 두고 NaN/Infinity/중복 key JSON을 거부한다.
+verify 완료 뒤 사람이 실제로 실행하기까지의 사이는 검사하지 못한다(race-free 아님).
+digest가 plan 시각을 덮지 않으므로 created를 admission 60초 신선도 안에서 옮긴 plan은 구별하지 못한다.
+이 경우에도 verify는 fresh admission을 다시 요구한다. 제목에 `kiwoom`/`키움`/`OpenAPI`가 들어간 모든 창
+(터미널·편집기·브라우저 탭 포함)은 기존 계약대로 보수적으로 BLOCKED다.
 
 verify의 `MANUAL_COMMAND_READY`도 **자동 실행 승인이 아니다**. 출력된 명령은 사람이 확인해 수동으로
 실행할 대상일 뿐이고 verify/prepare 어느 쪽도 collector launch·OCX login·SetRealReg를 호출하지 않는다.

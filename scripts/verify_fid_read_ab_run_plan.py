@@ -5,7 +5,6 @@ Verification reruns read-only admission checks. It never launches the collector.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
 import json
 from pathlib import Path
 import sys
@@ -13,7 +12,6 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from collector.kiwoom.fid_read_ab_admission import KST
 from collector.kiwoom.fid_read_ab_run_plan import (
     FidReadRunPlanError,
     read_run_plan,
@@ -35,8 +33,7 @@ def main(argv=None) -> int:
             plan,
             trusted_expected_revision=args.expected_revision,
             execution_approved_now=args.execution_approved,
-            now_kst=datetime.now(KST),
-        )
+        )  # no pinned now_kst: start and completion are both read from the clock.
     except (OSError, ValueError, TypeError, FidReadRunPlanError) as exc:
         print(json.dumps({
             "schema": "fid_read_ab_run_plan_verification_v1",

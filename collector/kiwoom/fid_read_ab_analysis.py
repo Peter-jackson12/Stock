@@ -5,9 +5,11 @@ does not certify research eligibility, and does not infer a native/root cause.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 import json
 import math
 from pathlib import Path
+import re
 from statistics import median
 
 from collector.kiwoom.capture_telemetry import CaptureTelemetry
@@ -21,6 +23,7 @@ from collector.kiwoom.fid_read_ab_diagnostic import (
     SIDECAR_NAME,
     active_fids_for,
 )
+from control_tower.lifecycle import Finalization, ProcessIdentity
 
 ANALYSIS_SCHEMA = "fid_read_ab_analysis_v1"
 STATUS_NAME = "status.json"
@@ -44,25 +47,68 @@ RESULT_DIAGNOSTIC_ERROR = "CAPTURE_COMPLETE_DIAGNOSTIC_ERROR"
 RESULT_INCOMPLETE = "CAPTURE_INCOMPLETE"
 RESULT_INVALID = "CAPTURE_EVIDENCE_INVALID"
 
+DURATION_METRICS = ("processing_ns", "fid_read_ns", "queue_submit_ns")
+SNAPSHOT_COUNTERS = (
+    "accepted_callbacks", "committed_callbacks", "queued", "in_flight",
+    "pending_callbacks", "dropped_callbacks", "committed_seq",
+)
+_SHA1 = re.compile(r"[0-9a-f]{40}")
+
 
 class FidReadAnalysisError(ValueError):
     pass
 
 
 def _bounded_text(path: Path, limit: int) -> str:
+    """Read at most ``limit + 1`` bytes. The stat check is only a fast path.
+
+    The bound limits bytes held in memory; it is not a guarantee on OS I/O time.
+    Input files are opened read-only and never modified.
+    """
     path = Path(path)
     if not path.is_file():
         raise FidReadAnalysisError(f"required evidence file missing: {path.name}")
     size = path.stat().st_size
     if size > limit:
         raise FidReadAnalysisError(f"evidence file exceeds bounded size: {path.name} ({size} > {limit})")
-    return path.read_text(encoding="utf-8")
+    with path.open("rb") as stream:
+        data = stream.read(limit + 1)
+    if len(data) > limit:
+        raise FidReadAnalysisError(f"evidence file exceeds bounded size: {path.name} (>{limit} bytes read)")
+    return data.decode("utf-8")
+
+
+def _reject_constant(token):
+    raise ValueError(f"non-finite JSON constant {token}")
+
+
+def _unique_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON object key")
+        value[key] = item
+    return value
+
+
+def _finite_float(text):
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError("non-finite JSON number")
+    return value
+
+
+def _strict_json(text: str):
+    return json.loads(text, parse_constant=_reject_constant, parse_float=_finite_float,
+                      object_pairs_hook=_unique_object)
 
 
 def _read_json(path: Path, limit: int) -> dict:
     try:
-        value = json.loads(_bounded_text(path, limit))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        value = _strict_json(_bounded_text(path, limit))
+    except FidReadAnalysisError:
+        raise
+    except (OSError, UnicodeError, ValueError) as exc:
         raise FidReadAnalysisError(f"invalid JSON evidence {path.name}: {type(exc).__name__}") from exc
     if not isinstance(value, dict):
         raise FidReadAnalysisError(f"JSON evidence must be an object: {path.name}")
@@ -79,30 +125,60 @@ def _read_jsonl(path: Path, *, max_bytes: int, max_lines: int, required: bool) -
     if size > max_bytes:
         raise FidReadAnalysisError(f"evidence file exceeds bounded size: {path.name} ({size} > {max_bytes})")
     rows = []
+    total = 0
     try:
-        with path.open("r", encoding="utf-8") as stream:
-            for line_no, line in enumerate(stream, 1):
+        with path.open("rb") as stream:
+            line_no = 0
+            while True:
+                # Per-line and cumulative byte bounds apply to bytes actually read.
+                line = stream.readline(MAX_JSONL_LINE_BYTES + 1)
+                if not line:
+                    break
+                line_no += 1
+                total += len(line)
                 if line_no > max_lines:
                     raise FidReadAnalysisError(f"too many evidence lines: {path.name}")
-                if len(line.encode("utf-8")) > MAX_JSONL_LINE_BYTES:
+                if len(line) > MAX_JSONL_LINE_BYTES:
                     raise FidReadAnalysisError(f"evidence line too large: {path.name}:{line_no}")
-                if not line.strip():
+                if total > max_bytes:
+                    raise FidReadAnalysisError(
+                        f"evidence file exceeds bounded size: {path.name} (>{max_bytes} bytes read)")
+                if not line.endswith(b"\n"):
+                    raise FidReadAnalysisError(f"truncated evidence line (no newline): {path.name}:{line_no}")
+                text = line.decode("utf-8")
+                if not text.strip():
                     raise FidReadAnalysisError(f"blank evidence line: {path.name}:{line_no}")
-                row = json.loads(line)
+                row = _strict_json(text)
                 if not isinstance(row, dict):
                     raise FidReadAnalysisError(f"JSONL evidence must contain objects: {path.name}:{line_no}")
                 rows.append(row)
     except FidReadAnalysisError:
         raise
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeError, ValueError) as exc:
         raise FidReadAnalysisError(f"invalid JSONL evidence {path.name}: {type(exc).__name__}") from exc
     return rows
 
 
-def _metric(values) -> dict:
+def _is_utc(value) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).utcoffset() == timedelta(0)
+    except ValueError:
+        return False
+
+
+def _metric(values, *, nonnegative: bool = True, invalid: list | None = None) -> dict:
+    """Summarize present values. Absent (None) values are skipped; malformed ones are counted."""
     clean = []
     for value in values:
-        if type(value) is bool or not isinstance(value, (int, float)) or not math.isfinite(value):
+        if value is None:
+            continue
+        if type(value) is bool or not isinstance(value, (int, float)) \
+                or (isinstance(value, float) and not math.isfinite(value)) \
+                or (nonnegative and value < 0):
+            if invalid is not None:
+                invalid.append(value)
             continue
         clean.append(value)
     if not clean:
@@ -200,11 +276,12 @@ def _counter_summary(sidecar: dict, status: dict, issues: list[dict]) -> dict | 
                 "reason": f"{phase}_has_no_callbacks",
             })
 
-    accepted = status.get("snapshot", {}).get("accepted_callbacks")
+    snapshot = status.get("snapshot") if isinstance(status.get("snapshot"), dict) else {}
+    accepted = snapshot.get("accepted_callbacks")
     sidecar_callbacks = sum(trade.values()) + sum(quote.values())
     clean_callback_accounting = (
         type(accepted) is int
-        and status.get("snapshot", {}).get("dropped_callbacks") == 0
+        and snapshot.get("dropped_callbacks") == 0
         and not sum(failures.values())
     )
     if clean_callback_accounting and accepted != sidecar_callbacks:
@@ -238,22 +315,19 @@ def _counter_summary(sidecar: dict, status: dict, issues: list[dict]) -> dict | 
     }
 
 
-def _sample_metrics(samples: list[dict]) -> dict:
+def _sample_metrics(samples: list[dict], invalid: list | None = None) -> dict:
     codes = {s.get("code") for s in samples if isinstance(s.get("code"), str)}
     clock_values = []
     for sample in samples:
         comparison = sample.get("clock_comparison")
         if isinstance(comparison, dict) and comparison.get("status") == "unverified_clock_difference":
             clock_values.append(comparison.get("difference_seconds"))
-    return {
-        "samples": len(samples),
-        "sampled_code_count": len(codes),
-        "processing_ns": _metric(s.get("processing_ns") for s in samples),
-        "fid_read_ns": _metric(s.get("fid_read_ns") for s in samples),
-        "queue_submit_ns": _metric(s.get("queue_submit_ns") for s in samples),
-        "fid_call_count": _metric(s.get("fid_call_count") for s in samples),
-        "clock_difference_seconds": _metric(clock_values),
-    }
+    summary = {"samples": len(samples), "sampled_code_count": len(codes)}
+    for name in DURATION_METRICS:
+        summary[name] = _metric((s.get(name) for s in samples), invalid=invalid)
+    summary["fid_call_count"] = _metric((s.get("fid_call_count") for s in samples), invalid=invalid)
+    summary["clock_difference_seconds"] = _metric(clock_values, nonnegative=False)
+    return summary
 
 
 def _telemetry_summary(rows: list[dict] | None, *, session_id: str | None,
@@ -290,6 +364,16 @@ def _telemetry_summary(rows: list[dict] | None, *, session_id: str | None,
                 samples.append(sample)
             else:
                 issues.append({"severity": "invalid", "id": "telemetry_sample", "reason": "not_object"})
+
+    # fid_call_count must be an integer; _sample_metrics flags bool/negative/non-finite values.
+    invalid_values = [s["fid_call_count"] for s in samples if isinstance(s.get("fid_call_count"), float)]
+    _sample_metrics(samples, invalid_values)
+    if invalid_values:
+        issues.append({
+            "severity": "invalid",
+            "id": "telemetry_metric_value",
+            "reason": f"{len(invalid_values)}_negative_nonfinite_or_nonnumeric_values",
+        })
 
     by_phase = {}
     by_phase_real_type = {}
@@ -340,8 +424,7 @@ def _resource_summary(rows: list[dict] | None, *, pid: int | None, issues: list[
         metrics = ("working_set", "peak_working_set", "commit", "peak_commit")
         if (
             type(row.get("pid")) is not int
-            or not isinstance(row.get("at_utc"), str)
-            or not row.get("at_utc")
+            or not _is_utc(row.get("at_utc"))
             or any(type(row.get(name)) is not int or row.get(name) < 0 for name in metrics)
         ):
             malformed += 1
@@ -410,6 +493,14 @@ def analyze_fid_read_ab_session(session_dir: Path, *, expected_revision: str | N
 
     if status.get("status_schema") != "raw_capture_status_v1":
         issues.append({"severity": "invalid", "id": "status_schema", "reason": str(status.get("status_schema"))})
+    try:
+        ProcessIdentity(**identity)
+    except (TypeError, ValueError) as exc:
+        issues.append({"severity": "invalid", "id": "process_identity", "reason": str(exc)[:256]})
+    if not isinstance(revision, str) or _SHA1.fullmatch(revision) is None:
+        issues.append({"severity": "invalid", "id": "code_revision", "reason": "full_40_hex_revision_required"})
+    if not _is_utc(status.get("observed_at_utc")):
+        issues.append({"severity": "invalid", "id": "status_observed_at_utc", "reason": "explicit_utc_required"})
     if identity.get("feed_scope") != FEED_SCOPE_DIAGNOSTIC or snapshot.get("feed_scope") != FEED_SCOPE_DIAGNOSTIC:
         issues.append({"severity": "invalid", "id": "feed_scope", "reason": "diagnostic_scope_required"})
     if identity.get("server") != "mock":
@@ -456,42 +547,72 @@ def analyze_fid_read_ab_session(session_dir: Path, *, expected_revision: str | N
             meta = phase_meta.get(phase)
             if not isinstance(meta, dict) or meta.get("analysis_window") is not analysis_window:
                 issues.append({"severity": "invalid", "id": "phase_metadata", "reason": phase})
-        a2_meta = phase_meta.get(PHASE_A2, {})
-        post_meta = phase_meta.get(PHASE_POST, {})
+        a2_meta = phase_meta.get(PHASE_A2) if isinstance(phase_meta.get(PHASE_A2), dict) else {}
+        post_meta = phase_meta.get(PHASE_POST) if isinstance(phase_meta.get(PHASE_POST), dict) else {}
         if a2_meta.get("includes_shutdown_tail_after_nominal_end") is not False:
             issues.append({"severity": "invalid", "id": "a2_phase_metadata", "reason": "tail_flag"})
         if post_meta.get("fid_set") != "FULL":
             issues.append({"severity": "invalid", "id": "post_phase_metadata", "reason": "FULL_required"})
 
+    def is_zero(value) -> bool:
+        return type(value) is int and value == 0
+
+    counters_ok = all(type(snapshot.get(key)) is int and snapshot.get(key) >= 0 for key in SNAPSHOT_COUNTERS)
+    if not counters_ok:
+        issues.append({"severity": "invalid", "id": "snapshot_counters",
+                       "reason": "non_negative_integer_counters_required_bool_is_not_a_count"})
     clean_capture_checks = [
         ("state", snapshot.get("state") == "closed", snapshot.get("state")),
         ("accepting", snapshot.get("accepting") is False, snapshot.get("accepting")),
         ("writer_closed", snapshot.get("writer_closed") is True, snapshot.get("writer_closed")),
-        ("pending_callbacks", snapshot.get("pending_callbacks") == 0, snapshot.get("pending_callbacks")),
-        ("queued", snapshot.get("queued") == 0, snapshot.get("queued")),
-        ("in_flight", snapshot.get("in_flight") == 0, snapshot.get("in_flight")),
-        ("dropped_callbacks", snapshot.get("dropped_callbacks") == 0, snapshot.get("dropped_callbacks")),
+        ("pending_callbacks", is_zero(snapshot.get("pending_callbacks")), snapshot.get("pending_callbacks")),
+        ("queued", is_zero(snapshot.get("queued")), snapshot.get("queued")),
+        ("in_flight", is_zero(snapshot.get("in_flight")), snapshot.get("in_flight")),
+        ("dropped_callbacks", is_zero(snapshot.get("dropped_callbacks")), snapshot.get("dropped_callbacks")),
         (
             "callback_commit_accounting",
             type(snapshot.get("accepted_callbacks")) is int
+            and type(snapshot.get("committed_callbacks")) is int
             and snapshot.get("committed_callbacks") == snapshot.get("accepted_callbacks"),
             f"accepted={snapshot.get('accepted_callbacks')},committed={snapshot.get('committed_callbacks')}",
         ),
         ("capture_error", status.get("error") in (None, ""), status.get("error")),
+        ("snapshot_error", snapshot.get("error") in (None, ""), snapshot.get("error")),
         ("finalization", isinstance(snapshot.get("finalization"), dict), snapshot.get("finalization")),
     ]
     for name, ok, observed in clean_capture_checks:
         if not ok:
             issues.append({"severity": "incomplete", "id": name, "reason": str(observed)[:256]})
+    for scope, value in (("status", status.get("error")), ("snapshot", snapshot.get("error"))):
+        if value is not None and not isinstance(value, str):
+            issues.append({"severity": "invalid", "id": f"{scope}_error_type", "reason": type(value).__name__})
+    if counters_ok and (
+        snapshot["accepted_callbacks"] - snapshot["committed_callbacks"] != snapshot["pending_callbacks"]
+        or snapshot["queued"] + snapshot["in_flight"] != snapshot["pending_callbacks"]
+    ):
+        issues.append({"severity": "incomplete", "id": "snapshot_accounting",
+                       "reason": "pending_queue_in_flight_mismatch"})
+    committed = snapshot.get("committed_callbacks")
+    if type(committed) is int and committed > 0 and not _is_utc(snapshot.get("last_commit_at_utc")):
+        issues.append({"severity": "invalid", "id": "last_commit_at_utc", "reason": "explicit_utc_required"})
 
     finalization = snapshot.get("finalization")
-    if isinstance(finalization, dict) and type(snapshot.get("committed_seq")) is int:
-        if finalization.get("final_seq") != snapshot.get("committed_seq"):
-            issues.append({
-                "severity": "invalid",
-                "id": "finalization_accounting",
-                "reason": f"final={finalization.get('final_seq')},committed={snapshot.get('committed_seq')}",
-            })
+    if isinstance(finalization, dict):
+        try:
+            final = Finalization(**finalization)
+        except (TypeError, ValueError) as exc:
+            issues.append({"severity": "invalid", "id": "finalization_evidence", "reason": str(exc)[:256]})
+        else:
+            if type(snapshot.get("committed_seq")) is int and final.final_seq != snapshot.get("committed_seq"):
+                issues.append({
+                    "severity": "invalid",
+                    "id": "finalization_accounting",
+                    "reason": f"final={final.final_seq},committed={snapshot.get('committed_seq')}",
+                })
+            last_event = snapshot.get("last_event_ns")
+            if last_event is not None and (type(last_event) is not int or final.close_ns <= last_event):
+                issues.append({"severity": "invalid", "id": "finalization_close_ns",
+                               "reason": f"close_ns={final.close_ns},last_event_ns={last_event}"})
 
     counters = _counter_summary(sidecar, status, issues)
     telemetry = _telemetry_summary(
@@ -544,6 +665,7 @@ def analyze_fid_read_ab_session(session_dir: Path, *, expected_revision: str | N
         "notes": [
             "raw database was not opened or scanned",
             "result is diagnostic evidence readiness, not research eligibility",
+            "READY is not a raw quality pass and does not prove the collector process has exited",
             "phase callback counts divided by 30 are not certified service rates",
             "ESSENTIAL changes COM reads plus string/dict/JSON/storage/worker costs",
             "clock difference is not network latency",

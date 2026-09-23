@@ -5,6 +5,8 @@ does not estimate causal effects, and does not infer a Qt/COM/GIL/native cause.
 """
 from __future__ import annotations
 
+import math
+
 from collector.kiwoom.fid_read_ab_analysis import ANALYSIS_SCHEMA, RESULT_READY
 from collector.kiwoom.fid_read_ab_diagnostic import PHASE_A1, PHASE_A2, PHASE_B
 
@@ -23,6 +25,7 @@ PATTERN_LOWER = "B_LOWER_THAN_BOTH_FULL"
 PATTERN_HIGHER = "B_HIGHER_THAN_BOTH_FULL"
 PATTERN_MIXED = "B_BETWEEN_OR_TIED"
 PATTERN_INSUFFICIENT = "INSUFFICIENT_PHASE_METRIC_SAMPLES"
+PATTERN_INVALID = "INVALID_PHASE_METRIC_SUMMARY"
 
 OVERALL_LOWER = "PRIMARY_B_LOWER_BOTH_REAL_TYPES"
 OVERALL_HIGHER = "PRIMARY_B_HIGHER_BOTH_REAL_TYPES"
@@ -41,28 +44,39 @@ def _safe_ratio(numerator, denominator):
         return None
     if denominator <= 0:
         return None
-    return numerator / denominator
+    try:
+        return numerator / denominator
+    except OverflowError:  # huge integer medians are descriptive only; no ratio.
+        return None
+
+
+def _duration(value) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return (not isinstance(value, float) or math.isfinite(value)) and value >= 0
 
 
 def _metric_phase(telemetry: dict, real_type: str, phase: str, metric: str) -> dict:
+    """Read one assessed summary. Malformed summaries are errors, never zero-count or directional."""
     by_phase_type = telemetry.get("by_phase_real_type")
-    if not isinstance(by_phase_type, dict):
-        return {"count": 0, "median": None}
-    phase_value = by_phase_type.get(phase)
-    if not isinstance(phase_value, dict):
-        return {"count": 0, "median": None}
-    typed = phase_value.get(real_type)
-    if not isinstance(typed, dict):
-        return {"count": 0, "median": None}
-    value = typed.get(metric)
+    phase_value = by_phase_type.get(phase) if isinstance(by_phase_type, dict) else None
+    typed = phase_value.get(real_type) if isinstance(phase_value, dict) else None
+    value = typed.get(metric) if isinstance(typed, dict) else None
     if not isinstance(value, dict):
-        return {"count": 0, "median": None}
+        return {"count": None, "median": None, "valid": False, "error": "summary_missing_or_not_object"}
     count = value.get("count")
     median = value.get("median")
-    return {
-        "count": count if type(count) is int and count >= 0 else 0,
-        "median": median if not isinstance(median, bool) and isinstance(median, (int, float)) else None,
-    }
+    low, high = value.get("min"), value.get("max")
+    if type(count) is not int or count < 0:
+        return {"count": None, "median": None, "valid": False, "error": "count_not_a_nonnegative_integer"}
+    if count == 0:
+        if median is not None or low is not None or high is not None:
+            return {"count": count, "median": None, "valid": False, "error": "empty_summary_has_statistics"}
+        return {"count": 0, "median": None, "valid": True}
+    if not (_duration(median) and _duration(low) and _duration(high) and low <= median <= high):
+        return {"count": count, "median": None, "valid": False,
+                "error": "statistics_must_be_finite_nonnegative_and_ordered"}
+    return {"count": count, "median": median, "valid": True}
 
 
 def _classify_metric(telemetry: dict, real_type: str, metric: str) -> dict:
@@ -70,12 +84,12 @@ def _classify_metric(telemetry: dict, real_type: str, metric: str) -> dict:
         phase: _metric_phase(telemetry, real_type, phase, metric)
         for phase in (PHASE_A1, PHASE_B, PHASE_A2)
     }
-    sufficient = all(
-        phases[phase]["count"] >= MIN_PHASE_METRIC_SAMPLES
-        and phases[phase]["median"] is not None
+    if not all(phases[phase]["valid"] for phase in phases):
+        pattern = PATTERN_INVALID
+    elif not all(
+        phases[phase]["count"] >= MIN_PHASE_METRIC_SAMPLES and phases[phase]["median"] is not None
         for phase in phases
-    )
-    if not sufficient:
+    ):
         pattern = PATTERN_INSUFFICIENT
     else:
         a1 = phases[PHASE_A1]["median"]
@@ -109,7 +123,7 @@ def _classify_metric(telemetry: dict, real_type: str, metric: str) -> dict:
 
 def _overall_primary(primary_by_type: dict) -> str:
     patterns = [primary_by_type[real_type]["pattern"] for real_type in REAL_TYPES]
-    if PATTERN_INSUFFICIENT in patterns:
+    if PATTERN_INSUFFICIENT in patterns or PATTERN_INVALID in patterns:
         return OVERALL_NOT_ASSESSABLE
     if all(pattern == PATTERN_LOWER for pattern in patterns):
         return OVERALL_LOWER
@@ -120,7 +134,7 @@ def _overall_primary(primary_by_type: dict) -> str:
 
 def _secondary_relation(primary: str, secondary_by_type: dict) -> str:
     secondary = [secondary_by_type[real_type]["pattern"] for real_type in REAL_TYPES]
-    if PATTERN_INSUFFICIENT in secondary:
+    if PATTERN_INSUFFICIENT in secondary or PATTERN_INVALID in secondary:
         return SECONDARY_NOT_ASSESSABLE
     if primary == OVERALL_LOWER and all(pattern == PATTERN_LOWER for pattern in secondary):
         return SECONDARY_CONCORDANT
@@ -141,7 +155,8 @@ def assess_fid_read_ab(analysis: dict) -> dict:
     if not isinstance(telemetry, dict):
         telemetry = {}
 
-    if analysis_result != RESULT_READY:
+    # READY is re-checked against its own issue list; a label alone is not trusted.
+    if analysis_result != RESULT_READY or analysis.get("issues") != []:
         return {
             "schema": ASSESSMENT_SCHEMA,
             "assessment": OVERALL_NOT_ASSESSABLE,
@@ -180,6 +195,13 @@ def assess_fid_read_ab(analysis: dict) -> dict:
         for real_type in REAL_TYPES
     }
     primary = _overall_primary(primary_by_type)
+    metric_errors = [
+        {"metric": item["metric"], "real_type": item["real_type"], "phase": phase, "error": value["error"]}
+        for group in (primary_by_type, secondary_by_type, guardrail_by_type)
+        for item in group.values()
+        for phase, value in item["phases"].items()
+        if not value["valid"]
+    ]
 
     return {
         "schema": ASSESSMENT_SCHEMA,
@@ -195,6 +217,7 @@ def assess_fid_read_ab(analysis: dict) -> dict:
         "secondary_relation": _secondary_relation(primary, secondary_by_type),
         "guardrail_metric": GUARDRAIL_METRIC,
         "guardrail_by_real_type": guardrail_by_type,
+        "metric_evidence_errors": metric_errors,
         "excluded_from_automatic_assessment": [
             "clock_difference_seconds",
             "callback_count_per_30_seconds",

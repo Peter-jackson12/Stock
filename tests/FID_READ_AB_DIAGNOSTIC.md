@@ -143,6 +143,9 @@ sidecar counter snapshot은 저장 drain 전에 쓰이며 정상 drain/프로세
 - 체결과 호가는 FID 수가 다르므로 절대 한 표본으로 합치지 않고 각각 따로 판정한다.
 - A1/B/A2 각 phase·real_type에서 `fid_read_ns` 유효 표본이 **최소 3개** 있어야 한다.
   3개는 통계적 power 기준이 아니라 30초/5초 sampling에서 절반 이상의 phase coverage를 요구하는 고정 guardrail이다.
+- 판정 대상 요약의 count가 bool/비정수/음수이거나 median·min·max가 음수·NaN·Infinity·순서 모순이면
+  `INVALID_PHASE_METRIC_SUMMARY`(근거 오류)로 not-assessable이며 방향 판정에 쓰지 않는다.
+  analyzer 결과는 READY 문자열과 함께 `issues`가 비어 있어야 한다. 이 사전등록 규칙 자체는 바꾸지 않았다.
 - 효과크기 임계값은 두지 않고 p-value/유의성 검정도 하지 않는다. 실제 결과를 본 뒤 threshold를 조정하지 않는다.
 - 각 real_type의 중앙값 순서만 `B < A1 & A2`, `B > A1 & A2`, 그 외 mixed/tied로 분류한다.
 - 체결·호가가 둘 다 `B < A1 & A2`이면 `PRIMARY_B_LOWER_BOTH_REAL_TYPES`,
@@ -177,6 +180,14 @@ C:\Projects\Stock\.venv32\Scripts\python.exe scripts\assess_fid_read_ab.py `
 - `resource_history.jsonl`
 
 raw DB의 `dataset_path`는 identity claim으로만 표시하며 파일을 열거나 COUNT/hash/SQLite scan하지 않는다.
+크기 상한은 사전 stat이 아니라 실제로 읽은 byte(`limit+1`)에 적용하고, JSONL은 줄당 64 KiB와 누적 byte 상한,
+줄바꿈으로 끝나는 완결된 줄만 받는다. 초과·잘린 줄·NaN/Infinity/중복 key는 근거가 아니다.
+입력은 읽기만 한다. byte 상한은 메모리 상한이지 OS I/O 시간 보장이 아니다.
+
+READY에는 기존 `control_tower.lifecycle` validator 기준의 full identity(pid·executable·명시적 UTC
+`started_at_utc` 등)와 40자리 code revision, 명시적 UTC `observed_at_utc`/`last_commit_at_utc`,
+bool이 아닌 정수 계수와 pending/queue accounting, `Finalization`(64-hex payload hash, `close_ns > last_event_ns`,
+`final_seq == committed_seq`), 최상위·snapshot 오류 없음이 필요하다. 음수·비유한·비숫자 telemetry 값은 INVALID다.
 
 ```powershell
 C:\Projects\Stock\.venv32\Scripts\python.exe scripts\analyze_fid_read_ab.py `
@@ -193,6 +204,7 @@ C:\Projects\Stock\.venv32\Scripts\python.exe scripts\analyze_fid_read_ab.py `
 - `CAPTURE_EVIDENCE_INVALID` — session/revision/scope/schema/counter accounting 같은 작은 근거끼리 모순됨.
 
 이 분류는 research eligibility가 아니다. 진단 raw는 계속 `research_eligible=false`다.
+READY는 raw 품질 합격이나 collector 프로세스 종료 증명도 아니다.
 analyzer의 telemetry 통계도 real_type별 5초 최초 callback 표본 요약일 뿐 feed-wide 분포가 아니다.
 `clock_difference_seconds`는 동일 KST 날짜 가정의 signed 표본이며 network latency가 아니다.
 A1/B/A2 callback 수를 30으로 나눠 순수 service rate로 부르지 않는다.

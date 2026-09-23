@@ -81,6 +81,7 @@ def analysis_fixture(
     return {
         "schema": ANALYSIS_SCHEMA,
         "result": result,
+        "issues": [] if result == RESULT_READY else [{"severity": "limited", "id": "fixture"}],
         "telemetry": {
             "present": True,
             "sample_count": 18,
