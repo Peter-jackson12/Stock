@@ -310,7 +310,7 @@ def test_prepare_cli_creates_plan_only_for_ready_admission(tmp_path, monkeypatch
     admission["checks"]["git"]["head"] = REV
     monkeypatch.setattr(script, "collect_and_evaluate", lambda *_a, **_k: admission)
 
-    output = tmp_path / "plan.json"
+    output = root / "operations_state" / "fid_read_ab_run_plans" / "plan.json"
     code = script.main([
         "--repo-root", str(root),
         "--expected-revision", REV,
@@ -325,13 +325,30 @@ def test_prepare_cli_creates_plan_only_for_ready_admission(tmp_path, monkeypatch
     assert payload["automatic_execution"] is False
 
 
+def test_prepare_cli_rejects_output_that_would_escape_gitignored_plan_root(tmp_path, monkeypatch):
+    import scripts.prepare_fid_read_ab_run as script
+
+    root = make_repo(tmp_path)
+    with pytest.raises(SystemExit) as error:
+        script.main([
+            "--repo-root", str(root),
+            "--expected-revision", REV,
+            "--official-market-date", "2026-09-28",
+            "--official-market-source-note", "KRX checked",
+            "--execution-approved",
+            "--output", str(root / "tracked-plan.json"),
+        ])
+    assert error.value.code == 2
+    assert not (root / "tracked-plan.json").exists()
+
+
 def test_prepare_cli_does_not_create_plan_when_admission_is_blocked(tmp_path, monkeypatch, capsys):
     import scripts.prepare_fid_read_ab_run as script
 
     root = make_repo(tmp_path)
     blocked = ready_admission(tmp_path / "fixture", observed=datetime.now(KST), status=RUN_BLOCKED)
     monkeypatch.setattr(script, "collect_and_evaluate", lambda *_a, **_k: blocked)
-    output = tmp_path / "plan.json"
+    output = root / "operations_state" / "fid_read_ab_run_plans" / "plan.json"
     code = script.main([
         "--repo-root", str(root),
         "--expected-revision", REV,
