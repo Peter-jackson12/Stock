@@ -72,6 +72,23 @@ preflight 자체는 실제 Mock 로그인·수집 승인이 아니다.
 실제 Mock 90초 1회는 공식 거래일/시장 구간을 당일 다시 확인하고 사전점검이 모두 통과한 뒤 별도 실행한다.
 GitHub에서 가능한 작업은 일반 채팅에서 수행한다. 로컬 원본/OCX가 필요한 일만 별도 승인 후 넘긴다.
 
+## FID A-B-A 결과 판정 사전등록 — 실제 운영 결과 전
+
+PR #25의 bounded analyzer 위에서 `fid_read_ab_assessment_v1` 규칙을 별도 후속 브랜치에 고정했다.
+이 작업은 실제 Mock A-B-A 운영 결과를 보기 전에 완료하는 pre-registration이며 collector hot path를 수정하지 않는다.
+
+- analyzer가 `CAPTURE_COMPLETE_ANALYSIS_READY`가 아니면 자동 A-B-A 판정을 하지 않는다.
+- 1차 지표는 `fid_read_ns`; 체결/호가는 절대 합치지 않는다.
+- A1/B/A2 각 phase·real_type의 유효 표본 최소 3개는 coverage guardrail이며 통계적 power 기준이 아니다.
+- 효과크기 threshold와 p-value는 두지 않고 실제 결과 뒤 조정하지 않는다.
+- B 중앙값이 A1/A2 둘보다 낮음/높음/그 외만 기술적으로 분류한다.
+- `processing_ns`는 보조, `queue_submit_ns`는 guardrail, source clock·callback/30·resource history는 자동 판정에서 제외한다.
+- PRE/POST는 A-B-A 비교에서 제외한다.
+- 결과 label은 causal verdict, research eligibility, 실시장 승인, Qt/COM/GIL/native 원인 규명이 아니다.
+
+실제 실행일에는 그 시점의 최종 PR 스택 HEAD를 다시 확인하고, 동일 revision에서 preflight를 재실행한 뒤
+`scripts/assess_fid_read_ab.py`로 bounded analyzer + 사전등록 판정을 함께 보존한다.
+
 ## 2026-09-23 FID A-B-A 로컬 preflight — 사용자 전달 보고
 
 아래는 일반 ChatGPT가 원격 GitHub에서 직접 관측한 사실이 아니라 **사용자가 전달한 로컬 에이전트 보고**다.
