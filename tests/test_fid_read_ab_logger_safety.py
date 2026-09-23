@@ -7,7 +7,7 @@ import pytest
 
 from collector.kiwoom.capture_telemetry import CaptureTelemetry
 from collector.kiwoom.fid_read_ab_diagnostic import (
-    FEED_SCOPE_DIAGNOSTIC, PHASE_PRE, PHASE_A1, PHASE_B, PHASE_A2,
+    FEED_SCOPE_DIAGNOSTIC, PHASE_PRE, PHASE_A1, PHASE_B, PHASE_A2, PHASE_POST,
     SIDECAR_NAME, FidReadAbController,
 )
 from collector.kiwoom.live_capture import TRADE_FIDS
@@ -79,7 +79,12 @@ def test_actual_registration_is_not_repeated_at_phase_switches(diagnostic, monke
     registrations = [entry for entry in calls if entry[0].startswith("SetRealReg")]
     assert len(registrations) == 1
     assert registrations[0][1][1] == "005930;000660"
-    for elapsed, expected in [(1, list(TRADE_FIDS)), (30, [20, 10, 15]), (60, list(TRADE_FIDS))]:
+    for elapsed, expected in [
+        (1, list(TRADE_FIDS)),
+        (30, [20, 10, 15]),
+        (60, list(TRADE_FIDS)),
+        (90, list(TRADE_FIDS)),
+    ]:
         clock[0] = 100 + elapsed
         start = len(calls)
         logger._on_receive_real_data("005930", "주식체결", "")
@@ -90,12 +95,16 @@ def test_actual_registration_is_not_repeated_at_phase_switches(diagnostic, monke
     with read_raw_v2(logger.db_path) as (manifest, rows):
         records = list(rows)
     assert manifest["feed_scope"] == FEED_SCOPE_DIAGNOSTIC
-    assert len(records) == 5
+    assert len(records) == 6
     assert records[3]["raw_fields"]["fids"]["14"] is None
     assert records[4]["raw_fields"]["fids"]["14"] is not None
+    assert records[5]["raw_fields"]["fids"]["14"] is not None
     sidecar = json.loads((logger.raw_capture.directory / SIDECAR_NAME).read_text(encoding="utf-8"))
-    for phase in (PHASE_PRE, PHASE_A1, PHASE_B, PHASE_A2):
+    for phase in (PHASE_PRE, PHASE_A1, PHASE_B, PHASE_A2, PHASE_POST):
         assert sidecar["phase_counters"]["trade_callbacks_by_phase"][phase] == 1
+    assert sidecar["schema"] == "fid_read_ab_test_v2"
+    assert sidecar["phase_counters"]["a2_includes_shutdown_tail"] is False
+    assert sidecar["phase_counters"]["post_90s_phase"] == PHASE_POST
     assert sidecar["research_eligible"] is False
     assert logger.raw_capture.queue.snapshot()["state"] == "closed"
     assert logger.raw_capture.queue.done.is_set()
