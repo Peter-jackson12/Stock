@@ -77,6 +77,18 @@ git status --short
 
 ### 5. 실행 후 기계적 성공과 실험 해석을 분리
 
+우선 새 session 폴더의 작은 근거만 bounded analyzer로 읽는다. 이 명령은 raw DB를 열거나
+COUNT/hash/SQLite scan하지 않는다.
+
+```powershell
+C:\Projects\Stock\.venv32\Scripts\python.exe scripts\analyze_fid_read_ab.py `
+  --session-dir operations_state\capture_sessions\<session_id> `
+  --expected-revision <실행한 정확한 SHA>
+```
+
+analyzer가 READY를 반환해도 연구 적격이나 native 원인 규명으로 해석하지 않는다.
+LIMITED/DIAGNOSTIC_ERROR/INCOMPLETE/INVALID이면 두 번째 실행으로 덮지 말고 해당 작은 근거를 보존한다.
+
 - raw manifest `feed_scope == "kiwoom_universe_fid_read_diagnostic"`
 - sidecar `fid_read_ab_test.json`은 `fid_read_ab_test_v2`, `diagnostic_only=true`, `research_eligible=false`
 - 최종 저장 snapshot의 closed/writer_closed, pending callback 0

@@ -133,6 +133,37 @@ sidecar counter snapshot은 저장 drain 전에 쓰이며 정상 drain/프로세
 새 PID/창/lease 조회나 자동 collector 제어는 추가하지 않았다. sidecar 파일 원자 교체도
 전원 장애·native abort·모든 파일시스템 장애에서 완전 보존을 보장하지 않는다.
 
+## 실행 후 bounded 결과 analyzer
+
+실제 90초 실행 뒤에는 raw DB 전체를 열기 전에 세션 폴더의 작은 근거만 먼저 대조한다.
+`scripts/analyze_fid_read_ab.py`는 다음 네 파일만 크기 상한을 두고 읽는다.
+
+- `status.json`
+- `fid_read_ab_test.json`
+- `capture_telemetry.jsonl`
+- `resource_history.jsonl`
+
+raw DB의 `dataset_path`는 identity claim으로만 표시하며 파일을 열거나 COUNT/hash/SQLite scan하지 않는다.
+
+```powershell
+C:\Projects\Stock\.venv32\Scripts\python.exe scripts\analyze_fid_read_ab.py `
+  --session-dir operations_state\capture_sessions\<session_id> `
+  --expected-revision <실행한 정확한 SHA>
+```
+
+결과 분류는 수집/진단 근거의 완결성만 뜻한다.
+
+- `CAPTURE_COMPLETE_ANALYSIS_READY` — clean closed + sidecar counter + A1/B/A2 telemetry + resource 근거가 일관됨.
+- `CAPTURE_COMPLETE_EVIDENCE_LIMITED` — 저장은 닫혔지만 phase callback/telemetry/resource 근거가 일부 부족함.
+- `CAPTURE_COMPLETE_DIAGNOSTIC_ERROR` — 저장은 닫혔지만 diagnostic_error 또는 FID read failure가 있음.
+- `CAPTURE_INCOMPLETE` — writer close/pending/drop/error/finalization 중 clean close 조건이 깨짐.
+- `CAPTURE_EVIDENCE_INVALID` — session/revision/scope/schema/counter accounting 같은 작은 근거끼리 모순됨.
+
+이 분류는 research eligibility가 아니다. 진단 raw는 계속 `research_eligible=false`다.
+analyzer의 telemetry 통계도 real_type별 5초 최초 callback 표본 요약일 뿐 feed-wide 분포가 아니다.
+`clock_difference_seconds`는 동일 KST 날짜 가정의 signed 표본이며 network latency가 아니다.
+A1/B/A2 callback 수를 30으로 나눠 순수 service rate로 부르지 않는다.
+
 ## 합성 검증과 다음 판단
 
 [기존 helper 회귀](test_fid_read_ab_diagnostic.py), [독립 경계 회귀](test_fid_read_ab_safety.py),
