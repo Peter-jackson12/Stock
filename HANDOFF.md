@@ -72,6 +72,29 @@ preflight 자체는 실제 Mock 로그인·수집 승인이 아니다.
 실제 Mock 90초 1회는 공식 거래일/시장 구간을 당일 다시 확인하고 사전점검이 모두 통과한 뒤 별도 실행한다.
 GitHub에서 가능한 작업은 일반 채팅에서 수행한다. 로컬 원본/OCX가 필요한 일만 별도 승인 후 넘긴다.
 
+## 2026-09-23 FID A-B-A 로컬 preflight — 사용자 전달 보고
+
+아래는 일반 ChatGPT가 원격 GitHub에서 직접 관측한 사실이 아니라 **사용자가 전달한 로컬 에이전트 보고**다.
+preflight는 실제 로그인·Mock/Live 수집·SetRealReg·90초 실험 없이 수행됐다고 보고됐다.
+
+- 기존 저장소: `C:\Projects\Stock` — branch `diag/fid-read-aba-20260923` / `c263003…`, clean.
+- 전용 sibling worktree: `C:\Projects\Stock-preflight-fid-aba-20260923` — detached
+  `1bd0266b70bf0126c01bca5b8c53234a00aa4753`, origin consolidation branch와 일치, clean.
+- Python: `C:\Projects\Stock\.venv32\Scripts\python.exe`, CPython 3.10.11 x86 / 32-bit.
+- preflight JSON: `login_attempted=false`, `ocx_instantiated=false`, `ready=true`,
+  `ocx_registered=true`, `ocx_file_exists=true`, OCX path `C:\OpenAPI\KHOpenAPI.ocx`.
+- C: free bytes 보고값: `1,273,824,886,784`.
+- preflight 전후 `python.exe`/`pythonw.exe` 및 `kiwoom_universe_logger` 실행 없음,
+  Runtime/OpenAPI/Kiwoom 관련 창 없음으로 보고됐다.
+- 실제 raw session/operations_state 생성 없음. worktree에 import 부산물 `collector/**/__pycache__/*.cpython-310.pyc`만
+  생겼고 gitignored 상태로 보고됐다.
+- 최종 로컬 판정은 `LOCAL_PREFLIGHT_READY`다.
+
+`ready=true`와 이 로컬 판정은 Mock 로그인 성공, 서버 가용성, 실시간 수신, 전종목 처리 안정성,
+native 오류 부재를 인증하지 않는다. 실제 Mock 90초 1회는 실행 당일 공식 거래일/시장 구간과
+원격 PR #24 HEAD, clean worktree, collector/PID/Runtime 잔류를 다시 확인한 뒤에만 진행한다.
+첫 실제 실행 결과 검토 전에는 live 비교·동시 두 계정 비교·반복 전종목 실험으로 확대하지 않는다.
+
 ## 2026-09-23 장애 — 사용자 전달 로컬 보고
 
 대상 `7a35b11eddff4dcea88c98acdc8b37df`, collection revision은 위 master다.
