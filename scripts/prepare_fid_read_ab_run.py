@@ -31,8 +31,16 @@ def main(argv=None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
+    repo_root = args.repo_root.resolve()
+    plan_root = (repo_root / "operations_state" / "fid_read_ab_run_plans").resolve()
+    output = args.output.resolve()
+    try:
+        output.relative_to(plan_root)
+    except ValueError:
+        parser.error("--output must be under <repo-root>/operations_state/fid_read_ab_run_plans/")
+
     inputs = AdmissionInputs(
-        repo_root=str(args.repo_root.resolve()),
+        repo_root=str(repo_root),
         expected_revision=args.expected_revision,
         official_market_date=args.official_market_date,
         official_market_source_note=args.official_market_source_note,
@@ -50,7 +58,7 @@ def main(argv=None) -> int:
             }, ensure_ascii=False, indent=2))
             return 3 if admission.get("status") == "RUN_UNCERTAIN" else 2
         plan = build_run_plan(admission, expected_revision=args.expected_revision, now_kst=now)
-        path = write_new_plan(args.output, plan)
+        path = write_new_plan(output, plan)
     except (OSError, ValueError, TypeError, FidReadRunPlanError) as exc:
         print(json.dumps({
             "schema": "fid_read_ab_run_plan_prepare_v1",
