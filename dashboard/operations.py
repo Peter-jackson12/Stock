@@ -22,8 +22,8 @@ ASSESSMENT_LABEL = {
     "interrupted": "중단", "failed": "실패", "alive": "프로세스 존재", "absent": "프로세스 부재",
     "access_denied": "접근 거부", "mismatch": "식별 불일치", "clear": "관련 창 없음",
     "runtime_error": "Runtime 오류 창", "ocx_window_present": "OCX 창 존재", "held": "lease 보유",
-    "free": "lease 해제", "recent": "최근 수신", "stale": "오래된 수신", "clock_ahead": "시각 이상",
-    "lagging": "지연 증가", "stopped": "수신 정지", "diagnostic_only": "진단 전용",
+    "free": "lease 해제", "recent": "최근 callback", "stale": "오래된 callback", "clock_ahead": "시각 이상",
+    "fresh": "source 정상", "lagging": "source 지연", "stopped": "수신 정지", "diagnostic_only": "진단 전용",
     "ineligible": "연구 부적격", "eligible": "연구 적격", "verified_exited": "종료 확인",
     "residual_native": "native 잔류", "process_alive": "프로세스 존재",
     "process_absent_native_unverified": "프로세스 부재·native 미확인", "contradictory": "근거 충돌",
@@ -57,11 +57,12 @@ def render_control_tower(root=None):
     st.subheader("수집 상태 축")
     axes = [
         ("저장", assessment.storage), ("프로세스", assessment.process), ("native UI", assessment.native_ui),
-        ("lease", assessment.lease), ("feed freshness", assessment.feed), ("research", assessment.research),
+        ("lease", assessment.lease), ("callback activity", assessment.activity),
+        ("source freshness", assessment.source_freshness), ("research", assessment.research),
     ]
-    for offset in (0, 3):
-        columns = st.columns(3)
-        for column, (name, value) in zip(columns, axes[offset:offset + 3]):
+    for offset in (0, 4):
+        columns = st.columns(4)
+        for column, (name, value) in zip(columns, axes[offset:offset + 4]):
             column.metric(name, ASSESSMENT_LABEL.get(value, value))
     st.caption(
         "종료 근거: " + ASSESSMENT_LABEL.get(assessment.termination, assessment.termination)
