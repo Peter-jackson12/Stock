@@ -237,6 +237,8 @@ def test_changed_working_directory_is_rejected(tmp_path):
     with pytest.raises(FidReadRunPlanError, match="working directory changed"):
         verify_plan_for_manual_command(
             plan,
+            trusted_expected_revision=REV,
+            execution_approved_now=True,
             now_kst=now + timedelta(seconds=1),
             admission_runner=lambda *_a, **_k: fresh,
         )
