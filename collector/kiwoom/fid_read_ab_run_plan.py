@@ -229,11 +229,25 @@ def powershell_command(command: list[str]) -> str:
 def verify_plan_for_manual_command(
     plan: dict,
     *,
+    trusted_expected_revision: str,
+    execution_approved_now: bool,
     now_kst: datetime | None = None,
     admission_runner=collect_and_evaluate,
 ) -> dict:
     observed = datetime.now(KST) if now_kst is None else now_kst
     validate_plan_integrity(plan, now_kst=observed)
+    if not isinstance(trusted_expected_revision, str) or not trusted_expected_revision:
+        raise FidReadRunPlanError("trusted expected revision required")
+    if plan.get("expected_revision") != trusted_expected_revision:
+        raise FidReadRunPlanError("plan revision does not match trusted expected revision")
+    if execution_approved_now is not True:
+        return {
+            "schema": "fid_read_ab_run_plan_verification_v1",
+            "status": "NOT_READY",
+            "fresh_admission": None,
+            "manual_command": None,
+            "note": "Fresh explicit execution approval is required before revealing the command.",
+        }
 
     embedded = plan["admission"]
     try:
