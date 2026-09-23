@@ -1,0 +1,41 @@
+name: FID read safety audit
+
+on:
+  pull_request:
+    branches:
+      - diag/fid-read-aba-20260923
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fid-read-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  synthetic:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.12.5"
+          python-version: "3.14"
+          enable-cache: false
+      - run: uv sync --locked --group dev --python 3.14
+      - name: Actual callback and research-entry regressions
+        timeout-minutes: 3
+        run: >-
+          uv run --locked --offline python -m pytest -q -ra
+          tests/test_fid_read_ab_safety.py tests/test_fid_read_ab_logger_safety.py
+          tests/test_fid_read_ab_diagnostic.py tests/test_capture_telemetry.py
+          tests/test_tick_research_run.py tests/test_offline_worker.py
+      - name: Changed module Python 3.10 grammar
+        run: >-
+          uv run --locked --offline python -c
+          "import ast,pathlib; names=['collector/research_input_policy.py','collector/kiwoom/live_capture.py','collector/kiwoom/fid_read_ab_diagnostic.py','collector/raw_v2_qualification.py','engine/tick_research_run.py','control_tower/offline_worker.py']; [ast.parse(pathlib.Path(p).read_text(encoding='utf-8'),filename=p,feature_version=(3,10)) for p in names]; print('Python 3.10 grammar: OK; not an x86/native runtime test')"

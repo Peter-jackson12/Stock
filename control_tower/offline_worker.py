@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from collector.kiwoom.collector_lease import CollectorLease
 from collector.raw_v2 import read_raw_v2
+from collector.research_input_policy import require_research_input
 from control_tower.jobs import JobStore
 from control_tower.managed_capture import ManagedCaptures, ACTIVE
 from control_tower.service import confined_file
@@ -62,6 +63,7 @@ def run_replay_job(root, job_id, *, now=None):
             # Fully consume before strategy execution, so quality rejection cannot
             # be mistaken for a completed integrity scan.
             with read_raw_v2(path) as (manifest, rows):
+                require_research_input(manifest)
                 if manifest != payload["header_at_plan"]:
                     raise ValueError("raw manifest changed since plan creation")
                 count = 0
