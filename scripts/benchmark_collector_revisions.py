@@ -234,7 +234,9 @@ def import_historical_logger(checkout: Path):
 
 
 def configure_module(module, root: Path, revision: str):
-    original_capture = module.LiveRawCapture
+    if not hasattr(module, "_benchmark_original_capture"):
+        module._benchmark_original_capture = module.LiveRawCapture
+    original_capture = module._benchmark_original_capture
     facts = SimpleNamespace(
         pid=os.getpid(),
         started_at_utc="2026-09-23T00:00:00+00:00",
