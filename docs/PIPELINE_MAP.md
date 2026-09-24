@@ -530,3 +530,39 @@ NXT의 최근 trade 방향 feature가 언제 다시 사용 가능한지만 정�
 이 helper는 아직 `NxtResearchStrategy`에 연결되지 않았다.
 기존 strategy의 unknown-direction strict rejection, selected-prefix quality gate,
 NXT smoke runner는 모두 그대로다. integration은 별도 후속 단계다.
+
+
+<a id="nxt-direction-quarantine-integration"></a>
+## 17. NXT strategy opt-in unknown-direction quarantine integration candidate
+
+[NXT research strategy](../strategies/nxt_breakout/tick_research.py)는 기존 strict 동작을 default로 유지하면서
+§16의 direction-window policy를 **명시적 opt-in**으로만 사용할 수 있는 후보 integration을 둔다.
+
+새 strategy 설정은 `unknown_direction_policy`다.
+
+- default: `strict`
+  - 기존과 동일하게 trade의 `is_buy`는 반드시 bool
+  - `None`이면 즉시 입력 오류
+- opt-in: `unknown_direction_recent_window_quarantine_v0`
+  - valid price + positive volume + `is_buy=None`을 관측으로 수용
+  - price/volume 기반 open, premarket volume, breakout price window, held-position peak는 그대로 갱신
+  - recent trade deque에도 `(volume, None)`을 그대로 보존
+  - §16 DirectionFeatureWindow에도 같은 관측을 넣음
+  - unknown이 window 안에 있으면 entry 방향 feature unavailable이므로 신규 entry만 차단
+  - unknown이 자연스럽게 window 밖으로 밀린 뒤 buy ratio 계산 재개
+
+이 모드는 unknown trade를 삭제하거나 buy/sell로 추론하지 않는다.
+exit logic도 unknown 자체로 새 방향 정보를 만들지 않는다.
+
+[portfolio adapter](../strategies/nxt_breakout/portfolio_adapter.py)와
+[portfolio runner](../engine/nxt_portfolio_research.py)는 같은 `unknown_direction_policy`를 전달하고,
+strategy settings에 값을 보존한다. `direction_window.py`도 strategy code SHA-256 집합에 포함한다.
+따라서 strict/quarantine이 우연히 같은 intent를 내더라도 설정과 reproducibility key로 구분된다.
+
+**아직 연결하지 않는 경계:**
+- selected-prefix quality gate는 `trade_direction_unverified`를 계속 disqualifying
+- strict raw-v2 prefix qualification은 변경 없음
+- 기존 `run_nxt_prefix_smoke()`는 strict prefix gate를 계속 요구
+- selected overlay를 소비하는 smoke runner는 아직 없음
+
+따라서 이 integration이 통과해도 실제 005930 smoke 허가는 아니다.
