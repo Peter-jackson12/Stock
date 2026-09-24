@@ -29,11 +29,15 @@ from collector.raw_v2_prefix_qualification import (
 )
 from collector.raw_v2_qualification import _Diagnostics, _file_identity, _require_local_ntfs
 from collector.research_input_policy import research_exclusion_reason
-from collector.selected_instrument_smoke_policy import SelectedInstrumentSmokePolicy
+from collector.selected_instrument_smoke_policy import (
+    STRICT_UNKNOWN_DIRECTION_POLICY,
+    SelectedInstrumentSmokePolicy,
+    _validate_unknown_direction_policy,
+)
 from engine.tick_ordering import ReceiveOrderReplay
 
 
-SCHEMA = "raw_v2_selected_prefix_qualification_v1"
+SCHEMA = "raw_v2_selected_prefix_qualification_v2"
 MAX_REPORT_BYTES = 8 * 1024 * 1024
 
 
@@ -59,6 +63,8 @@ def _code_provenance():
         "collector/raw_v2_qualification.py",
         "collector/selected_instrument_smoke_policy.py",
         "collector/zero_quote_policy_experiment.py",
+        "strategies/nxt_breakout/direction_window.py",
+        "strategies/nxt_breakout/tick_research.py",
         "collector/raw_v2.py",
     )
     return {name: _sha256_file(root / name) for name in names}
@@ -137,7 +143,12 @@ def _sentinel(event, envelope):
     }
 
 
-def _scan_selected_overlay(raw_path, strict_report, instruments):
+def _scan_selected_overlay(
+    raw_path,
+    strict_report,
+    instruments,
+    unknown_direction_policy,
+):
     raw_path = Path(raw_path).absolute()
     filesystem = _require_local_ntfs(raw_path)
     if not raw_path.is_file():
@@ -180,7 +191,10 @@ def _scan_selected_overlay(raw_path, strict_report, instruments):
                 max_quote_age_ns=0,
             )
             strict_diagnostics = _Diagnostics()
-            selected_policy = SelectedInstrumentSmokePolicy(instruments)
+            selected_policy = SelectedInstrumentSmokePolicy(
+                instruments,
+                unknown_direction_policy=unknown_direction_policy,
+            )
             digest = hashlib.sha256()
             expected_seq = 1
             last_ns = 0
@@ -256,7 +270,14 @@ def _scan_selected_overlay(raw_path, strict_report, instruments):
             proof["mtime_ns"] = after.st_mtime_ns
 
 
-def qualify_selected_prefix(raw_path, strict_prefix_report, *, output_root, instruments):
+def qualify_selected_prefix(
+    raw_path,
+    strict_prefix_report,
+    *,
+    output_root,
+    instruments,
+    unknown_direction_policy=STRICT_UNKNOWN_DIRECTION_POLICY,
+):
     if (
         not isinstance(instruments, dict)
         or not instruments
@@ -269,6 +290,9 @@ def qualify_selected_prefix(raw_path, strict_prefix_report, *, output_root, inst
         )
     ):
         raise ValueError("nonempty CODE=VENUE mapping required")
+    unknown_direction_policy = _validate_unknown_direction_policy(
+        unknown_direction_policy
+    )
 
     started = time.monotonic()
     output_root = Path(output_root).resolve()
@@ -288,7 +312,12 @@ def qualify_selected_prefix(raw_path, strict_prefix_report, *, output_root, inst
         reported_raw = strict_report["input"].get("path")
         if not isinstance(reported_raw, str) or not _same_path(raw_path, reported_raw):
             raise ValueError("raw path must exactly match strict prefix report source")
-        overlay = _scan_selected_overlay(raw_path, strict_report, instruments)
+        overlay = _scan_selected_overlay(
+            raw_path,
+            strict_report,
+            instruments,
+            unknown_direction_policy,
+        )
     except (OSError, sqlite3.Error, TypeError, ValueError, KeyError) as exc:
         error = f"{type(exc).__name__}: {exc}"
 
@@ -325,6 +354,7 @@ def qualify_selected_prefix(raw_path, strict_prefix_report, *, output_root, inst
             "strict_prefix_report_run_id": strict_report.get("run_id") if isinstance(strict_report, dict) else None,
             "manifest": manifest,
             "selected_instruments": dict(sorted(instruments.items())),
+            "unknown_direction_policy": unknown_direction_policy,
         },
         "strict_prefix": {
             "schema": strict_report.get("schema") if isinstance(strict_report, dict) else None,
@@ -359,11 +389,13 @@ def qualify_selected_prefix(raw_path, strict_prefix_report, *, output_root, inst
             "whole_prefix_research_quality_upgraded": False,
             "nxt_smoke_gate_unchanged": True,
             "selected_overlay_is_opt_in": True,
+            "selected_unknown_direction_policy_explicit": True,
         },
         "limitations": [
             "This overlay does not alter the strict raw_v2_prefix_qualification_v1 result.",
             "Selected quality is only a candidate gate for a future selected-instrument pipeline smoke.",
             "Unselected issue pairs may be ignored only under the explicit selected policy whitelist and exact pairing contract.",
+            "Selected unknown-direction quarantine requires the explicit strategy-aligned policy and the bounded raw-shape contract.",
             "Unsafe controls and unpaired/mismatched issues remain global failures.",
             "Selected one-sided zero quotes remain non-executable.",
             "The raw tail after the strict prefix sentinel remains unassessed.",

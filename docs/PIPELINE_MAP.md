@@ -566,3 +566,66 @@ strategy settings에 값을 보존한다. `direction_window.py`도 strategy code
 - selected overlay를 소비하는 smoke runner는 아직 없음
 
 따라서 이 integration이 통과해도 실제 005930 smoke 허가는 아니다.
+
+
+<a id="selected-direction-quarantine-gate-v2"></a>
+## 18. selected-prefix unknown-direction quarantine gate v2 candidate
+
+PR #41의 `unknown_direction_recent_window_quarantine_v0`와 PR #42의 strategy integration은
+기존 strict 동작을 default로 유지한 채 master에 통합됐다.
+이번 v2 gate 후보는 [selected policy](../collector/selected_instrument_smoke_policy.py)와
+[selected prefix overlay](../collector/raw_v2_selected_prefix_qualification.py)가
+**같은 explicit policy ID**를 사용하도록 정렬한다.
+
+### Default strict
+
+`unknown_direction_policy="strict"`가 default다.
+기존 selected `trade_direction_unverified` exact pair는 계속 disqualifying이다.
+따라서 과거 v1 실제 결과를 새 정책으로 재해석하지 않는다.
+
+### Explicit quarantine candidate
+
+`unknown_direction_policy=unknown_direction_recent_window_quarantine_v0`일 때도
+selected direction issue를 무조건 격리하지 않는다.
+다음을 모두 만족해야 한다.
+
+- issue가 정확히 `trade_direction_unverified` 하나
+- event kind = trade
+- normalized price가 finite positive
+- normalized volume이 positive int
+- normalized `is_buy=None`
+- exact mirrored parse_error: seq+1 / same received_ns / same code / same issues
+- `normalization=kiwoom_fids_prototype_1`
+- `real_type=주식체결`
+- `price_policy=signed_magnitude`
+- `direction_policy=signed_volume`
+- raw FID15가 명시적 `+`/`-`가 없는 양의 정수 문자열
+- FID15 정수값 == normalized volume
+
+signed FID15, raw/normalized volume mismatch, 다른 normalization/real_type/price/direction policy는
+opt-in이어도 fail-closed다.
+
+candidate pair는 `selected_unknown_direction_pairs`로 별도 계수한다.
+이는 해당 trade 직후 entry permission이 아니다.
+report는 `unknown_direction_immediate_entry_permission_granted=false`와
+`selected_unknown_direction_requires_strategy_window_quarantine=true`를 명시하며,
+실제 신규 진입 차단/재개 시점은 PR #42 strategy의 recent-window 정책이 소유한다.
+
+### Overlay schema/provenance
+
+selected overlay 의미가 policy에 따라 달라지므로 새 결과 schema 후보는
+`raw_v2_selected_prefix_qualification_v2`다.
+
+v2 report는:
+- explicit `unknown_direction_policy`
+- strict report path/SHA/run id
+- strict prefix 재검증 결과
+- selected policy result
+- direction-window helper SHA
+- NXT consumer strategy `tick_research.py` SHA
+를 기록한다.
+
+기존 strict `raw_v2_prefix_qualification_v1` 결과는 수정하지 않는다.
+기존 실제 selected overlay v1 결과도 역사 근거로 유지한다.
+v2 selected quality가 true여도 기존 `run_nxt_prefix_smoke()`는 여전히 strict report만 받으므로
+실제 NXT smoke는 별도 selected-overlay consumer가 생기기 전까지 열리지 않는다.

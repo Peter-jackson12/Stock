@@ -11,6 +11,9 @@ from collector.raw_v2 import CaptureControl, OrderedTick, RawV2Writer
 from collector.raw_v2_prefix_qualification import qualify_raw_v2_prefix
 from collector.raw_v2_selected_prefix_qualification import qualify_selected_prefix
 from scripts.qualify_raw_v2_selected_prefix import main
+from strategies.nxt_breakout.direction_window import (
+    POLICY as QUARANTINE_UNKNOWN_DIRECTION_POLICY,
+)
 
 
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows sealed immutable reader")
@@ -202,12 +205,13 @@ def strict_report(path, root):
     return result, json.loads(result.read_text(encoding="utf-8"))
 
 
-def overlay(path, strict_path, root):
+def overlay(path, strict_path, root, *, unknown_direction_policy="strict"):
     result = qualify_selected_prefix(
         path,
         strict_path,
         output_root=root / "selected",
         instruments=SELECTED,
+        unknown_direction_policy=unknown_direction_policy,
     )
     return result, json.loads(result.read_text(encoding="utf-8"))
 
@@ -219,9 +223,13 @@ def test_clean_strict_prefix_stays_selected_eligible(tmp_path):
     _, selected = overlay(path, strict_path, tmp_path)
 
     assert strict["smoke_backtest_eligible"] is True
+    assert selected["schema"] == "raw_v2_selected_prefix_qualification_v2"
+    assert selected["input"]["unknown_direction_policy"] == "strict"
     assert selected["selected_prefix_structure_verified"] is True
     assert selected["selected_smoke_quality_eligible"] is True
     assert all(selected["strict_revalidation"].values())
+    assert "strategies/nxt_breakout/direction_window.py" in selected["code_provenance"]
+    assert "strategies/nxt_breakout/tick_research.py" in selected["code_provenance"]
 
 
 def test_unselected_direction_can_fail_strict_but_pass_selected_overlay(tmp_path):
@@ -250,6 +258,31 @@ def test_selected_direction_remains_selected_disqualifying(tmp_path):
     assert selected["selected_policy_result"]["disqualifying"]["selected_issue_counts"] == {
         "trade_direction_unverified": 1
     }
+
+
+def test_selected_direction_can_pass_only_with_explicit_quarantine_policy(tmp_path):
+    path = tmp_path / "source" / "raw.db"
+    build(path, scenario="selected_direction")
+    strict_path, strict = strict_report(path, tmp_path)
+    _, selected = overlay(
+        path,
+        strict_path,
+        tmp_path,
+        unknown_direction_policy=QUARANTINE_UNKNOWN_DIRECTION_POLICY,
+    )
+
+    assert strict["smoke_backtest_eligible"] is False
+    assert selected["schema"] == "raw_v2_selected_prefix_qualification_v2"
+    assert selected["input"]["unknown_direction_policy"] == QUARANTINE_UNKNOWN_DIRECTION_POLICY
+    assert selected["selected_smoke_quality_eligible"] is True
+    policy = selected["selected_policy_result"]
+    assert policy["quarantine"]["selected_unknown_direction_pairs"] == 1
+    assert policy["quarantine"]["unknown_direction_immediate_entry_permission_granted"] is False
+    assert policy["disqualifying"]["selected_issue_pairs"] == 0
+    assert policy["contracts"]["selected_unknown_direction_requires_strategy_window_quarantine"] is True
+    assert selected["strict_prefix"]["smoke_backtest_eligible"] is False
+    assert selected["strict_prefix"]["whole_prefix_quality_upgraded"] is False
+    assert selected["contracts"]["selected_unknown_direction_policy_explicit"] is True
 
 
 @pytest.mark.parametrize(("scenario", "side"), [
@@ -326,6 +359,23 @@ def test_raw_path_must_match_strict_report(tmp_path):
     assert "exactly match" in selected["stream_error"]
 
 
+def test_invalid_unknown_direction_policy_rejected_before_output(tmp_path):
+    path = tmp_path / "source" / "raw.db"
+    build(path, scenario="clean")
+    strict_path, _ = strict_report(path, tmp_path)
+    output = tmp_path / "invalid-selected"
+
+    with pytest.raises(ValueError, match="unknown selected unknown-direction policy"):
+        qualify_selected_prefix(
+            path,
+            strict_path,
+            output_root=output,
+            instruments=SELECTED,
+            unknown_direction_policy="guess-direction",
+        )
+    assert not output.exists()
+
+
 def test_cli_exit_codes_for_selected_eligible_and_disqualifying(tmp_path, capsys):
     good = tmp_path / "good" / "raw.db"
     bad = tmp_path / "bad" / "raw.db"
@@ -350,3 +400,18 @@ def test_cli_exit_codes_for_selected_eligible_and_disqualifying(tmp_path, capsys
         *common,
     ]) == 2
     assert Path(capsys.readouterr().out.strip()).exists()
+
+    assert main([
+        "--db", str(bad),
+        "--strict-prefix-report", str(bad_strict),
+        "--output-root", str(tmp_path / "bq"),
+        *common,
+        "--unknown-direction-policy", QUARANTINE_UNKNOWN_DIRECTION_POLICY,
+    ]) == 0
+    quarantine_path = Path(capsys.readouterr().out.strip())
+    quarantine = json.loads(quarantine_path.read_text(encoding="utf-8"))
+    assert quarantine["selected_smoke_quality_eligible"] is True
+    assert (
+        quarantine["input"]["unknown_direction_policy"]
+        == QUARANTINE_UNKNOWN_DIRECTION_POLICY
+    )

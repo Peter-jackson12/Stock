@@ -71,44 +71,49 @@ Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. �
 
 ## 다음 행동
 
-PR #38 pure evaluator와 PR #39 selected-prefix overlay는 master에 통합됐다.
-overlay schema `raw_v2_selected_prefix_qualification_v1`은 strict report를 유지하면서
-동일 raw의 sealed prefix·digest·count·sentinel·diagnostics를 대조해 선택 종목 정책을 적용한다.
+PR #41의 pure direction-window policy는 focused tests 46 passed 후 master에 통합됐다.
+PR #42의 NXT strategy opt-in integration은 HEAD `9bcdbf6ef1589751a5816f2b9f59496f66bb02d4`를
+detached worktree에서 Python 3.14.7 / pytest 9.1.1로 검증했고,
+Python 3.10 grammar PASS, 지정 focused tests 65 passed / 0 failed / 0 skipped 후 master에 통합됐다.
+GitHub Actions는 실행하지 않았다.
 
-2026-09-24 실제 `005930=unknown` selected-prefix overlay를 지정된 working snapshot과 기존 strict 10:00 KST
-report에 대해 **1회** 실행했다. 결과는 `C:\StockSnapshots\raw_v2_snapshot_24f657163264432da7af3ed533656eac\selected_prefix_overlay\b73870c2703b425c9c9ee09c945ce93e\result.json`.
-`status=completed`, 소요 383.705083초, 구조 검증과 strict 재검증 5항목 모두 true다.
-working DB의 WAL/SHM/journal은 실행 전후 부재했다.
+현재 strategy/runner 계약:
+- default `unknown_direction_policy="strict"` — 기존처럼 `is_buy=None` 거부
+- opt-in `unknown_direction_recent_window_quarantine_v0` — unknown trade를 보존하고 recent direction window가 깨끗해질 때까지 신규 entry만 차단
+- policy 값은 adapter/runner settings와 reproducibility key에 반영
+- 기존 `run_nxt_prefix_smoke()`와 strict prefix gate는 여전히 strict
 
-**판정: `005930 selected-prefix quality: FAIL`.** 선택 tick 77,558건 중 clean 77,557건,
-selected issue pair 1건의 `trade_direction_unverified` 1건으로 `selected_smoke_quality_eligible=false`다.
-선택 zero-quote pair는 0건이다. 비선택 exact issue pair 13,901건은 정책상 분리됐고
-(FID41 6,819·FID51 3,868·방향 미확인 3,232), unapproved pair·unpaired issue·unsafe control은 0건이다.
-기존 strict `smoke_backtest_eligible=false`와 `whole_stream_assessed=false`는 그대로이며
-whole-prefix 연구 품질·격리 quote 실행 권한·전략 성과는 승격되지 않았다.
-NXT smoke·GitHub Actions는 실행하지 않았다.
+과거 실제 selected overlay 결과는 **v1 역사 근거**로 보존한다.
+`005930=unknown`은 v1에서 selected tick 77,558 / clean 77,557 / selected direction blocker 1건으로 FAIL했고,
+그 blocker는 tick seq 711052 / control 711053, FID15 repr `' 237016'`,
+normalized price 264000 / volume 237016 / is_buy=null의 explicitly unsigned FID15였다.
+기존 strict `smoke_backtest_eligible=false`, whole-stream 미평가, NXT smoke 미실행 상태는 그대로다.
 
-PR #40의 bounded diagnostics는 focused tests 64 passed 후 master에 통합됐다.
-eligibility 로직 변경 없이 selected issue 예시 최대 10건의 seq·시각·원문 FID·normalized 값·pair 여부를 남긴다.
+현재 작업 branch `feat/selected-direction-quarantine-gate-20260924`는
+**selected-prefix quality gate를 PR #42의 explicit opt-in strategy policy와 정렬하는 v2 후보**다.
 
-2026-09-24 PR #40 진단 코드로 같은 working snapshot + strict 10:00 KST report에 대해
-`005930=unknown` selected-prefix overlay를 **정확히 1회** 재실행했다.
-새 결과는 `C:\StockSnapshots\raw_v2_snapshot_24f657163264432da7af3ed533656eac\selected_prefix_overlay\7a7b6ee326ab4ad4a9b33b22d06c7fe7\result.json`.
-`status=completed`, 소요 386.78546초, 구조 검증과 strict 재검증 5항목 모두 true이며
-기존 selected tick 77,558 / clean 77,557 / issue pair 1 / 비선택 issue pair 13,901 및
-zero-quote·unapproved·unpaired·unsafe 0을 재현했다. selected gate는 false다.
+v2 candidate의 핵심:
+- selected policy default는 계속 `strict`
+- opt-in policy ID는 strategy와 동일한 `unknown_direction_recent_window_quarantine_v0`
+- selected `trade_direction_unverified`를 무조건 허용하지 않음
+- exact mirrored parse_error pair + trade + valid positive price/volume + `is_buy=None`
+- `normalization=kiwoom_fids_prototype_1`
+- `real_type=주식체결`
+- `price_policy=signed_magnitude`
+- `direction_policy=signed_volume`
+- FID15가 명시적 +/- 없는 양의 정수 문자열이고 normalized volume과 정확히 일치
+조건을 모두 만족할 때만 selected unknown-direction pair를 quarantine 후보로 분류한다.
 
-유일한 `trade_direction_unverified`는 `005930=unknown` trade tick seq `711052`,
-직후 control seq `711053`의 `paired_parse_error=true`다. `received_ns=7328196670200`,
-`received_at_utc` 필드 원문은 `2026-09-21T09:00:51.125752+09:00`이고
-`market_second=32451`(KST 09:00:51), `exchange_ts_raw=090025`다.
-FID15 원문 repr은 `' 237016'`(선행 공백, 명시적 `+`/`-` 없음),
-normalized `price=264000`, `volume=237016`, `is_buy=null`이다.
-분류는 **`explicitly unsigned FID15`**. 현행 signed_volume 계약에서 방향을 확인할 수 없어
-선택 품질 FAIL은 정당하다. NXT smoke·GitHub Actions·추가 DB 조회는 실행하지 않았다.
+selected overlay schema는 이 의미 변경을 구분하기 위해
+`raw_v2_selected_prefix_qualification_v2` 후보로 올린다.
+report에 `unknown_direction_policy`를 명시하고 direction-window helper와 NXT consumer strategy code hash를 provenance에 포함한다.
+quarantine은 즉시 entry permission이 아니며
+`unknown_direction_immediate_entry_permission_granted=false`,
+`selected_unknown_direction_requires_strategy_window_quarantine=true`를 기록한다.
 
-다음 한 단계는 **`single selected-direction blocker policy decision`**이다.
-이번 관측에서 방향 추론·FID15 보정·품질 정책 변경은 하지 않았다.
+다음 단계는 이 v2 selected policy/overlay/CLI의 focused local regression이다.
+통과 전에는 merge, 실제 8.4M prefix v2 overlay 실행, selected smoke runner 연결, NXT smoke를 하지 않는다.
+GitHub Actions도 실행하지 않는다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
