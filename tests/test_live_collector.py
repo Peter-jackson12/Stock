@@ -38,6 +38,30 @@ def live(collector, monkeypatch, tmp_path):
         logger._shutdown("test cleanup")
 
 
+def startup_state(logger):
+    """Small, non-raw startup facts for a failure message (no retry, no raw scan)."""
+    state = {"exit_code": logger.exit_code, "shutdown_requested": logger._shutdown_requested,
+             "shutdown_done": logger._shutdown_done, "raw_capture": logger.raw_capture is not None}
+    if logger.raw_capture is not None:
+        queue = logger.raw_capture.queue
+        snapshot = queue.snapshot()
+        state.update(queue_state=snapshot["state"], queue_error=snapshot["error"],
+                     ready=queue.ready.is_set(), done=queue.done.is_set(),
+                     pending=snapshot["pending_callbacks"])
+    return state
+
+
+def start_capture(logger, messages):
+    """Assert a clean start BEFORE the target assertion so a startup error cannot hide behind it."""
+    logger._on_login(0)
+    started = (logger.raw_capture is not None and logger.exit_code == 0
+               and logger._shutdown_requested is None and not logger._shutdown_done)
+    assert started, ("startup precondition failed; not retried\n"
+                     + json.dumps(startup_state(logger), ensure_ascii=False, default=str)
+                     + "\n" + "\n".join(messages))
+    return logger.raw_capture
+
+
 @pytest.mark.parametrize("_startup_attempt", range(4))
 def test_operational_default_preserves_raw_and_closes_new_file(live, _startup_attempt):
     logger, _, messages = live
@@ -65,7 +89,7 @@ def test_operational_default_preserves_raw_and_closes_new_file(live, _startup_at
 
 
 def test_legacy_zero_server_flag_is_still_live(live):
-    logger, _, _ = live
+    logger, _, messages = live
     original = logger.ocx.dynamicCall
 
     def call(method, *args):
@@ -74,14 +98,14 @@ def test_legacy_zero_server_flag_is_still_live(live):
         return original(method, *args)
 
     logger.ocx.dynamicCall = call
-    logger._on_login(0)
+    start_capture(logger, messages)
     assert logger.raw_capture.identity.server == "live"
 
 
 def test_bad_fid_keeps_original_and_quality_issue(live):
-    logger, values, _ = live
+    logger, values, messages = live
     values[41] = "bad"
-    logger._on_login(0)
+    start_capture(logger, messages)
     logger._on_receive_real_data("005930", "주식호가잔량", "")
     logger._shutdown("test")
     with read_raw_v2(logger.db_path) as (_, rows):
@@ -94,9 +118,9 @@ def test_bad_fid_keeps_original_and_quality_issue(live):
 @pytest.mark.parametrize("volume,expected", [("-2", False), ("2", None), ("0", None),
                                              ("+0", None), ("bad", None)])
 def test_live_direction_keeps_unknown_and_unrelated_price_errors(live, volume, expected):
-    logger, values, _ = live
+    logger, values, messages = live
     values[15], values[10] = volume, "bad-price"
-    logger._on_login(0)
+    start_capture(logger, messages)
     logger._on_receive_real_data("005930", "주식체결", "")
     logger._shutdown("test")
     with read_raw_v2(logger.db_path) as (_, rows):
@@ -110,8 +134,8 @@ def test_live_direction_keeps_unknown_and_unrelated_price_errors(live, volume, e
 
 
 def test_fid_read_exception_preserves_partial_callback_and_interrupts(live):
-    logger, values, _ = live
-    logger._on_login(0)
+    logger, values, messages = live
+    start_capture(logger, messages)
     del values[15]  # Failure after 20 and 10 were read.
     logger._on_receive_real_data("005930", "주식체결", "")
     logger._poll_control()
@@ -126,8 +150,8 @@ def test_fid_read_exception_preserves_partial_callback_and_interrupts(live):
 
 
 def test_connection_loss_is_not_clean_finalization(live):
-    logger, _, _ = live
-    logger._on_login(0)
+    logger, _, messages = live
+    start_capture(logger, messages)
     logger.ocx.dynamicCall = lambda *args: 0
     logger._poll_control()
     assert logger.exit_code == 2 and logger._shutdown_done
@@ -138,8 +162,8 @@ def test_silence_loop_records_one_stack_per_gap_without_stopping_capture(live, m
     from types import SimpleNamespace
     from collector.kiwoom.capture_diagnostics import CaptureDiagnostics
     from tests.test_capture_diagnostics import Handler
-    logger, _, _ = live
-    logger._on_login(0)
+    logger, _, messages = live
+    start_capture(logger, messages)
     original_monitor = logger.monitor
     calls = []
     def tick():
@@ -167,8 +191,8 @@ def test_silence_loop_records_one_stack_per_gap_without_stopping_capture(live, m
 
 
 def test_second_login_does_not_replace_active_session(live):
-    logger, _, _ = live
-    logger._on_login(0)
+    logger, _, messages = live
+    start_capture(logger, messages)
     identity = logger.raw_capture.identity
     logger._on_login(0)
     assert logger.exit_code == 2 and logger.raw_capture.identity == identity
@@ -178,8 +202,8 @@ def test_second_login_does_not_replace_active_session(live):
 @pytest.mark.parametrize("dump_fails", [False, True])
 def test_silence_stop_requests_shutdown_even_if_final_dump_fails(live, monkeypatch, dump_fails):
     from types import SimpleNamespace
-    logger, _, _ = live
-    logger._on_login(0)
+    logger, _, messages = live
+    start_capture(logger, messages)
     calls = []
     def dump(details):
         calls.append(details)
@@ -194,6 +218,30 @@ def test_silence_stop_requests_shutdown_even_if_final_dump_fails(live, monkeypat
     logger._poll_control()
     assert logger._shutdown_done
     assert logger.raw_capture.queue.snapshot()["pending_callbacks"] == 0
+
+
+def test_silence_stop_is_not_reached_after_intended_writer_startup_failure(live, tmp_path):
+    # 실제 writer 스레드가 DB 부모 경로를 만들지 못하는 의도한 시작 실패 대조군.
+    logger, _, messages = live
+    (tmp_path / "sampledata").write_bytes(b"not a directory")
+    logger._on_login(0)
+    failures = [m for m in messages if m.startswith("❌ raw v2 시작 실패: ")]
+    assert len(failures) == 1, "\n".join(messages)
+    assert "raw-v2 writer startup failed" in failures[0] and "state=failed" in failures[0]
+    assert logger.raw_capture is None and logger.exit_code == 2 and logger._shutdown_done
+    assert not hasattr(logger, "stats_thread")  # silence monitoring never started.
+
+
+def test_startup_precondition_reports_original_error_instead_of_later_assertion(live, tmp_path):
+    # #327처럼 시작 실패가 뒤의 len(calls)==0으로만 보이지 않도록, 전제 실패가 원문을 남기는지 확인한다.
+    logger, _, messages = live
+    (tmp_path / "sampledata").write_bytes(b"not a directory")
+    with pytest.raises(AssertionError) as failure:
+        start_capture(logger, messages)
+    text = str(failure.value)
+    assert "startup precondition failed; not retried" in text
+    assert "❌ raw v2 시작 실패: raw-v2 writer startup failed" in text and "state=failed" in text
+    assert '"exit_code": 2' in text and '"raw_capture": false' in text
 
 
 def test_unknown_server_stops_before_creating_raw(live):
@@ -224,8 +272,8 @@ def test_subscription_rejection_interrupts_backend(live, monkeypatch):
 def test_status_reader_distinguishes_counts_and_stale_closed(live):
     from datetime import timedelta
     from control_tower.status import observe_raw_capture
-    logger, _, _ = live
-    logger._on_login(0)
+    logger, _, messages = live
+    start_capture(logger, messages)
     logger._on_receive_real_data("005930", "주식체결", "")
     logger._shutdown("test")
     root = logger.raw_capture.latest_status_path.parents[1]

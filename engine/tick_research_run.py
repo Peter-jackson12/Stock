@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 from uuid import uuid4
 
+from collector.research_input_policy import require_research_input
 from execution.tick_simulator import TickSimulator
 from execution.quote_validation import check_ordered_quote
 from execution.reality_contract import input_capabilities, simulation_contract
@@ -37,12 +38,13 @@ def _json(value):
 
 
 def _provenance_event_count(provenance):
-    """예약 키만 검증한다. 일반 JSON metadata/reader 설명은 해석하지 않는다."""
+    """예약 manifest만 검증한다. 일반 JSON metadata/reader 설명은 해석하지 않는다."""
     if not isinstance(provenance, dict) or "raw_manifest" not in provenance:
         return 0
     manifest = provenance["raw_manifest"]
     if not isinstance(manifest, dict):
         raise ValueError("input_provenance.raw_manifest must be a dictionary")
+    require_research_input(manifest)
     count = manifest.get("event_count", 0)
     if type(count) is not int or count < 0:
         raise ValueError("input_provenance.raw_manifest.event_count must be a nonnegative integer")
@@ -61,6 +63,7 @@ def _write(path, value):
 def _code_identity():
     root = Path(__file__).resolve().parents[1]
     names = ("engine/tick_research_run.py", "engine/tick_ordering.py",
+             "collector/research_input_policy.py",
              "execution/tick_simulator.py", "execution/quote_validation.py",
              "execution/reality_contract.py",
              "strategies/nxt_breakout/tick_research.py", "engine/nxt_tick_engine.py")
@@ -79,6 +82,8 @@ def run_research(events, *, output_root, dataset_label, simulator_config,
     Generic JSON provenance remains opaque. A top-level dictionary's reserved
     raw_manifest must be a dictionary; its optional event_count must be an actual
     nonnegative int (not bool). Missing manifest/count means zero for classification.
+    A known diagnostic raw_manifest scope is rejected before iteration/output.
+    Discarded or forged provenance cannot be authenticated from normalized events.
     reader/reader_sha256 are retained metadata, not independently verified evidence.
     Once iteration starts, replay failures retain failed/diagnostics_only output;
     this is not a guarantee against filesystem failure or process termination.
@@ -160,13 +165,14 @@ def run_research(events, *, output_root, dataset_label, simulator_config,
 
 
 def run_raw_v2(path, *, output_root, simulator_config, quantity, **strategy_options):
-    """Offline closed raw-v2 -> full validation -> selected instrument -> result.
+    """Offline closed raw-v2 -> scope guard -> validation/selection -> result.
 
     All rows, including unselected symbols, are read to verify the stored checksum.
     Do not invoke on a large production file during capture hours.
     """
     from collector.raw_v2 import read_raw_v2, CaptureControl
     with read_raw_v2(path) as (manifest, envelopes):
+        require_research_input(manifest)
         config = deepcopy(simulator_config)
         if config["source"] != manifest["source"] or config["session_id"] != manifest["session_id"]:
             raise ValueError("simulator source/session must match dataset")

@@ -163,7 +163,9 @@ def test_saved_contract_hash_and_reproducibility_identity_cover_both_contracts(t
     assert saved["reproducibility_key"] == hashlib.sha256(canonical(identity).encode("utf-8")).hexdigest()
     source = Path(__file__).resolve().parents[1] / "execution/reality_contract.py"
     assert saved["code_sha256"]["execution/reality_contract.py"] == hashlib.sha256(source.read_bytes()).hexdigest()
-    assert saved["schema"] == "tick_research_result_v1" and len(saved["code_sha256"]) == 7
+    assert saved["schema"] == "tick_research_result_v1" and len(saved["code_sha256"]) == 8
+    policy = Path(__file__).resolve().parents[1] / "collector/research_input_policy.py"
+    assert saved["code_sha256"]["collector/research_input_policy.py"] == hashlib.sha256(policy.read_bytes()).hexdigest()
     # Golden economic trace: the contract does not change the existing fill rule.
     assert saved["final_cash"] == "79977.998" and saved["open_quantity"] == 2
     assert saved["fills"] == [dict(order_id="nxt-fixed-1", time_ns=6, side="buy",

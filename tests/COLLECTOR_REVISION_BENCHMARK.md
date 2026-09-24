@@ -1,7 +1,8 @@
-# Historical collector fixed-input comparison
+# 과거 수집기 revision 고정 입력 비교
 
 이 진단은 2026-09-23 native/live 수집 장애를 좁히기 위한 **GitHub-hosted 합성 비교**다.
 운영 raw/evidence/OCX/사용자 Windows 체크아웃을 읽지 않으며 PR #18의 문서 계약 작업과 분리한다.
+[문서 인덱스](../README.md) · [테스트 안내](../docs/TESTING.md) · [비교 스크립트](../scripts/benchmark_collector_revisions.py)
 
 ## 비교 revision
 
@@ -56,3 +57,30 @@ telemetry ON을 한 번 더 실행해 새 진단 경로의 추가 Python 비용�
 
 따라서 결과가 revision 사이 비슷해도 native/live 병목을 배제하지 않는다.
 반대로 한 revision이 CI에서 느려도 실제 시장 장애의 원인으로 바로 승격하지 않는다.
+
+## 실행 방식 — 명시적 진단 전용
+
+일반 `ci.yml`은 master push와 pull_request의 Git-only 회귀를 유지하되 이 역사적 벤치마크를
+매번 실행하지 않는다. 기존 스크립트·고정 revision·검증 불변식은 보존하며, 새 자동 workflow나
+성능 gate를 추가하지 않는다. 일반 CI 성공을 이번 벤치마크의 재실행 성공으로 기록하지 않는다.
+
+재측정이 필요한 별도 요청이 있을 때만, 운영 저장소가 아닌 폐기 가능한 개발/hosted 검증
+checkout에서 기존 64비트 개발 환경으로 다음 명시적 명령을 사용한다.
+
+```powershell
+uv run --locked --offline python scripts/benchmark_collector_revisions.py --pairs 2000 --repeats 3
+```
+
+`--offline`은 uv 의존성 처리 옵션이지 전체 스크립트의 네트워크 차단이 아니다. 필요한 과거 commit이
+없으면 스크립트는 `git fetch --no-tags --depth=256 origin master`를 시도하고, 임시 detached worktree를
+생성·제거한다. 기존 운영 checkout·운영 `.venv32`에서 실행하지 않는다. 이 문서 자체는 실행 승인이 아니다.
+
+## 보존된 완료 근거
+
+[원래 검토 HEAD](https://github.com/Peter-jackson12/Stock/commit/32e6285e2bd5a224a63152c2ed1f492b57afd841),
+[push CI #207](https://github.com/Peter-jackson12/Stock/actions/runs/35818078661),
+[PR CI #208](https://github.com/Peter-jackson12/Stock/actions/runs/35818345055)과
+[PR #19의 측정 결과](https://github.com/Peter-jackson12/Stock/pull/19)를 보존한다.
+#205/#206의 benchmark harness 수명주기 실패도 삭제하지 않는다. `_shutdown()` 뒤 실제 `main()`의
+`_finish_process_resources()`까지 따라 telemetry handle을 마무리하도록 보정한 이력이다.
+이 역사적 성공은 현재 native/live 장애 원인 확정이나 미래 성능 보장이 아니다.
