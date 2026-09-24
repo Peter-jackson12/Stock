@@ -629,3 +629,88 @@ v2 report는:
 기존 실제 selected overlay v1 결과도 역사 근거로 유지한다.
 v2 selected quality가 true여도 기존 `run_nxt_prefix_smoke()`는 여전히 strict report만 받으므로
 실제 NXT smoke는 별도 selected-overlay consumer가 생기기 전까지 열리지 않는다.
+
+
+<a id="selected-prefix-v2-smoke-runner"></a>
+## 19. selected-prefix v2 NXT smoke runner candidate
+
+[new selected smoke runner](../engine/nxt_selected_prefix_smoke.py)와
+[CLI](../scripts/run_nxt_selected_prefix_smoke.py)는
+§18의 eligible `raw_v2_selected_prefix_qualification_v2`를 소비하는 별도 pipeline-smoke 후보 경로다.
+
+기존 [strict prefix smoke](../engine/nxt_prefix_smoke.py)는 수정하지 않는다.
+strict runner는 계속 `raw_v2_prefix_qualification_v1.smoke_backtest_eligible=true`만 받는다.
+
+### Input gate
+
+selected runner는 다음을 모두 요구한다.
+
+- selected report schema = `raw_v2_selected_prefix_qualification_v2`
+- status completed / stream_error null
+- selected prefix structure verified
+- selected smoke quality eligible
+- policy = `unknown_direction_recent_window_quarantine_v0`
+- performance research assessed=false / eligible=null
+- selected overlay strict-preservation contracts 유지
+- selected quarantine의 immediate entry permission=false
+- strategy-window quarantine required=true
+- selected report의 current policy/strategy code provenance가 현재 코드와 정확히 일치
+- selected report가 가리키는 strict report 파일 SHA/run id/scope/digest가 그대로 유지
+- raw path와 simulator instrument mapping이 report와 정확히 일치
+- 현재는 정확히 한 selected instrument만 허용
+
+### One bounded raw scan
+
+runner는 output strategy replay와 동시에 같은 raw prefix를 한 번 다시 읽는다.
+
+전체 prefix에서는:
+- seq/source/session/receipt ordering
+- manifest
+- strict diagnostics
+- prefix SHA-256
+- consumed-through-sentinel count
+- boundary sentinel
+- selected policy result
+를 재계산한다.
+
+EOF에서 strict evidence와 selected policy result가 report와 완전히 같아야 한다.
+raw bytes, strict report, selected report policy result가 뒤늦게 바뀌면 정상 smoke가 아니라 failed diagnostics로 끝난다.
+
+### Selected strategy input transformation
+
+selected clean tick:
+- 그대로 strategy input으로 전달
+
+selected unknown-direction quarantine pair:
+- issue tick은 즉시 전달하지 않고 바로 다음 exact mirrored parse_error를 확인
+- v2 policy가 `selected_unknown_direction_pairs`로 인정한 경우 원 trade를 원 seq/received_ns,
+  `is_buy=None` 그대로 strategy input으로 전달
+- PR #42 strategy recent-window quarantine이 entry 차단/재개를 담당
+
+selected one-sided zero-quote quarantine pair:
+- exact mirrored pair를 확인한 뒤 strategy input에서는 제외
+- execution permission을 부여하지 않으며 이전 valid quote를 fake replacement로 생성하지 않음
+
+다른 selected issue, unapproved issue, unpaired/mismatch, unsafe/global issue:
+- fail-closed
+
+### Provenance / limits
+
+result의 `input_provenance.kind`는 `raw_v2_selected_prefix_smoke_v1`이다.
+다음을 보존한다.
+
+- selected report path/SHA/run id/schema
+- strict report path/SHA/run id
+- strict smoke eligibility 원값
+- prefix digest/cutoff/sentinel
+- selected instruments
+- unknown-direction policy
+- selected policy result
+- expected selected strategy-input event count
+- withheld selected zero-quote pair count
+- forwarded selected unknown-direction pair count
+- selected smoke adapter code SHA
+
+이 경로도 `whole_stream_assessed=false`, `performance_research_assessed=false`,
+`raw_identity_verified=false`를 유지한다.
+성공은 pipeline smoke 실행 가능성일 뿐 수익성, NXT venue 인증, whole raw 품질, live trading 승인이 아니다.
