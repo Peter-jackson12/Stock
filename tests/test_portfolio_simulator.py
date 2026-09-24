@@ -521,3 +521,23 @@ def test_mixed_asset_trace_matches_independent_fraction_ledger_and_liquidity(fee
         assert_conserved(s)
     s.close(15)
     assert_conserved(s)
+
+
+@pytest.mark.parametrize("invalid", [
+    OrderIntent("bad", "A", "buy", 1, reason=object()),
+    OrderIntent("bad", "A", "buy", float("nan")),
+    OrderIntent(object(), "A", "buy", 1),
+])
+def test_unserializable_intent_cannot_hide_prior_fills_or_failure_report(invalid):
+    def strategy(view, snapshot):
+        return [OrderIntent("valid", "A", "buy", 1), invalid]
+    with pytest.raises(PortfolioRunFailed) as caught:
+        run_portfolio([quote()], simulator_config=config(buy_latency_ns=0), close_ns=10,
+                      strategy=strategy, strategy_id="malformed-payload")
+    report = caught.value.report
+    assert report["diagnostics_only"] and not report["input_complete"]
+    assert len(report["account"]["fills"]) == 1
+    assert len(report["account"]["orders"]) == 1
+    assert len(report["order_intents"]) == 2
+    assert report["order_intents"][-1]["kind"] == "invalid_intent"
+    assert report["order_intents"][-1]["serialization_error"] in ("TypeError", "ValueError")

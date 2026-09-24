@@ -45,7 +45,8 @@ FID hot path·admission/run-plan·OCX/QAx·queue/teardown/telemetry·실제 수�
 
 [합성 회귀](tests/test_portfolio_simulator.py)는 현금/보유량 경쟁, 부분체결·취소·만료·거절,
 노출/수량/open-order 한도, 동일 시각, 미래 suffix/chunk/반복, 실패 진단, 독립 Fraction 원장과
-기존 단일 종목의 충분한 자금 사례를 대조한다. 격리된 Python 3.13 집중 검증은 59 passed다.
+기존 단일 종목의 충분한 자금 사례를 대조한다. 격리된 Python 3.13 집중 검증은 62 passed다.
+비직렬화 주문 의도가 실패 보고서까지 숨기던 경계도 회귀로 고정했다.
 원격 Windows/Python 3.14 전체 결과는 최종 PR HEAD의 완료 로그로 별도 확인한다.
 
 **보존:** 기존 TickSimulator·NxtResearchStrategy·run_research/run_raw_v2·실제 CLI·입력 정책·

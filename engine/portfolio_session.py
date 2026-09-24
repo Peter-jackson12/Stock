@@ -32,6 +32,16 @@ def _apply_strategy(simulator, view, strategy, records):
     for intent in intents:
         record = dict(event_seq=view.event.seq, time_ns=view.event.received_ns,
                       kind="order" if type(intent) is OrderIntent else "cancel", intent=asdict(intent))
+        # Validate report encoding before execution. A malformed payload must
+        # not make the later failure report throw and hide earlier valid fills.
+        try:
+            _json(record)
+        except (TypeError, ValueError) as exc:
+            records.append(dict(event_seq=view.event.seq, time_ns=view.event.received_ns,
+                                kind="invalid_intent", intent_type=type(intent).__name__,
+                                field_types={name: type(value).__name__ for name, value in record["intent"].items()},
+                                serialization_error=type(exc).__name__))
+            raise
         records.append(record)
         if type(intent) is OrderIntent:
             simulator.submit(intent)
