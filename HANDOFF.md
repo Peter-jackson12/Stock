@@ -98,8 +98,8 @@ Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. �
 
 1. 현재 후보 `collector/raw_v2_snapshot.py` / `scripts/acquire_raw_v2_snapshot.py`의 Windows 합성 CI를 확인한다.
    후보는 외부 raw를 SQLite로 열지 않고 main/0-byte WAL/32KiB SHM을 동시에 exclusive handle로 획득한다.
-   source를 한 번 스트리밍해 `evidence/`와 `working/` 두 fresh copy를 만들고, source handle을 놓은 뒤
-   오직 working copy를 SQLite로 열어 residue cleanup을 시도한다.
+   source를 한 번 스트리밍해 `evidence/`와 `working/` 두 fresh copy를 만들고, source main/WAL/SHM exclusive handle을 최종 working cleanup·hash 검증까지 유지한 채
+   오직 별도 working copy를 SQLite로 열어 residue cleanup을 시도한다.
 2. success는 working sidecar 전부 부재, working main SHA-256이 sealed source stream digest와 동일,
    expected session 일치, source stat/identity 불변일 때만 `snapshot_ready_for_prefix_qualification=true`다.
    whole-stream/research/performance eligibility는 계속 false다.
