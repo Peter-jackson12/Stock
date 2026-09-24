@@ -266,3 +266,31 @@ def test_invalid_fill_numeric_contract_fails_closed(changes, message):
 
     with pytest.raises(ValueError, match=message):
         account_portfolio_fills([fill(**kwargs)])
+
+
+
+def test_same_code_cannot_mix_venues():
+    first = fill(
+        order_id="b1",
+        time_ns=1,
+        side="buy",
+        quantity=1,
+        price="100",
+        fee="0",
+        quote_seq=1,
+        code="A",
+    )
+    second = PortfolioFill(
+        "b2",
+        "A",
+        "other",
+        2,
+        "buy",
+        1,
+        Decimal("100"),
+        Decimal("0"),
+        2,
+    )
+
+    with pytest.raises(ValueError, match="one venue per code"):
+        account_portfolio_fills([first, second])
