@@ -407,6 +407,7 @@ class SelectedInstrumentSmokePolicy:
                 "unselected_issue_pairs_ignored": self.unselected_issue_pairs_ignored,
                 "unselected_ignored_issue_counts": dict(sorted(self.unselected_ignored_issues.items())),
                 "zero_quote_execution_permission_granted": False,
+                "unknown_direction_immediate_entry_permission_granted": False,
             },
             "disqualifying": {
                 "selected_issue_pairs": self.selected_disqualifying_pairs,
@@ -429,6 +430,7 @@ class SelectedInstrumentSmokePolicy:
                 "selected_unknown_direction_requires_explicit_policy": True,
                 "selected_unknown_direction_requires_unsigned_fid15": True,
                 "selected_unknown_direction_requires_observed_kiwoom_trade_shape": True,
+                "selected_unknown_direction_requires_strategy_window_quarantine": True,
                 "selected_trade_direction_unverified_is_disqualifying": (
                     self.unknown_direction_policy == STRICT_UNKNOWN_DIRECTION_POLICY
                 ),
