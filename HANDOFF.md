@@ -112,8 +112,24 @@ selected/strict provenance·policy result·code SHA 전체가 JSON 값 기준 �
 `started_at`·`finished_at`만 다르다. sidecar는 실행 전후 부재했다.
 **`005930 selected-v2 reproducibility rerun: PASS`**. GitHub Actions·추가 재실행은 하지 않았다.
 
-다음 한 단계는 **`selected-v2 research-input gate decision`**이다.
-재현성 PASS는 bounded pipeline 반복 결과이며 성과·NXT venue·whole raw·live 적격성 승격이 아니다.
+**selected-v2 research-input gate 결정:** `2026-09-21 / 10:00 KST exclusive /
+005930=unknown / raw_v2_selected_prefix_qualification_v2 /
+unknown_direction_recent_window_quarantine_v0` 범위를
+**bounded selected strategy-research input**으로 승인했다.
+입력·재생·strategy/execution 회귀와 bounded behavior analysis에는 사용할 수 있지만,
+`performance_research`, whole-file FIRST_RESEARCH_CANDIDATE, NXT venue, whole raw,
+live 적격성은 승격하지 않는다. 이 한 왕복을 보고 parameter tuning도 하지 않는다.
+
+PR #46의 `portfolio performance-accounting pure contract`는 HEAD
+`0dbcb38f89db44ec5c3415616f1508fc9564146a`에서 Python 3.10 grammar PASS,
+focused tests 97 passed / 0 failed / 0 skipped 후 master에 통합됐다.
+계약은 fee-inclusive weighted-average cost, exact Fraction realized accounting,
+explicit fresh-valid-bid valuation, cash/accounting reconciliation이다.
+기존 PortfolioSimulator와 result schema는 PR #46에서 변경하지 않았다.
+
+다음 한 단계는 **`portfolio performance-accounting result integration`**이다.
+simulator execution semantics는 그대로 두고 NXT result finalization에 accounting subrecord를 먼저 연결한다.
+legacy top-level `realized_pnl/unrealized_pnl/equity`는 schema migration 전까지 그대로 null로 보존한다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
