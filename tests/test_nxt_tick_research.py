@@ -5,6 +5,9 @@ import pytest
 from engine.tick_ordering import OrderedTick
 from engine.tick_session import replay_chunk
 from execution.tick_simulator import TickSimulator
+from strategies.nxt_breakout.direction_window import (
+    POLICY as QUARANTINE_UNKNOWN_DIRECTION_POLICY,
+)
 from strategies.nxt_breakout.tick_research import NxtResearchStrategy
 
 
@@ -111,3 +114,79 @@ def test_partial_entry_cancelled_before_exit_quantity_is_submitted():
     assert s.position == 1  # only three shares of displayed bid liquidity
     replay_chunk(s, [quote(5, 15, 32402, bid=9900, ask=9901)], strategy)
     assert s.position == 0
+
+
+
+def test_default_strict_policy_still_rejects_unknown_trade_direction():
+    s = sim()
+    strategy = NxtResearchStrategy(quantity=1)
+
+    replay_chunk(s, [quote()], strategy)
+    with pytest.raises(ValueError, match="trade price/volume/direction"):
+        replay_chunk(
+            s,
+            [trade(seq=2, ns=1, is_buy=None, volume=237016)],
+            strategy,
+        )
+
+
+def test_quarantine_policy_preserves_unknown_trade_but_blocks_entry_until_it_ages_out():
+    s = sim()
+    strategy = NxtResearchStrategy(
+        quantity=1,
+        unknown_direction_policy=QUARANTINE_UNKNOWN_DIRECTION_POLICY,
+    )
+
+    replay_chunk(s, [quote()], strategy)
+    replay_chunk(
+        s,
+        [trade(seq=2, ns=1, is_buy=None, volume=237016)],
+        strategy,
+    )
+
+    assert strategy.signals == []
+    assert strategy.open == Decimal("10001")
+    assert strategy.recent[-1] == (237016, None)
+    blocked = strategy.direction_window.state()
+    assert blocked.total_volume == 237016
+    assert blocked.buy_ratio is None
+    assert blocked.entry_direction_eligible is False
+
+    for offset in range(14):
+        replay_chunk(
+            s,
+            [trade(seq=3 + offset, ns=2 + offset)],
+            strategy,
+        )
+        assert strategy.signals == []
+        assert strategy.direction_window.state().entry_direction_eligible is False
+
+    replay_chunk(s, [trade(seq=17, ns=16)], strategy)
+    state = strategy.direction_window.state()
+    assert state.unknown_direction_ticks == 0
+    assert state.total_volume == 450
+    assert state.buy_ratio == Decimal(1)
+    assert state.entry_direction_eligible is True
+    assert strategy.signals[-1][1:] == ("buy", 1, "breakout")
+
+
+def test_quarantine_policy_known_only_path_matches_strict_signal():
+    strict_sim, quarantine_sim = sim(), sim()
+    strict = NxtResearchStrategy(quantity=1)
+    quarantine = NxtResearchStrategy(
+        quantity=1,
+        unknown_direction_policy=QUARANTINE_UNKNOWN_DIRECTION_POLICY,
+    )
+    events = [quote(), trade()]
+
+    replay_chunk(strict_sim, events, strict)
+    replay_chunk(quarantine_sim, events, quarantine)
+
+    assert strict.signals == quarantine.signals
+    assert strict.recent == quarantine.recent
+
+
+@pytest.mark.parametrize("policy", ["", "signed_volume", None, 1])
+def test_unknown_direction_policy_rejects_unknown_values(policy):
+    with pytest.raises(ValueError, match="unknown-direction policy"):
+        NxtResearchStrategy(quantity=1, unknown_direction_policy=policy)
