@@ -336,18 +336,26 @@ def test_close_is_exclusive_expires_orders_releases_all_reservations_keeps_holdi
     assert_conserved(s)
 
 
-def test_exact_fees_reservations_and_cash_ignore_ambient_decimal_rounding():
-    with localcontext() as ctx:
-        ctx.prec = 2
-        ctx.traps[Inexact] = ctx.traps[Rounded] = True
-        s = sim(cash="205", fee_rate="0.01", buy_latency_ns=0, sell_latency_ns=0)
-        s.on_event(quote(ask=101))
-        buy(s, quantity=2)
-        assert s.snapshot().cash == Decimal("0.98")
-        assert s.fills[0].fee == Decimal("2.02")
-        s.submit(OrderIntent("exit", "A", "sell", 2))
-        assert s.snapshot().cash == Decimal("197.00")
-        assert not ctx.flags[Inexact] and not ctx.flags[Rounded]
+@pytest.mark.parametrize("inherited_flags", [False, True])
+def test_exact_fees_reservations_and_cash_ignore_ambient_decimal_rounding(inherited_flags):
+    with localcontext() as parent:
+        parent.flags[Inexact] = parent.flags[Rounded] = inherited_flags
+        with localcontext() as ctx:
+            # localcontext copies sticky flags as well as precision/traps. Clear
+            # only this test's starting flags; do not erase caller context state.
+            assert ctx.flags[Inexact] == ctx.flags[Rounded] == inherited_flags
+            ctx.clear_flags()
+            ctx.prec = 2
+            ctx.traps[Inexact] = ctx.traps[Rounded] = True
+            s = sim(cash="205", fee_rate="0.01", buy_latency_ns=0, sell_latency_ns=0)
+            s.on_event(quote(ask=101))
+            buy(s, quantity=2)
+            assert s.snapshot().cash == Decimal("0.98")
+            assert s.fills[0].fee == Decimal("2.02")
+            s.submit(OrderIntent("exit", "A", "sell", 2))
+            assert s.snapshot().cash == Decimal("197.00")
+            assert not ctx.flags[Inexact] and not ctx.flags[Rounded]
+        assert parent.flags[Inexact] == parent.flags[Rounded] == inherited_flags
 
 
 def test_strategy_receives_detached_immutable_state_not_mutable_simulator():
