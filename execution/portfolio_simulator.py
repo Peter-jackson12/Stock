@@ -146,6 +146,22 @@ class OrderTransition:
 
 
 @dataclass(frozen=True)
+class PortfolioBidMarkObservation:
+    code: str
+    venue: str
+    quantity: int
+    valuation_time_ns: int
+    status: str
+    reason: str
+    quote_policy: str
+    quote_seq: int | None
+    quote_received_ns: int | None
+    quote_age_ns: int | None
+    bid: Decimal | None
+    bid_size: int | None
+
+
+@dataclass(frozen=True)
 class PortfolioSnapshot:
     now: int
     cash: Decimal
@@ -240,6 +256,43 @@ class PortfolioSimulator:
                                  _money_add(self._cash, reserved.copy_negate()),
                                  exposure, "priced_at_fresh_ask" if exposure is not None else "unpriced",
                                  tuple(self._positions.items()), self.orders, self.fills, self._closed)
+
+    def bid_mark_observations(self):
+        """Read-only final/current bid-mark provenance for open long positions.
+
+        Only a fresh quote that passes the existing two-sided top-of-book
+        validation supplies a mark. Missing/stale/invalid observations remain
+        explicitly unpriced; no trade-price or stale fallback is invented.
+        """
+        records = []
+        for code, quantity in self._positions.items():
+            if quantity <= 0:
+                continue
+            view = self._views.get(code)
+            quote = None if view is None else view.quote
+            if quote is None:
+                checked = QuoteCheck(None, "missing")
+                age = None
+            else:
+                age = self._now - quote.received_ns
+                status = "stale" if age > self._replay.max_quote_age_ns else "observed"
+                checked = check_ordered_quote(TickView(view.event, quote, age, status))
+            priced = checked.book is not None
+            records.append(PortfolioBidMarkObservation(
+                code=code,
+                venue=self._instruments[code],
+                quantity=quantity,
+                valuation_time_ns=self._now,
+                status="priced" if priced else "unpriced",
+                reason=checked.reason,
+                quote_policy=checked.policy,
+                quote_seq=quote.seq if quote is not None else None,
+                quote_received_ns=quote.received_ns if quote is not None else None,
+                quote_age_ns=age,
+                bid=checked.book.bid if priced else None,
+                bid_size=checked.book.bid_size if priced else None,
+            ))
+        return tuple(records)
 
     def _log(self, previous, order):
         self._transitions.append(OrderTransition(
