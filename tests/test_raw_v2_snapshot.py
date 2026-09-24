@@ -90,7 +90,8 @@ def test_residue_snapshot_preserves_source_and_publishes_sidecar_free_working_co
 
     assert result["status"] == "snapshot_ready"
     assert result["snapshot_ready_for_prefix_qualification"] is True
-    assert result["source_sqlite_opened"] is False
+    assert result["declared_source_sqlite_policy"] == "never_open_source_sqlite"
+    assert len(result["code_provenance"]["collector/raw_v2_snapshot.py"]) == 64
     assert result["source_unchanged_during_acquisition"] is True
     assert result["whole_stream_assessed"] is False
     assert result["research_eligible"] is False
