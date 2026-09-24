@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-24 / frozen snapshot 통합·실데이터 적용 준비
+# 현재 인계 — 2026-09-24 / 실제 raw 오전 prefix 품질 차단
 
 [문서 인덱스](README.md) · [공유 계좌 연결/계약](docs/PIPELINE_MAP.md#portfolio-research) ·
 [첫 실제 연구 체크](BACKTEST_TODO.md) · [기존 틱 연구 런북](TICK_RESEARCH_RUNBOOK.md) ·
@@ -19,11 +19,11 @@ FID hot path·admission/run-plan·OCX/QAx·queue/teardown/telemetry·실제 수�
 **현재 개발은 research/backtest/execution 트랙이다.** 공유계좌·주문 생명주기·RiskLimits 기반은 PR #30으로 master에 통합됐다.
 이후 우선순위는 다중 전략 플랫폼이 아니라 **NXT 전략 하나를 새 실행 경계에 연결해 평가 가능한 연구 경로를 만드는 것**이다.
 같은 전략을 여러 종목에 적용할 수는 있지만 전략 간 arbitration/자본 배분은 나중 필요할 때 추가한다.
-실제 raw, 전략 파라미터 최적화, 실주문은 이번 변경의 입력/목표가 아니다.
+이번 실데이터 실행은 파이프라인 점검이며 전략 파라미터 최적화와 실주문은 목표가 아니다.
 
 ## 원격 시작 기준과 현재 변경
 
-- 현재 원격 master: `51077b4fea6e07bdcd3a4e3b50dd2ca78c6b3bd8` — PR #35 통합.
+- 실행 기준 master: `bf78e6abba1548965603211bf2baa6063f1cddb1` — 시작 clean checkout을 원격에 fast-forward했다.
 - PR #34는 frozen snapshot acquisition 기반을 통합했고, PR #35는 source main/WAL/SHM exclusive seal을 working cleanup·hash·최종 source 재검증까지 유지하도록 보강했다.
 - PR #34 후보 HEAD `463a71cc636431a02ca0e254e1ff71e3013564a3`에서 전체 Git-only 회귀 `2,012 passed / 6 deselected`를 확인했다. 이후 작은 변경마다 Actions를 반복하지 않는 정책으로 전환했다.
 - GitHub Actions는 자동 PR/push 실행을 중단했다. 일반 CI는 매주 일요일 09:00 KST, Session assessment는 09:15 KST 정기 실행이며 필요할 때만 수동 실행한다.
@@ -31,19 +31,25 @@ FID hot path·admission/run-plan·OCX/QAx·queue/teardown/telemetry·실제 수�
 - #20/#22/#23/#25/#26/#27/#28은 수집기/FID 개발 이력이다. 임의 close/merge/retarget하지 않는다.
 - PR #31~#33의 NXT 공유계좌·bounded prefix·prefix→NXT smoke 경로도 master에 통합돼 있다.
 
-## 2026-09-24 로컬 filesystem-only 사전점검
+## 2026-09-24 실제 raw 실행 결과
 
 대상: `sampledata/raw_ticks_v2/20260921/6f39117671c048f6b60477ceafbf40b6.db`.
-main 50,635,071,488 bytes (mtime UTC `2026-09-21T06:35:00.9280174Z`),
-`-wal` 0 bytes (mtime UTC `2026-09-21T07:08:26.3320855Z`),
-`-shm` 32,768 bytes (mtime UTC `2026-09-21T07:23:29.9155482Z`), `-journal` 부재를
-시작/종료 시 파일 메타데이터로 확인했다. C:는 NTFS, 관측 당시 여유 1,280,788,324,352 bytes였다.
-`Get-Process` 이름 필터에서 Python/Kiwoom/collector 관련 프로세스는 보이지 않았으나,
-WMI 명령줄 조회는 접근 거부라 모든 writer 부재를 입증하지 못했다. 프로젝트의 세션 raw 디렉터리와
-logs/operations_state/results/runs/sampledata/temp의 관련 파일명·receipt를 확인했으나,
-출처가 검증된 sidecar-free frozen snapshot/receipt는 찾지 못했다.
-0-byte WAL도 보존해야 하므로 prefix qualification과 NXT smoke는 실행하지 않았다.
-원본·sidecar에 SQLite 접속, 복제, 정리, 변경을 하지 않았다. 전체 raw·전략 성과·실전 가능성은 미평가다.
+실행 직전 filesystem metadata: main 50,635,071,488 bytes, WAL 0 bytes, SHM 32,768 bytes,
+journal 부재, main 단일 링크. 원본 SQLite 접속·sidecar 정리는 하지 않았다.
+
+- Frozen snapshot: `C:\StockSnapshots\raw_v2_snapshot_24f657163264432da7af3ed533656eac\result.json`.
+  `snapshot_ready=true`, 원본 main/WAL/SHM exclusive 획득과 최종 source metadata 불변,
+  evidence 최종 봉인, working sidecar 전부 부재. source stream/working readback main SHA-256은 모두
+  `e4304fe3c1cad8a85ec6c297ceb9cfdadca2d20001e93756303d567ec5077569`.
+- 고정 10:00 KST prefix: 같은 run의 `prefix_qualification\4076abdc94bc46588bbb7b0f334e023f\result.json`.
+  `status=completed`, 구조 검증 성공, `smoke_backtest_eligible=false`.
+  sentinel seq 8,414,462 (`2026-09-21T01:00:00.000269+00:00`), sentinel까지 8,414,462건 소비;
+  prefix 8,414,461건 중 tick 8,400,558, trade 3,282,752, quote 5,117,806,
+  control 13,903(session_start 1, parse_error 13,902).
+  품질 원인: out_of_range_fid_41 6,819, out_of_range_fid_51 3,868,
+  trade_direction_unverified 3,233. `stream_error=null`, `tail_scanned=false`, 전체 raw·전략 성과 미평가.
+- 지정된 실패 정책에 따라 NXT smoke는 실행하지 않았다. 원본/evidence/working/result는 보존하고
+  cutoff 변경·자동 재시도·whole-file 검사는 하지 않는다.
 
 ## 실제 구현과 보존한 경계
 
@@ -90,20 +96,14 @@ qualification report와 대조하고, 모두 같을 때만 명시한 종목 tick
 결과 provenance는 `purpose=smoke_backtest_only`, `whole_stream_assessed=false`, `performance_research_assessed=false`,
 `raw_identity_verified=false`를 보존한다. qualifier 이후 prefix bytes가 달라지면 정상 성과가 아니라 failed diagnostics로 끝낸다.
 
-**미연결/미완료:** 평균단가·원가·실현/미실현 PnL·equity와 표준 Trade 변환, 실제 raw 입력,
+**미연결/미완료:** 평균단가·원가·실현/미실현 PnL·equity와 표준 Trade 변환,
 Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. 현행 회계는 현금·보유수량·수수료·체결 원장까지다.
 `gross_exposure_at_ask`는 한도용 매수 대체 원가이지 손익이 아니다.
 
 ## 다음 행동
 
-1. 다음 단계는 실제 50.6GB 원본에 `scripts/acquire_raw_v2_snapshot.py`를 로컬 에이전트로 적용하는 것이다.
-   원본 main/WAL/SHM을 동시에 exclusive seal할 수 있을 때만 evidence/working frozen snapshot을 만든다.
-2. snapshot report가 `snapshot_ready_for_prefix_qualification=true`일 때만 working main을 대상으로
-   10:00 KST(`end_market_second=36000`) bounded prefix qualification을 실행한다.
-3. prefix가 `smoke_backtest_eligible=true`일 때만 동일 working raw/prefix report로 NXT prefix smoke를 실행한다.
-4. smoke 목적은 수익률 탐색이 아니라 event→signal→order→fill→cash/position/reject 흐름과 실제 대용량 입력의 재현 가능성 확인이다.
-5. PnL/equity/MDD·전략 성과 적격성은 그 다음 별도 계약이다. 다중 전략은 계속 후순위다.
-6. 로컬 50GB 작업이 필요할 때 Work/로컬 에이전트를 직접 호출하지 않는다. 복사 가능한 프롬프트와 권장 모델/추론 수준만 제공한다.
+다음 한 단계는 위 prefix result의 세 품질 오류 범주와 기존 파서 계약을 대조하는
+**prefix quality investigation**이다. 이 1회 실행 승인은 다른 cutoff·재스캔·원본 수정 승인이 아니다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
@@ -112,7 +112,7 @@ revision `4821762fd93230b658339fee084d6c08e3e53ce9`, raw `50,635,071,488 bytes`.
 보고된 -wal 0 / -shm 32,768 bytes를 보존한다. unsigned FID15/parse_error 전체 조사,
 sidecar 출처·whole-file stream integrity·전체 품질·FIRST_RESEARCH_CANDIDATE 승격·첫 실제 연구는 미완료다.
 파일/payload 해시 주장, callbacks/final_seq 차이와 과거 세션 수치의 원문은 아래 고정 인계에 보존한다.
-이번 개발에서 직접 raw/evidence/운영 폴더/프로세스를 관측하지 않았다.
+이번 실행에서 원본은 filesystem metadata와 snapshot 도구의 sealed stream으로만 확인했다.
 
 원본/sidecar 처리와 qualification은 대상 identity·출처·외부 reader/writer 및 namespace 격리·
 장외 시각·collector 부재·free space·I/O/time 예산·실패 보존 설계와 별도 승인이 필요하다.
