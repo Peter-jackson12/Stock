@@ -71,64 +71,36 @@ Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. �
 
 ## 다음 행동
 
-PR #41 direction-window와 PR #42 NXT strategy opt-in은 master에 통합됐다.
-기본 `strict`는 `is_buy=None`을 거부한다. opt-in `unknown_direction_recent_window_quarantine_v0`은
-unknown trade를 보존하고 recent window가 깨끗해질 때까지 신규 entry를 차단한다.
-기존 NXT smoke runner와 strict prefix gate는 여전히 strict다.
+PR #41~#44의 direction-window, NXT opt-in, selected-prefix v2 gate, 전용 smoke runner는 master에 통합됐다.
+기본 `strict`는 방향 미확인 trade를 거부한다. 명시적
+`unknown_direction_recent_window_quarantine_v0`은 exact pair와 무부호 FID15 등 제한 조건을 확인한 뒤
+원 trade를 보존하고 recent window가 깨끗해질 때까지 신규 entry를 차단한다.
+전용 runner는 기존 strict runner와 별도이며 세부 계약은 [파이프라인 지도 §6](docs/PIPELINE_MAP.md#portfolio-research)에 둔다.
 
-과거 실제 selected overlay 결과는 **v1 역사 근거**로 보존한다.
-`005930=unknown`은 v1에서 selected tick 77,558 / clean 77,557 / selected direction blocker 1건으로 FAIL했고,
-그 blocker는 tick seq 711052 / control 711053, FID15 repr `' 237016'`,
-normalized price 264000 / volume 237016 / is_buy=null의 explicitly unsigned FID15였다.
-기존 strict `smoke_backtest_eligible=false`, whole-stream 미평가, NXT smoke 미실행 상태는 그대로다.
+과거 v1은 선택 tick 77,558 / clean 77,557 / 방향 blocker 1건으로 FAIL했다.
+blocker는 tick 711052 / control 711053, FID15 `' 237016'`, normalized `is_buy=null`이었다.
+2026-09-24 v2 overlay는 같은 `005930=unknown` 10:00 bounded prefix에서
+unknown-direction pair 1건을 격리하고 selected gate true를 확인했다.
+입력 결과: `C:\StockSnapshots\raw_v2_snapshot_24f657163264432da7af3ed533656eac\selected_prefix_overlay\a59dbf1f37b64648bf791258ea0f5783\result.json`.
+strict `smoke_backtest_eligible=false`, whole-stream 미평가 상태는 유지된다.
 
-PR #43 selected-prefix v2 gate는 focused tests 117 passed 후 master에 통합됐다.
-기본은 `strict`; opt-in에서는 exact mirrored parse_error pair, 관측된 Kiwoom trade 형태,
-정상 market_second·양의 price/volume·`is_buy=None`, 무부호 양의 FID15와 normalized volume 일치를
-모두 요구한다. 세부 계약은 [파이프라인 지도 §6](docs/PIPELINE_MAP.md#portfolio-research)에 둔다.
+2026-09-24 위 v2 결과와 frozen working DB로 **005930 selected-v2 pipeline smoke를 정확히 1회** 실행했다.
+결과: `C:\StockSnapshots\raw_v2_snapshot_24f657163264432da7af3ed533656eac\selected_prefix_smoke\9165453f3f85416bbecdc16946237e78\result.json`.
+고정 설정은 수량 1, 현금 1,000,000원, fee-rate 0.001 per-side,
+buy/sell/cancel latency 각 1초, max quote age 2초, cooldown 10초, exit-rule fixed다.
+`status=completed_flat`, `diagnostics_only=false`, `input_complete=true`.
+selected/strict report SHA·run id·scope·digest, code provenance와 sealed prefix의
+manifest·count·sentinel·strict diagnostics·selected policy가 일치했다.
+기대/실제/처리 event는 모두 77,558건; unknown-direction 1건 전달, zero-quote 제외 0건이다.
+strategy policy는 explicit quarantine. 신호 buy 1 / sell 1, 주문 의도 2, 체결 2,
+거절 0, 최종 cash `997960.500`, `005930` 보유 0, 열린 주문 0이다.
+reproducibility key는 `f3ad6b6095891460033f2e1c784d28e19ba0cf6e78055092b43eeab7307692dd`.
+**`005930 selected-v2 NXT pipeline smoke: PASS`**. `raw_identity_verified=false`,
+`whole_stream_assessed=false`, `performance_research_assessed=false`; PnL/equity는 null이다.
+실행 전후 working DB sidecar는 없었다. GitHub Actions·자동 재시도는 실행하지 않았다.
 
-2026-09-24 지정 working snapshot·strict 10:00 KST report로 `005930=unknown` v2 overlay를
-`unknown_direction_recent_window_quarantine_v0` policy로 **정확히 1회** 실행했다.
-결과: `C:\StockSnapshots\raw_v2_snapshot_24f657163264432da7af3ed533656eac\selected_prefix_overlay\a59dbf1f37b64648bf791258ea0f5783\result.json`.
-schema `raw_v2_selected_prefix_qualification_v2`, `status=completed`, 소요 448.756161초,
-구조 검증·strict 재검증 5항목 모두 true다. 선택 tick 77,558 / clean 77,557,
-unknown-direction quarantine pair 1 / zero-quote 0 / selected disqualifying 0,
-비선택 exact ignored pair 13,901이며 unapproved·unpaired·unsafe 0이다.
-**`005930 selected-prefix v2 quarantine quality: PASS`**, selected gate true.
-기존 strict `smoke_backtest_eligible=false`, `whole_stream_assessed=false`,
-`whole_prefix_quality_upgraded=false`는 유지됐다. 즉시 entry permission도 false다.
-새 report에는 policy ID, strict report SHA, direction-window·tick-research SHA가 있다.
-NXT smoke·GitHub Actions·추가 DB 조회는 실행하지 않았다.
-
-PR #44의 selected-prefix v2 전용 NXT smoke runner는 최종 HEAD
-`acf7545474ca595cee506def4b50de5032b138e1`에서 Python 3.10 grammar PASS,
-zero-quote targeted retest 1 passed 및 전체 focused tests 126 passed / 0 failed / 0 skipped 후 master에 통합됐다.
-초기 focused run의 1개 실패는 zero-quote synthetic fixture의 receipt clock 역행이었고,
-fixture 시간만 수정한 뒤 재검증했다. production/runner 정책 코드는 그 수정에서 변경하지 않았다.
-GitHub Actions는 실행하지 않았다.
-
-통합된 `run_nxt_selected_prefix_smoke()`는 기존 strict `run_nxt_prefix_smoke()`와 별도 경로다.
-- eligible `raw_v2_selected_prefix_qualification_v2` + explicit quarantine policy만 수용
-- selected/strict report SHA·run id·scope·digest와 current policy/strategy provenance 확인
-- 같은 sidecar-free raw prefix를 sealed/immutable로 한 번 다시 읽어 strict evidence와 selected policy를 재검증
-- selected clean tick 전달
-- selected unsigned-direction exact pair는 parse_error 확인 후 원 `is_buy=None` trade 전달
-- selected zero-quote pair는 strategy input에서 제외
-- 다른 selected/global issue는 fail-closed
-- 현재 selected instrument 정확히 1개만 지원
-
-다음 단계는 실제 v2 overlay
-`C:\StockSnapshots\raw_v2_snapshot_24f657163264432da7af3ed533656eac\selected_prefix_overlay\a59dbf1f37b64648bf791258ea0f5783\result.json`
-을 입력으로 **005930 selected-v2 pipeline smoke를 정확히 1회 실행**하는 것이다.
-
-pipeline-smoke 고정 설정은 기존 TICK_RESEARCH_RUNBOOK의 명령 예시를 기준으로 하되 성과/운영 검증값으로 해석하지 않는다.
-수량 1, 현금 1,000,000원, fee-rate 0.001 per-side, buy/sell/cancel latency 각 1초,
-max quote age 2초, cooldown 10초, exit-rule fixed를 사용한다.
-실행 성공 여부와 provenance/재검증/strategy path만 본다.
-fills/signals/order 수치는 사실로 보고할 수 있지만 수익성·전략 적격성 결론을 내리지 않는다.
-
-실제 smoke 전에는 working DB sidecar 부재와 exact report path를 확인하고 자동 재시도하지 않는다.
-GitHub Actions도 실행하지 않는다.
+다음 한 단계는 **`selected-v2 research-input gate decision`**이다.
+이번 PASS는 bounded 입력·전략·simulator 연결 확인이며 성과·NXT venue·live 적격성 승격이 아니다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
