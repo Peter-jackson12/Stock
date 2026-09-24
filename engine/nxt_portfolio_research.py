@@ -109,7 +109,7 @@ def run_nxt_portfolio(events, *, output_root, dataset_label, simulator_config,
     """
     if not isinstance(dataset_label, str) or not dataset_label.strip():
         raise ValueError("dataset label required")
-    config = deepcopy(simulator_config)
+    config = dict(simulator_config)
     if "fee_rate" not in config:
         raise ValueError("explicit fee_rate required; no silent zero-cost run")
     if "instruments" not in config:
@@ -124,7 +124,7 @@ def run_nxt_portfolio(events, *, output_root, dataset_label, simulator_config,
     strategy_settings = strategy.settings()
     _json(strategy_settings)
     # Validate account/risk configuration before creating persistent output.
-    PortfolioSimulator(**deepcopy(config))
+    PortfolioSimulator(**config)
 
     root = Path(output_root).resolve()
     run_dir = root / uuid4().hex
