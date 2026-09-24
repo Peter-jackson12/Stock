@@ -275,3 +275,55 @@ control과 미선택 종목은 strategy 입력에서 빠지지만 prefix 재검�
 
 현재 운영 50GB 원본에 보고된 sidecar가 하나라도 남아 있으면 이 경로도 시작하지 않는다.
 §8 qualifier와 동일하게 **sidecar-free frozen snapshot**이 선행 조건이다.
+
+
+<a id="frozen-snapshot-acquisition"></a>
+## 10. raw-v2 frozen snapshot acquisition — residue 원본 비변경 후보
+
+[acquisition library](../collector/raw_v2_snapshot.py)와
+[CLI](../scripts/acquire_raw_v2_snapshot.py)는 기존
+[synthetic clone lab](../scripts/lab_raw_v2_clone.py)의 보호 계약을 실제 입력용으로 좁게 옮긴다.
+lab 자체는 계속 외부 DB 인자를 거부하며 production 실행에 사용하지 않는다.
+
+현재 production 후보가 허용하는 source shape는 명시적
+`zero-wal-32768-shm-v1` 하나뿐이다.
+
+- main: single-link regular file, 최대 64 GiB
+- `-wal`: 존재 + 정확히 0 bytes
+- `-shm`: 존재 + 정확히 32,768 bytes
+- `-journal`: 부재
+- source/output: Windows local NTFS, reparse 경로 거부
+- output free space: source file-set 총량의 2배 + 2 GiB 이상
+
+다른 WAL 크기, rollback journal, SHM 크기, hardlink/alias는 cleanup 후보가 아니라 즉시 거부한다.
+
+acquisition 동안 source main/WAL/SHM은 모두 sharing=0 read handle로 동시에 잡는다.
+이미 열린 reader/writer가 있으면 WinError 32로 fail-closed한다. source parent와 output/run/evidence/working
+directory identity도 pin하며, 후발 writer가 기존 source member를 다시 여는 것을 막는다.
+directory pin이 모든 새 child name 생성을 원천 배제한다고 주장하지 않으므로 acquisition 끝에서
+source file-set/stat을 다시 확인한다.
+
+source SQLite는 열지 않는다. 각 held source member를 한 번 읽으며 SHA-256을 계산하고 같은 block을
+fresh `evidence/`와 `working/` 두 파일에 동시에 쓴 뒤 fsync한다.
+source handles가 모두 해제된 뒤에만 working main을 SQLite로 열어 metadata 한 페이지를 읽고 명시적으로 닫는다.
+이는 copied WAL/SHM의 managed cleanup 후보이며 source에는 적용되지 않는다.
+
+snapshot ready 조건:
+
+1. expected session id와 working manifest 일치
+2. working copy의 WAL/SHM/journal 모두 부재
+3. working main 전체 readback SHA-256 == sealed source stream main SHA-256
+4. evidence WAL/SHM 독립 readback hash == sealed source stream hash
+5. source stat/identity가 exclusive acquisition 전후 동일
+
+50 GiB evidence main은 추가 전체 readback을 하지 않는다. 그 hash는 sealed source stream을 읽으면서
+두 destination에 동시에 기록한 digest다. 실제 연구 입력은 evidence가 아니라 독립 readback을 마친 working main이다.
+
+성공 report도 `whole_stream_assessed=false`, `research_eligible=false`,
+`performance_research_eligible=false`를 유지한다. 의미는 오직
+`snapshot_ready_for_prefix_qualification=true`다.
+그 다음 단계가 [bounded prefix qualification](#bounded-prefix-qualification)이며,
+그 다음이 NXT prefix smoke다. snapshot 성공을 FIRST_RESEARCH_CANDIDATE나 전략 성과로 해석하지 않는다.
+
+실패/중단 시 partial evidence/working/result를 삭제하지 않는다. source 자동 cleanup, checkpoint,
+재시도, 원본 교체, sidecar unlink는 제공하지 않는다.
