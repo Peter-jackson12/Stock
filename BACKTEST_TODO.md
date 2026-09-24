@@ -240,10 +240,12 @@ performance-research 미승격 이유:
 selected-v2 bounded input은 strategy-research fixture로 승인됐지만 performance-research는 아직 미승격이다.
 그 다음 선행 구현은 fill ledger 기반 performance accounting contract다.
 
-- [ ] pure weighted-average cost / realized PnL contract focused regression
-- [ ] explicit fresh-valid-bid mark / unrealized PnL / equity contract focused regression
-- [ ] fill cashflow ↔ simulator cash reconciliation contract
-- [ ] pure contract 통과 후에만 PortfolioSimulator/result JSON integration 설계
+- [x] pure weighted-average cost / realized PnL contract focused regression — PR #46, 97 passed
+- [x] explicit fresh-valid-bid mark / unrealized PnL / equity contract focused regression — PR #46
+- [x] fill cashflow ↔ simulator cash reconciliation contract — PR #46
+- [ ] NXT result finalization에 `performance_accounting` subrecord integration focused regression
+- [ ] open-position final fresh-bid mark provenance integration 설계
+- [ ] accounting subrecord 안정화 후에만 legacy top-level PnL/equity schema migration 검토
 - [ ] actual selected-v2 result는 integration 후 회귀 fixture로만 재검증하며 parameter tuning에 사용하지 않음
 
 ## 5. 첫 시험 이후 — 전략 평가
