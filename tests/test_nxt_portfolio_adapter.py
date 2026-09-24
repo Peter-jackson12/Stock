@@ -316,7 +316,7 @@ def test_portfolio_quarantine_mode_accepts_unknown_direction_without_intent():
     ], strategy)
 
     assert strategy.signals == []
-    assert sim.orders == []
+    assert len(sim.orders) == 0
     assert strategy.settings()["unknown_direction_policy"] == QUARANTINE_UNKNOWN_DIRECTION_POLICY
 
 
@@ -356,7 +356,7 @@ def test_runner_quarantine_mode_accepts_unknown_direction_stream(tmp_path):
     )
     saved = json.loads(path.read_text(encoding="utf-8"))
 
-    assert saved["status"] == "completed"
+    assert saved["status"] == "completed_no_fills"
     assert saved["order_intents"] == []
     assert saved["strategy_signals"] == []
     assert (
