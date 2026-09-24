@@ -501,3 +501,32 @@ example에는 다음만 기록한다.
 이 필드는 selected smoke-quality 판정에 사용되지 않는다.
 `MAX_SELECTED_DISQUALIFYING_EXAMPLES=10`으로 bounded하며 raw 전체 FID dict나 payload를 복제하지 않는다.
 목적은 실제 selected-prefix overlay에서 소수 selected blocker를 다시 50GB 전체 검색 없이 식별하는 것이다.
+
+
+<a id="direction-window-quarantine-policy"></a>
+## 16. unknown-direction recent-window quarantine policy candidate
+
+[direction feature helper](../strategies/nxt_breakout/direction_window.py)는
+실제 005930 blocker에서 확인된 `is_buy=None`을 buy/sell로 추론하거나 drop하지 않고,
+NXT의 최근 trade 방향 feature가 언제 다시 사용 가능한지만 정의하는 pure policy 후보다.
+
+정책 `unknown_direction_recent_window_quarantine_v0`:
+
+- recent window에는 모든 trade의 `(volume, is_buy)`를 관측 순서대로 보존한다.
+- `is_buy=None`도 volume과 함께 window에 남는다.
+- unknown direction이 하나라도 window 안에 있으면:
+  - total_volume은 관측값으로 유지
+  - buy_volume은 `None`
+  - buy_ratio는 `None`
+  - `entry_direction_eligible=false`
+- unknown이 deque에서 자연스럽게 빠진 뒤에만 fully-known window에서 volume-weighted buy ratio를 다시 계산한다.
+- unknown을 0, buy, sell로 치환하거나 window에서 즉시 제거하지 않는다.
+
+현재 전략의 `recent_ticks=15`에서 unknown trade가 막 들어온 경우,
+14개의 후속 trade까지는 unknown이 window에 남고 15번째 후속 trade가 들어온 직후 밀려난다.
+이 정책은 15개가 완전히 찰 때까지 기다리는 새 warm-up 규칙을 추가하지 않는다.
+현재 전략처럼 관측 tick 수가 1~14개라도 모두 known이면 ratio 계산은 가능하다.
+
+이 helper는 아직 `NxtResearchStrategy`에 연결되지 않았다.
+기존 strategy의 unknown-direction strict rejection, selected-prefix quality gate,
+NXT smoke runner는 모두 그대로다. integration은 별도 후속 단계다.
