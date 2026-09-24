@@ -36,8 +36,8 @@ def trade(seq=2, ns=1, second=32400, **changes):
     )
 
 
-def config(cash=1_000_000, fee_rate="0.001"):
-    return dict(
+def config(cash=1_000_000, fee_rate="0.001", **changes):
+    base = dict(
         source="test",
         session_id="s",
         instruments={"A": "unknown"},
@@ -48,6 +48,7 @@ def config(cash=1_000_000, fee_rate="0.001"):
         sell_latency_ns=5,
         cancel_latency_ns=2,
     )
+    return base | changes
 
 
 def fraction(record):
@@ -56,7 +57,7 @@ def fraction(record):
     return Fraction(int(record["numerator"]), int(record["denominator"]))
 
 
-def test_open_position_result_has_accounting_but_no_fabricated_mark_valuation(tmp_path):
+def test_open_position_result_uses_final_fresh_valid_bid_mark_provenance(tmp_path):
     path = run_nxt_portfolio(
         [quote(), trade()],
         output_root=tmp_path,
@@ -70,20 +71,30 @@ def test_open_position_result_has_accounting_but_no_fabricated_mark_valuation(tm
 
     assert saved["status"] == "completed_with_open_position"
     assert accounting["schema"] == "portfolio_performance_accounting_v1"
-    assert accounting["status"] == "open_unpriced"
-    assert accounting["mark_integration"] == "not_connected"
+    assert accounting["status"] == "open_marked"
+    assert accounting["mark_integration"] == "final_fresh_valid_bid_provenance_v1"
     assert accounting["legacy_top_level_pnl_fields_populated"] is False
     assert accounting["hypothetical_exit_fee_included"] is False
     assert accounting["fill_count"] == 1
     assert fraction(accounting["realized_pnl"]) == 0
-    assert accounting["unrealized_pnl"] is None
-    assert accounting["total_pnl"] is None
-    assert accounting["equity"] is None
-    assert accounting["unpriced_codes"] == ["A"]
-    assert accounting["bid_marks"] == {}
+    assert fraction(accounting["unrealized_pnl"]) == Fraction(-11001, 500)
+    assert fraction(accounting["total_pnl"]) == Fraction(-11001, 500)
+    assert fraction(accounting["equity"]) == Fraction(499988999, 500)
+    assert accounting["unpriced_codes"] == []
+    assert fraction(accounting["bid_marks"]["A"]) == 10000
     assert accounting["cash_reconciled"] is True
     assert accounting["position_reconciled"] is True
-    assert accounting["accounting_identity_reconciled"] is None
+    assert accounting["accounting_identity_reconciled"] is True
+    provenance = accounting["bid_mark_provenance"]
+    assert provenance["schema"] == "portfolio_final_bid_mark_provenance_v1"
+    assert provenance["valuation_time_ns"] == 20
+    assert provenance["records"][0]["code"] == "A"
+    assert provenance["records"][0]["status"] == "priced"
+    assert provenance["records"][0]["reason"] == "eligible"
+    assert provenance["records"][0]["quote_seq"] == 1
+    assert provenance["records"][0]["quote_received_ns"] == 0
+    assert provenance["records"][0]["quote_age_ns"] == 20
+    assert provenance["records"][0]["bid"] == "10000"
 
     assert saved["realized_pnl"] is None
     assert saved["unrealized_pnl"] is None
@@ -91,9 +102,63 @@ def test_open_position_result_has_accounting_but_no_fabricated_mark_valuation(tm
     assert "execution/portfolio_accounting.py" in saved["code_sha256"]
     assert "no_pnl_valuation_no_forced_liquidation" not in saved["limitations"]
     assert "performance_accounting_subrecord_only_legacy_top_level_pnl_fields_unpopulated" in saved["limitations"]
-    assert "open_position_final_bid_mark_integration_not_connected" in saved["limitations"]
+    assert "open_position_mark_requires_fresh_valid_bid_and_may_be_unavailable" in saved["limitations"]
     assert "no_forced_liquidation" in saved["limitations"]
 
+
+
+
+def test_open_position_with_stale_final_quote_remains_unpriced(tmp_path):
+    path = run_nxt_portfolio(
+        [quote(), trade()],
+        output_root=tmp_path,
+        dataset_label="stale-open-accounting",
+        simulator_config=config(max_quote_age_ns=5, buy_latency_ns=1),
+        close_ns=20,
+        quantity=1,
+    )
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    accounting = saved["performance_accounting"]
+
+    assert saved["status"] == "completed_with_open_position"
+    assert accounting["status"] == "open_unpriced"
+    assert accounting["unrealized_pnl"] is None
+    assert accounting["total_pnl"] is None
+    assert accounting["equity"] is None
+    assert accounting["unpriced_codes"] == ["A"]
+    assert accounting["bid_marks"] == {}
+    record = accounting["bid_mark_provenance"]["records"][0]
+    assert record["status"] == "unpriced"
+    assert record["reason"] == "stale"
+    assert record["quote_seq"] == 1
+    assert record["quote_age_ns"] == 20
+
+
+def test_open_position_with_invalid_latest_quote_does_not_fallback_to_older_quote(tmp_path):
+    path = run_nxt_portfolio(
+        [
+            quote(),
+            trade(),
+            quote(3, 7, 32401, bid=10101, ask=10100),
+        ],
+        output_root=tmp_path,
+        dataset_label="invalid-open-accounting",
+        simulator_config=config(),
+        close_ns=20,
+        quantity=1,
+    )
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    accounting = saved["performance_accounting"]
+
+    assert saved["status"] == "completed_with_open_position"
+    assert accounting["status"] == "open_unpriced"
+    assert accounting["unpriced_codes"] == ["A"]
+    assert accounting["bid_marks"] == {}
+    record = accounting["bid_mark_provenance"]["records"][0]
+    assert record["status"] == "unpriced"
+    assert record["reason"] == "locked_or_crossed"
+    assert record["quote_seq"] == 3
+    assert record["bid"] is None
 
 def test_flat_result_has_exact_realized_accounting_and_equity(tmp_path):
     path = run_nxt_portfolio(
@@ -188,6 +253,7 @@ def test_failure_diagnostics_include_partial_accounting_without_hiding_failure(t
     assert saved["diagnostics_only"] is True
     assert saved["input_complete"] is False
     assert accounting["schema"] == "portfolio_performance_accounting_v1"
+    assert accounting["status"] == "diagnostics_only"
     assert accounting["fill_count"] == 0
     assert accounting["cash_reconciled"] is True
     assert accounting["position_reconciled"] is True
