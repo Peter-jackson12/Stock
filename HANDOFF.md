@@ -98,14 +98,19 @@ NXT smoke·GitHub Actions는 실행하지 않았다.
 
 다음 한 단계는 **`005930 selected quality bounded investigation`**이다.
 
-현재 작업 branch `feat/selected-quality-examples-20260924`는 eligibility 로직을 바꾸지 않고,
-`SelectedInstrumentSmokePolicy`의 selected disqualifying issue에 최대 10개의 bounded example 진단만 추가한다.
-example에는 tick/control seq, received_ns/UTC, code/venue/kind, exchange_ts_raw, 관련 raw FID subset,
-normalized price/volume/is_buy와 exact parse_error pair 여부를 기록한다.
+PR #40의 bounded diagnostics는 HEAD `c283d16778045ea58ca8bf312a33969f6ba73e2c`를
+detached worktree에서 Python 3.14.7 / pytest 9.1.1로 재검증했고,
+Python 3.10 grammar PASS, 지정 focused tests 64 passed / 0 failed / 0 skipped 후 master에 통합됐다.
+GitHub Actions는 실행하지 않았다.
 
-목적은 실제 overlay를 딱 한 번 다시 실행했을 때 005930의 유일한 `trade_direction_unverified` 1건을
-정확히 특정하는 것이다. 방향 추론·FID15 보정·NXT smoke는 여전히 금지한다.
-merge 전 focused local test만 수행하며 GitHub Actions는 실행하지 않는다.
+통합된 diagnostics는 eligibility 로직을 바꾸지 않고 selected disqualifying issue를 최대 10건까지만 남긴다.
+trade example은 price/volume/is_buy, quote example은 bid/ask/bid_size/ask_size만 기록하고,
+FID subset(10,14,15,20,21,27,28,41,51)과 tick/control seq·received_ns/UTC·exchange_ts_raw·pair 여부를 보존한다.
+
+다음 단계는 실제 working snapshot + 기존 strict 10:00 prefix report로
+`005930=unknown` selected-prefix overlay를 **정확히 1회만 재실행**하는 것이다.
+목적은 이미 확인된 유일한 `trade_direction_unverified` 1건의 정확한 seq·시각·FID15 원문을 얻는 것이다.
+방향 추론·FID15 보정·NXT smoke는 여전히 금지한다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
