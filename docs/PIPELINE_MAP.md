@@ -169,8 +169,37 @@ RiskLimits는 종목별 수량·총 노출·open order 상한과 중복/상충 �
 `strategy_id`는 호출자 라벨이며 전략 소스 해시가 아니다. 같은 초기 전략 상태와 결정적인 callback을
 사용해야 반복 재현된다. `realized_pnl`, `unrealized_pnl`, `equity`는 아직 null이다.
 
-**아직 연결하지 않은 것:** NXT 다종목 상태 어댑터, 실제 raw/기존 CLI/화면 입력,
-결과 영속 저장·조회 어댑터, 원가/PnL/equity 평가, Paper/Mock/Live 주문.
+**아직 연결하지 않은 것:** 실제 raw/기존 CLI/화면 입력, 원가/PnL/equity 평가,
+Paper/Mock/Live 주문. NXT 단일 전략의 공유계좌 adapter와 JSON 결과 저장은 아래 §7 후보에서 분리한다.
 현재 구현은 작은 합성 trace용이며 주문/체결 이력과 snapshot 비용이 커지는 대용량 성능은 검증하지 않았다.
 기존 `run_research`/`run_raw_v2`의 입력 정책과 결과 형식은 그대로다. 합성 성공을
 FIRST_RESEARCH_CANDIDATE 승격이나 실제 데이터 실행 승인으로 해석하지 않는다.
+
+
+<a id="nxt-single-strategy-portfolio"></a>
+## 7. NXT 한 전략 우선 — 공유계좌 adapter와 결과 저장
+
+현재 우선순위는 여러 전략을 동시에 운용하는 프레임워크가 아니다. 먼저 기존
+[단일종목 NXT 규칙](../strategies/nxt_breakout/tick_research.py)을 기준선으로 유지하면서
+[portfolio adapter](../strategies/nxt_breakout/portfolio_adapter.py)가 종목별 상태를 분리하고,
+[공유계좌 runner](../engine/nxt_portfolio_research.py)가 `PortfolioSimulator`에 연결한다.
+
+adapter는 종목마다 기존 `NxtResearchStrategy` 인스턴스를 하나씩 가지지만 전략 종류는 하나다.
+전략이 보는 symbol-scoped port는 해당 종목의 live order/fill과 현재 시각만 노출하고,
+`submit/cancel` 호출을 전역 고유 `OrderIntent/CancelIntent`로 변환한다.
+현금·보유량·예약·risk mutation과 실제 fill 생성은 계속 execution 계층만 소유한다.
+종목별 serial이 같아도 전역 order id에는 code prefix가 붙어 충돌하지 않는다.
+
+`run_nxt_portfolio()`는 normalized in-memory event에만 쓰는 opt-in 연구 진입점이다.
+새 UUID 디렉토리의 `result.json`을 사용해 기존 결과를 덮어쓰지 않는다.
+전략 quantity/exit/cooldown/params와 adapter·기존 NXT 규칙 코드 hash, 전략 signals를
+reproducibility key에 포함한다. dataset label은 원본 인증이 아니며
+`raw_identity_verified=false`를 유지한다. 실패가 event iteration 뒤 발생하면
+`diagnostics_only` 부분 결과를 저장한 뒤 예외를 다시 낸다.
+
+이 단계에서 평가 PnL을 만들지 않는다. 결과의 cash/position/fee/fill은 실행 원장이지만
+`realized_pnl/unrealized_pnl/equity`는 계속 null이다. 다음 묶음에서 평균단가·실현손익,
+open position mark/equity, MDD의 가격/비용 정의를 먼저 고정한 뒤 추가한다.
+검증된 실제 raw가 없으므로 전략 파라미터 최적화나 좋은 종목/시간 사후선택도 시작하지 않는다.
+
+다중 전략 registry/arbitration/전략별 자본 배분은 첫 전략을 평가·안정화한 뒤 실제 요구가 생길 때 추가한다.
