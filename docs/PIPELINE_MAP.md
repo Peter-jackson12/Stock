@@ -714,3 +714,36 @@ result의 `input_provenance.kind`는 `raw_v2_selected_prefix_smoke_v1`이다.
 이 경로도 `whole_stream_assessed=false`, `performance_research_assessed=false`,
 `raw_identity_verified=false`를 유지한다.
 성공은 pipeline smoke 실행 가능성일 뿐 수익성, NXT venue 인증, whole raw 품질, live trading 승인이 아니다.
+
+
+<a id="selected-v2-research-input-gate"></a>
+## 20. selected-v2 bounded research-input gate decision
+
+2026-09-24 실제 selected-v2 pipeline smoke, 대표 거래 raw audit, 동일 설정 재현성 rerun까지 완료한 뒤
+다음 scope를 **bounded selected strategy-research input**으로 승인했다.
+
+`2026-09-21 / 10:00 KST exclusive / 005930=unknown /
+raw_v2_selected_prefix_qualification_v2 /
+unknown_direction_recent_window_quarantine_v0`
+
+이 승격은 `performance_research`가 아니다.
+
+허용되는 것은 입력/정규화/policy/strategy/execution path의 회귀,
+신호→주문→체결 causal analysis, 향후 accounting 구현의 실제 bounded fixture,
+명시적으로 bounded라고 표시한 behavior exploration이다.
+
+다음은 계속 금지한다.
+
+- 이 한 사례의 수익성/우수성/robustness 주장
+- 결과를 본 뒤의 parameter/threshold/exit 최적화
+- whole-file FIRST_RESEARCH_CANDIDATE 승격
+- NXT venue 인증
+- whole raw 품질 승인
+- live trading 승인
+
+performance-research를 아직 열지 않는 핵심 이유는
+whole stream 미평가, venue unknown, 단일 날짜/종목/왕복 사례,
+평가용 PnL/equity 계약 부재, 학습/평가 분리 및 민감도/다시장 검증 부재다.
+
+따라서 다음 구현 단계는 actual result의 현금 차이를 성과로 해석하는 것이 아니라,
+**실현 PnL·미실현 PnL·equity와 marking 규칙을 합성 trace에서 먼저 고정하는 performance-accounting contract**다.

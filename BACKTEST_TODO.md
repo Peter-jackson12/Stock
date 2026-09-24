@@ -169,10 +169,61 @@ strategy performance, NXT venue, whole raw, live readiness를 승인하지 않�
 - [x] **대표 사례 대조:** buy/sell signal·order intent·fill을 working DB의 INTEGER PRIMARY KEY exact lookup 4건으로
   원본까지 연결했다. ask/bid fill 가격, 1초 latency, fee, lifecycle, 최종 cash ledger가 모두 result와 일치했다.
   상세 근거는 HANDOFF의 `005930 selected-v2 representative trade audit: PASS` 기록을 따른다.
-- [ ] **재현성:** 같은 input/settings/code로 smoke를 명시적으로 1회 재실행해
-  reproducibility key·order intents·fills·final account를 대조한다.
-- [ ] **research-input 승격 결정:** 대표 사례와 재현성 확인 뒤 bounded selected 경로의
-  performance-research 입력 범위/한계를 별도 계약으로 결정한다.
+- [x] **재현성:** 같은 input/settings/code로 smoke를 정확히 1회 재실행했다.
+  reproducibility key·event SHA·settings·code SHA·signals·order intents·fills·transitions·final account·
+  provenance가 동일했고 started_at/finished_at만 달랐다.
+- [x] **research-input 승격 결정:** 이 경로를
+  **bounded selected strategy-research input**으로만 승인한다.
+  범위는 `2026-09-21 / 10:00 KST exclusive / 005930=unknown / selected-v2 /
+  unknown_direction_recent_window_quarantine_v0`로 고정한다.
+  이는 input/replay/execution-behavior 연구와 회귀의 근거로 사용할 수 있지만
+  `performance_research` 입력 승격은 아니다.
+
+### Selected-v2 research-input gate decision — 2026-09-24
+
+**결정: bounded selected strategy-research input으로 승인. performance-research는 미승격.**
+
+승인 scope:
+
+- source session: `6f39117671c048f6b60477ceafbf40b6`
+- frozen snapshot run: `24f657163264432da7af3ed533656eac`
+- bounded prefix: 10:00:00 KST exclusive
+- selected instrument: `005930=unknown`
+- selected schema: `raw_v2_selected_prefix_qualification_v2`
+- unknown-direction policy: `unknown_direction_recent_window_quarantine_v0`
+- selected strategy input events: 77,558
+- validated pipeline-smoke reproducibility key:
+  `f3ad6b6095891460033f2e1c784d28e19ba0cf6e78055092b43eeab7307692dd`
+
+허용 용도:
+
+- 입력/정규화/selected policy/strategy/execution 경로 회귀
+- 신호·주문·체결 causal trace
+- accounting/PnL/equity 기능의 **구현 검증용 실제 bounded fixture**
+- 명시적 exploratory behavior analysis. 결과는 단일 bounded 사례로만 표현
+
+금지 용도:
+
+- 전략 수익성·우수성·robustness 주장
+- parameter optimization 또는 이 결과를 본 뒤 threshold/exit tuning
+- out-of-sample/일반화 주장
+- whole-file `FIRST_RESEARCH_CANDIDATE` 승격
+- NXT venue 인증
+- whole raw quality 승인
+- live trading readiness/실주문 승인
+
+performance-research 미승격 이유:
+
+1. strict prefix는 계속 `smoke_backtest_eligible=false`; whole stream은 미평가다.
+2. `venue=unknown`이며 NXT 원천 인증이 아니다.
+3. 실제 검증 입력이 한 날짜·한 종목·10:00 bounded prefix 하나다.
+4. 실제 왕복 사례는 1건뿐이며 성과 표본으로 해석할 수 없다.
+5. 현재 portfolio result의 `realized_pnl/unrealized_pnl/equity`가 null이고
+   평가 회계 계약이 아직 없다.
+6. 학습/조정 구간과 평가 구간 분리, 비용/지연 민감도, 여러 시장 상황 검증이 아직 없다.
+
+따라서 다음 개발은 이 데이터의 성과를 더 캐는 것이 아니라
+**평가 회계(PnL/equity/marking) 계약을 합성부터 구현하고, 실제 데이터는 회귀 fixture로만 사용**한다.
 
 ## 4. 첫 시험 실행과 결과 대조
 

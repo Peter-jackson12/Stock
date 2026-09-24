@@ -1,8 +1,8 @@
 """Operator UX 합성 검사. 사용자 PC/OCX/실데이터를 사용하지 않는다."""
 from __future__ import annotations
 
-import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -67,7 +67,7 @@ def test_help_without_environment_or_readers(tmp_path, capsys, monkeypatch):
 
 
 @pytest.mark.parametrize("command", ["start", "stop", "canary", "preflight", "backtest", "ui", "collector"])
-def test_unknown_or_execution_command_fails_before_io(command, tmp_path):
+def test_python_helper_rejects_execution_commands(command, tmp_path):
     with pytest.raises(SystemExit) as error:
         operator.main([command], root=tmp_path)
     assert error.value.code == 2
@@ -183,7 +183,7 @@ def test_json_error_is_nonzero(monkeypatch, tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)["error"] == "PermissionError"
 
 
-def test_read_only_source_has_no_execution_api():
+def test_read_only_python_helper_has_no_execution_api():
     import ast
     tree = ast.parse(Path(operator.__file__).read_text(encoding="utf-8"))
     imports = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
@@ -230,8 +230,23 @@ def test_powershell_help_and_missing_venv_do_not_fallback(tmp_path, shell):
     root.mkdir()
     launcher = root / "stock.ps1"
     shutil.copyfile(ROOT / "stock.ps1", launcher)
-    for command, expected in [("help", 0), ("doctor", 2), ("collector", 2)]:
+    for command, expected in [("help", 0), ("doctor", 2), ("collector", 2), ("ui", 2)]:
         run = subprocess.run([executable, "-NoProfile", "-NonInteractive", "-File", str(launcher), command],
+                             capture_output=True, timeout=30)
+        assert run.returncode == expected, (run.stdout, run.stderr)
+    assert list(root.iterdir()) == [launcher]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows cmd bootstrap integration")
+def test_cmd_help_and_missing_venv_do_not_fallback(tmp_path):
+    executable = shutil.which("cmd")
+    assert executable
+    root = tmp_path / "Stock space"
+    root.mkdir()
+    launcher = root / "stock.cmd"
+    shutil.copyfile(ROOT / "stock.cmd", launcher)
+    for command, expected in [("help", 0), ("doctor", 2), ("collector", 2), ("ui", 2)]:
+        run = subprocess.run([executable, "/d", "/c", str(launcher), command],
                              capture_output=True, timeout=30)
         assert run.returncode == expected, (run.stdout, run.stderr)
     assert list(root.iterdir()) == [launcher]
@@ -245,7 +260,6 @@ def test_powershell_forwards_exact_argv_and_exit_without_changing_cwd(tmp_path, 
     root = tmp_path / "Stock space"
     root.mkdir()
     shutil.copyfile(ROOT / "stock.ps1", root / "stock.ps1")
-    # 잘못된 runtime fixture. 기동 실패를 성공으로 바꾸지 않는다.
     python = root / ".venv/Scripts/python.exe"
     python.parent.mkdir(parents=True)
     python.write_bytes(b"not a PE file")
@@ -283,9 +297,71 @@ def test_powershell_valid_runtime_forwards_arguments_and_exit(tmp_path, shell):
     assert not (entry.parent / "__pycache__").exists()
 
 
+def _make_fake_streamlit(root: Path) -> Path:
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(root / ".venv")],
+                   check=True, capture_output=True, timeout=30)
+    python = root / ".venv/Scripts/python.exe"
+    purelib = subprocess.run(
+        [str(python), "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+        check=True, capture_output=True, text=True, timeout=30).stdout.strip()
+    Path(purelib, "streamlit.py").write_text(
+        "import json,os,pathlib,sys\n"
+        "pathlib.Path(os.environ['STOCK_UI_PROBE']).write_text("
+        "json.dumps({'args':sys.argv[1:],'cwd':os.getcwd()}),encoding='utf-8')\n"
+        "raise SystemExit(7)\n", encoding="utf-8")
+    app = root / "dashboard/app.py"
+    app.parent.mkdir(parents=True)
+    app.write_text("raise AssertionError('fake streamlit must not execute app directly')\n", encoding="utf-8")
+    return python
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows cmd UI dispatch integration")
+def test_cmd_ui_dispatches_existing_streamlit_entrypoint_in_foreground(tmp_path):
+    cmd = shutil.which("cmd")
+    assert cmd
+    root = tmp_path / "Stock 한글 space"
+    root.mkdir()
+    shutil.copyfile(ROOT / "stock.cmd", root / "stock.cmd")
+    _make_fake_streamlit(root)
+    probe = tmp_path / "cmd-ui.json"
+    env = os.environ.copy()
+    env["STOCK_UI_PROBE"] = str(probe)
+    run = subprocess.run([cmd, "/d", "/c", str(root / "stock.cmd"), "ui"],
+                         capture_output=True, cwd=tmp_path, env=env, timeout=30)
+    assert run.returncode == 7, (run.stdout, run.stderr)
+    result = json.loads(probe.read_text(encoding="utf-8"))
+    assert result["args"] == ["run", str(root / "dashboard/app.py"), "--server.address", "127.0.0.1"]
+    assert Path(result["cwd"]) == root
+    assert not (root / "operations_state").exists()
+
+
+@pytest.mark.parametrize("shell", ["powershell", "pwsh"])
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell UI dispatch integration")
+def test_powershell_ui_dispatches_existing_streamlit_entrypoint_in_foreground(tmp_path, shell):
+    executable = shutil.which(shell)
+    assert executable, f"Windows CI must provide {shell}"
+    root = tmp_path / "Stock 한글 space"
+    root.mkdir()
+    shutil.copyfile(ROOT / "stock.ps1", root / "stock.ps1")
+    _make_fake_streamlit(root)
+    probe = tmp_path / f"{shell}-ui.json"
+    env = os.environ.copy()
+    env["STOCK_UI_PROBE"] = str(probe)
+    run = subprocess.run([executable, "-NoProfile", "-NonInteractive", "-File",
+                          str(root / "stock.ps1"), "ui"],
+                         capture_output=True, cwd=tmp_path, env=env, timeout=30)
+    assert run.returncode == 7, (run.stdout, run.stderr)
+    result = json.loads(probe.read_text(encoding="utf-8"))
+    assert result["args"] == ["run", str(root / "dashboard/app.py"), "--server.address", "127.0.0.1"]
+    assert Path(result["cwd"]) == root
+    assert not (root / "operations_state").exists()
+
+
 def test_integration_start_here_links_and_readme_entry():
     import runpy
     documentation = runpy.run_path(str(ROOT / "tests/test_documentation.py"))
     assert not documentation["link_errors"](ROOT, "START_HERE.md")
+    text = (ROOT / "START_HERE.md").read_text(encoding="utf-8")
+    assert "[stock.cmd](stock.cmd)" in text
+    assert "[stock.ps1](stock.ps1)" in text
     assert "[처음 실행하는 사람](START_HERE.md)" in (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "[Operator 시작 안내](START_HERE.md)" in (ROOT / "HANDOFF.md").read_text(encoding="utf-8")

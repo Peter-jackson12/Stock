@@ -9,7 +9,7 @@
 매 작업 시작 시 원격 master·열린 PR·최신 CI와 작업 후보의 정확한 HEAD/base를 다시 확인한다.
 아래 값은 이번 개발의 시작 기준이며 영구 최신값이 아니다.
 
-## 기존 두 트랙 · [Operator 시작 안내](START_HERE.md)
+## 현재 두 트랙
 
 **수집기/native 트랙은 다음 실제 시장 세션까지 의도적으로 보류한다.**
 그때의 별도 승인된 Mock A-B-A 1회가 다음 실질 단계이며, 이번 개발에서 그 실행 준비를 늘리지 않는다.
@@ -86,32 +86,34 @@ strict `smoke_backtest_eligible=false`, whole-stream 미평가 상태는 유지�
 
 2026-09-24 위 v2 결과와 frozen working DB로 **005930 selected-v2 pipeline smoke를 정확히 1회** 실행했다.
 결과: `C:\StockSnapshots\raw_v2_snapshot_24f657163264432da7af3ed533656eac\selected_prefix_smoke\9165453f3f85416bbecdc16946237e78\result.json`.
-고정 설정은 수량 1, 현금 1,000,000원, fee-rate 0.001 per-side,
-buy/sell/cancel latency 각 1초, max quote age 2초, cooldown 10초, exit-rule fixed다.
-`status=completed_flat`, `diagnostics_only=false`, `input_complete=true`.
-selected/strict report SHA·run id·scope·digest, code provenance와 sealed prefix의
-manifest·count·sentinel·strict diagnostics·selected policy가 일치했다.
-기대/실제/처리 event는 모두 77,558건; unknown-direction 1건 전달, zero-quote 제외 0건이다.
-strategy policy는 explicit quarantine. 신호 buy 1 / sell 1, 주문 의도 2, 체결 2,
-거절 0, 최종 cash `997960.500`, `005930` 보유 0, 열린 주문 0이다.
+고정 설정: 수량 1, 현금 1,000,000원, fee-rate 0.001 per-side,
+buy/sell/cancel 각 1초, max quote age 2초, cooldown 10초, fixed exit.
+`completed_flat`, `diagnostics_only=false`, 입력·처리 77,558건.
+unknown-direction 1건 전달, zero-quote 0건 제외; 신호 2, intent 2, fill 2,
+거절 0, 최종 cash `997960.500`, 보유·열린 주문 0이다.
 reproducibility key는 `f3ad6b6095891460033f2e1c784d28e19ba0cf6e78055092b43eeab7307692dd`.
 **`005930 selected-v2 NXT pipeline smoke: PASS`**. `raw_identity_verified=false`,
 `whole_stream_assessed=false`, `performance_research_assessed=false`; PnL/equity는 null이다.
-실행 전후 working DB sidecar는 없었다. GitHub Actions·자동 재시도는 실행하지 않았다.
+실행 전후 working DB sidecar는 없었다.
 
-2026-09-24 기존 smoke 대표 왕복 1회를 working DB의 INTEGER PRIMARY KEY exact lookup
-4건(seq `2320266`, `2322490`, `3904370`, `3906354`)으로 감사했다. sidecar는 전후 부재했다.
-매수: `breakout` signal `8032223285400 ns` / intent seq `2320266`(trade, `is_buy=true`) → order
-`nxt:005930:nxt-fixed-1` → quote seq `2322490`의 ask `270500`에 1주 체결, fee `270.500`.
-매도: `fixed` signal `8752412620500 ns` / intent seq `3904370`(quote) → order
-`nxt:005930:nxt-fixed-2` → quote seq `3906354`의 bid `269000`에 1주 체결, fee `269.000`.
-두 signal·intent 시각은 각 raw `received_ns`와 같고 제출→체결은 각 정확히 1초다.
-두 주문 모두 `created → pending → active → filled`; 거절·취소·만료·열린 주문 0.
-현금 원장: `1000000 → 729229.500 → 997960.500`, 저장된 최종 cash와 일치한다.
-**`005930 selected-v2 representative trade audit: PASS`**. 전략·prefix 재실행, PnL 연구,
-GitHub Actions는 하지 않았다. 이 감사도 성과·NXT venue·live 적격성을 승격하지 않는다.
+2026-09-24 대표 왕복은 working DB의 INTEGER PRIMARY KEY exact lookup 4건으로 감사했다.
+buy signal seq `2320266` → quote `2322490` ask/fill `270500`, fee `270.500`;
+sell signal seq `3904370` → quote `3906354` bid/fill `269000`, fee `269.000`.
+각 주문은 제출 후 1초에 `created → pending → active → filled`; 현금 원장
+`1000000 → 729229.500 → 997960.500`이 저장값과 일치했다.
+**`005930 selected-v2 representative trade audit: PASS`**.
 
-다음 한 단계는 **`selected-v2 reproducibility rerun`**이다.
+2026-09-24 동일 input/settings/code로 smoke를 **정확히 1회 재실행**했다.
+새 결과: `C:\StockSnapshots\raw_v2_snapshot_24f657163264432da7af3ed533656eac\selected_prefix_smoke\f37533fb67884b3f9033894befaed153\result.json`.
+양쪽 `completed_flat`, event/processed 77,558, event SHA
+`a6fbcce85c321da1ee07f898f525537e8beb2361cc5769d08174935531741e48`,
+위 reproducibility key가 같다. settings·signals·intents·fills·transitions·최종 account·
+selected/strict provenance·policy result·code SHA 전체가 JSON 값 기준 동일하다.
+`started_at`·`finished_at`만 다르다. sidecar는 실행 전후 부재했다.
+**`005930 selected-v2 reproducibility rerun: PASS`**. GitHub Actions·추가 재실행은 하지 않았다.
+
+다음 한 단계는 **`selected-v2 research-input gate decision`**이다.
+재현성 PASS는 bounded pipeline 반복 결과이며 성과·NXT venue·whole raw·live 적격성 승격이 아니다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
