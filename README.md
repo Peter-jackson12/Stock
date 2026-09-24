@@ -34,6 +34,7 @@ LOB/초봉 변환과 기존 런 비교는 유지하는 레거시 경로이며 �
 | 현재 결정·차단 조건·바로 다음 행동 | [HANDOFF](HANDOFF.md) |
 | 첫 실제 시험의 남은 체크 항목 | [BACKTEST_TODO](BACKTEST_TODO.md) |
 | 어떤 코드가 무엇을 실행하는지·경로 간 차이·단순화 후속 항목 | [파이프라인 지도](docs/PIPELINE_MAP.md) |
+| 수집 시각 결정 전 필수 사실·장전/정규장/NXT 구분 | [수집 의사결정 계약](docs/COLLECTION_RUNBOOK.md#collection-decision) · [구간별 coverage 표](docs/COLLECTION_RUNBOOK.md#collection-coverage) |
 | 수집 시작/종료·저장·메타데이터·별도 확장 절차 | [수집 실행 안내](docs/COLLECTION_RUNBOOK.md#환경과-수집-시작) |
 | 종료 단계 증거·선택적 ActiveX 해제와 미검증 경계 | [종료 계약](docs/COLLECTOR_TEARDOWN.md) |
 | 선택적 Qt 폴링·기존 FID 시각 표본과 해석 한계 | [수신 진단 계약](docs/COLLECTOR_TELEMETRY.md) |
@@ -61,7 +62,8 @@ LOB/초봉 변환과 기존 런 비교는 유지하는 레거시 경로이며 �
 
 ## 운영 화면 실행
 
-로컬 저장소 루트 `C:\Projects\Stock`에서 기존 64비트 환경으로 실행한다.
+로컬 실행이 승인된 경우에만 저장소 루트 `C:\Projects\Stock`에서 기존 64비트 환경으로 실행한다.
+GitHub-only 감사 중에는 아래 명령도 실행하지 않는다.
 
 ```powershell
 .\.venv\Scripts\python.exe -m streamlit run dashboard/app.py --server.address 127.0.0.1
@@ -89,6 +91,7 @@ LOB/초봉 변환과 기존 런 비교는 유지하는 레거시 경로이며 �
 
 master push와 PR마다 Windows + 64비트 Python 3.14 + 고정 uv/lock으로 Git-only pytest를 실행한다.
 Windows 파일 잠금·프로세스·소켓 합성 회귀를 포함한다. 상세 범위는 [테스트 안내](docs/TESTING.md)를 따른다.
+아래 로컬 명령은 live 수집 중에 실행하지 않는다. GitHub-only 작업의 검증 위치는 GitHub-hosted Actions다.
 
 ```powershell
 uv sync --locked --group dev
@@ -96,7 +99,10 @@ uv run --locked --offline python -m pytest -ra
 ```
 
 기본 pytest는 `tests/`만 수집하고 `local_data`·`local_env`를 선택 해제한다.
-문서 경로/절 링크·원문 보존·HANDOFF 크기도 Git-only 회귀로 확인한다.
+문서 경로/절 링크·필수 의존 연결·원문 보존·HANDOFF 크기도 Git-only 회귀로 확인한다.
 CI는 실제 시장 데이터·OCX 로그인·실데이터 백테스트·수집 부하를 인증하지 않는다.
-일반 Chat + GitHub 작업은 브랜치 → PR → 변경 검증/CI → 원격 재확인 → 병합 순서다.
-Windows·실데이터가 필요한 경우만 로컬에 넘긴다.
+일반 Chat + GitHub 작업은 브랜치 → PR → 변경 검증/CI → 원격 재확인 순서다.
+수집 중에는 master 변경·병합을 보류하며 종료 후 별도 확인해야 한다.
+[작업 경계](docs/COLLECTION_RUNBOOK.md#collection-live-boundary)를 넘는 로컬 작업은 자동 승인하지 않는다.
+대규모 구현·다파일 통합·고위험 감사는 개발용 로컬 에이전트에 묶어서 맡길 수 있다([역할](AGENTS.md)).
+개발 위임은 운영 PC 관측·배포·로그인·실데이터 처리 승인이 아니며, 그런 운영 단계는 별도 승인 범위에서만 넘긴다.
