@@ -293,6 +293,27 @@ def test_tampered_strict_digest_is_detected_by_overlay(tmp_path):
     assert "digest" in selected["stream_error"]
 
 
+
+@pytest.mark.parametrize("mutation, expected", [
+    ("status", "completed structure"),
+    ("performance", "performance research"),
+])
+def test_strict_report_contract_tamper_is_rejected(tmp_path, mutation, expected):
+    path = tmp_path / "source" / "raw.db"
+    build(path, scenario="clean")
+    strict_path, strict = strict_report(path, tmp_path)
+    if mutation == "status":
+        strict["status"] = "failed"
+    else:
+        strict["performance_research_eligibility"]["assessed"] = True
+        strict["performance_research_eligibility"]["eligible"] = False
+    tampered = tmp_path / ("tampered-" + mutation + ".json")
+    tampered.write_text(json.dumps(strict), encoding="utf-8")
+
+    _, selected = overlay(path, tampered, tmp_path)
+    assert selected["selected_prefix_structure_verified"] is False
+    assert expected in selected["stream_error"]
+
 def test_raw_path_must_match_strict_report(tmp_path):
     first = tmp_path / "a" / "raw.db"
     second = tmp_path / "b" / "raw.db"
