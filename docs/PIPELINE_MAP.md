@@ -203,3 +203,43 @@ open position mark/equity, MDD의 가격/비용 정의를 먼저 고정한 뒤 �
 검증된 실제 raw가 없으므로 전략 파라미터 최적화나 좋은 종목/시간 사후선택도 시작하지 않는다.
 
 다중 전략 registry/arbitration/전략별 자본 배분은 첫 전략을 평가·안정화한 뒤 실제 요구가 생길 때 추가한다.
+
+
+<a id="bounded-prefix-qualification"></a>
+## 8. 오전 bounded prefix — 전체 세션과 별도 적격성
+
+[bounded prefix qualifier](../collector/raw_v2_prefix_qualification.py)와
+[CLI](../scripts/qualify_raw_v2_prefix.py)는 전체 raw-v2 qualification을 완화하거나 대체하지 않는다.
+목표는 **사전에 고정한 오전 종료 시각 이전의 prefix만 별도로 검증**하는 것이다.
+
+계약은 seq=1부터 시작한다. `--end-market-second 36000`은 manifest의 market_date 기준
+10:00:00 KST exclusive boundary다. 모든 prefix record의 공통 seq/source/session/received_ns와
+UTC receipt ordering, event envelope를 검증한다. 그리고 cutoff 시각 이상에서 구조적으로 유효한
+첫 record를 boundary sentinel로 반드시 읽는다. 이 sentinel이 없으면 수집이 해당 시각까지 도달했다는
+근거가 없으므로 prefix도 실패한다.
+
+prefix 내부 품질은 기존 qualification의 `_Diagnostics` 계약을 재사용한다.
+`session_start/session_note` 외 control, parse_error, normalized issue는 현재 research 계약에 따라
+prefix를 부적격으로 만든다. 반대로 sentinel 뒤의 tail은 의도적으로 읽지 않는다. 따라서 10:36 장애가
+있더라도 10:00 이전 prefix 자체가 깨끗하고 10:00 이후 sentinel이 존재하면 prefix만 합격할 수 있다.
+결과에는 반드시 다음을 분리해 남긴다.
+
+- `prefix_structure_verified`
+- `prefix_research_eligible`
+- `prefix_event_sha256` — 이번 실행이 읽은 prefix bytes의 식별자이며 producer-stored checksum이 아님
+- `scope.tail_scanned=false`
+- `scope.whole_stream_assessed=false`
+- `scope.whole_stream_research_eligible=null`
+- boundary sentinel의 seq/수신시각
+
+closed raw의 전체 event_count/payload_sha256는 이 경로에서 검증하지 않는다.
+frozen incomplete manifest도 외부 종료 근거와 boundary sentinel이 있으면 prefix 판정 자체는 가능하지만,
+그 결과가 전체 세션 완료/무결성을 의미하지 않는다.
+
+파일 획득 안전성은 기존 sealed qualification과 동일하게 유지한다. Windows local NTFS,
+write/delete handle 배제, source stat 불변, **모든 SQLite sidecar 부재**가 필요하다.
+현재 보고된 운영 원본의 `-wal 0 / -shm 32768` 상태를 이 도구가 정리하거나 무시하지 않는다.
+실제 50GB 적용 전에는 원본 비변경의 별도 frozen snapshot 확보 절차가 필요하다.
+
+prefix 시간대는 성과를 본 뒤 고르는 파라미터가 아니다. 예를 들어 09:00~10:00 전략을 연구한다면
+10:00 cutoff를 성과 확인 전에 고정한다. 이후 tail 장애를 이유로 유리한 종료 시각을 사후 선택하지 않는다.
