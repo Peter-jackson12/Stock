@@ -26,6 +26,7 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
+import platform
 import stat
 import uuid
 
@@ -225,6 +226,16 @@ def _hash_file(path):
     return digest.hexdigest()
 
 
+def _code_provenance():
+    root = Path(__file__).resolve().parents[1]
+    names = (
+        "collector/raw_v2_snapshot.py",
+        "collector/raw_v2.py",
+        "collector/raw_v2_qualification.py",
+    )
+    return {name: _hash_file(root / name) for name in names}
+
+
 def _copy_held_member(name, source_path, stream, evidence_dir, working_dir):
     before = os.fstat(stream.fileno())
     if before.st_nlink != 1 or not stat.S_ISREG(before.st_mode):
@@ -372,7 +383,7 @@ def acquire_frozen_snapshot(source, *, output_root, expected_session_id,
         "source": str(source),
         "expected_session_id": expected_session_id,
         "residue_policy": residue_policy,
-        "source_sqlite_opened": False,
+        "declared_source_sqlite_policy": "never_open_source_sqlite",
         "source_unchanged_during_acquisition": None,
         "exclusive_source_members_acquired": False,
         "snapshot_ready_for_prefix_qualification": False,
@@ -380,6 +391,12 @@ def acquire_frozen_snapshot(source, *, output_root, expected_session_id,
         "research_eligible": False,
         "performance_research_eligible": False,
         "free_space": {"observed": free, "required": required_free},
+        "environment": {
+            "python": platform.python_version(),
+            "sqlite": sqlite3.sqlite_version,
+            "platform": platform.platform(),
+        },
+        "code_provenance": _code_provenance(),
         "paths": {
             "run_dir": str(run_dir),
             "evidence_main": str(paths.evidence_main),
