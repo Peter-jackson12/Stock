@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -390,6 +391,69 @@ def test_instrument_mismatch_is_rejected_before_run_output(tmp_path):
         )
     assert not output.exists()
 
+
+
+
+def test_changed_raw_after_selected_overlay_fails_replay_and_keeps_diagnostics(tmp_path):
+    raw = tmp_path / "raw" / "raw.db"
+    build_raw(raw, scenario="direction")
+    strict = strict_report(raw, tmp_path)
+    selected = selected_report(raw, strict, tmp_path)
+
+    conn = sqlite3.connect(raw)
+    try:
+        mode = conn.execute("PRAGMA journal_mode=DELETE").fetchone()[0]
+        assert mode.lower() == "delete"
+        payload = conn.execute("SELECT payload FROM events WHERE seq=2").fetchone()[0]
+        envelope = json.loads(payload)
+        envelope["raw_fields"]["test_note"] = "changed-after-selected-overlay"
+        changed = json.dumps(
+            envelope,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        conn.execute("UPDATE events SET payload=? WHERE seq=2", (changed,))
+        conn.commit()
+    finally:
+        conn.close()
+    assert not Path(str(raw) + "-wal").exists()
+    assert not Path(str(raw) + "-shm").exists()
+
+    with pytest.raises(NxtPortfolioRunFailed) as caught:
+        run_nxt_selected_prefix_smoke(
+            raw,
+            selected,
+            output_root=tmp_path / "runs",
+            simulator_config=config(),
+            quantity=1,
+        )
+    saved = json.loads(caught.value.path.read_text(encoding="utf-8"))
+    assert saved["status"] == "failed"
+    assert saved["diagnostics_only"] is True
+    assert "prefix digest no longer matches" in saved["error"]
+
+
+def test_changed_strict_report_after_overlay_is_rejected_before_output(tmp_path):
+    raw = tmp_path / "raw" / "raw.db"
+    build_raw(raw, scenario="direction")
+    strict = strict_report(raw, tmp_path)
+    selected = selected_report(raw, strict, tmp_path)
+
+    strict_data = json.loads(strict.read_text(encoding="utf-8"))
+    strict_data["closure_evidence"] = "tampered-after-overlay"
+    strict.write_text(json.dumps(strict_data), encoding="utf-8")
+
+    output = tmp_path / "runs"
+    with pytest.raises(ValueError, match="strict prefix report content"):
+        run_nxt_selected_prefix_smoke(
+            raw,
+            selected,
+            output_root=output,
+            simulator_config=config(),
+            quantity=1,
+        )
+    assert not output.exists()
 
 def test_selected_report_policy_result_tamper_fails_during_replay(tmp_path):
     raw = tmp_path / "raw" / "raw.db"
