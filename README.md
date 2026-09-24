@@ -54,6 +54,7 @@ LOB/초봉 변환과 기존 런 비교는 유지하는 레거시 경로이며 �
 ### 설계 배경과 과거 기록 — 필요할 때만
 
 - [코드 교차 검토 기록](TICK_CROSS_REVIEW.md): 반례와 검토 포인트. 기록 당시 적용 상태와 현재 코드를 구분한다.
+- [과거 수집기 고정 입력 비교](tests/COLLECTOR_REVISION_BENCHMARK.md): 완료된 revision 비교의 근거와 명시적 재측정 방법. 일반 CI의 상시 실행 항목이 아니다.
 - [ARCHITECTURE_V2](ARCHITECTURE_V2.md): 기존 런 스토어·피처·전략/Broker 분리 배경과 레거시 계약.
 - [REFACTORING_PLAN](REFACTORING_PLAN.md): 초기 L0/L1 의사결정과 LOB 스키마. 과거 무유실·방향 판정 주장은 현 raw-v2 인증이 아니다.
 - [archive 안내](docs/archive/README.md): 날짜별 인계·후보 조사·이전 README. 원문 보존 위치와 당시 revision.

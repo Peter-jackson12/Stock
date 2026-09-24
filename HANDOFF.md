@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-24 / PR #21 세션 근거 표시의 최신 master 통합 후보
+# 현재 인계 — 2026-09-24 / PR #19 과거 수집기 비교의 최신 master 통합 후보
 
 [문서 인덱스](README.md) · [세션 근거 표시 계약](docs/SESSION_ASSESSMENT.md) ·
 [수집 의사결정 계약](docs/COLLECTION_RUNBOOK.md#collection-decision) · [첫 시험 체크리스트](BACKTEST_TODO.md) ·
@@ -6,6 +6,8 @@
 
 매 작업 시작 시 원격 master/열린 PR/최신 CI를 직접 확인한다. 아래 값은 이 통합 시작 기준이지 영구 최신값이 아니다.
 이전 상세 인계 원문은 고정 SHA로 보존한다:
+[#21 병합 시점 인계](https://github.com/Peter-jackson12/Stock/blob/01b7ade8086afddfda946cd82950e3e1a055a5bd/HANDOFF.md),
+[#19 직전 후보 인계](https://github.com/Peter-jackson12/Stock/blob/9421afdccf9cfd1797cd7b5ac4e1f5d67ebe1127/HANDOFF.md),
 [#21 원래 인계(2026-09-23 장애 상세 포함)](https://github.com/Peter-jackson12/Stock/blob/4ce504dabca9baf37fd5c0a8dc062f484511c7ad/HANDOFF.md),
 [#18 병합 시점 인계](https://github.com/Peter-jackson12/Stock/blob/9dba95378f40481339eb05fd161b1e2743d99ee9/HANDOFF.md),
 [#29 병합 시점 인계](https://github.com/Peter-jackson12/Stock/blob/8d84c9be728be25a707063559459324a61557585/HANDOFF.md),
@@ -13,17 +15,26 @@
 
 ## 원격 기준과 PR 상태
 
-- master `9dba95378f40481339eb05fd161b1e2743d99ee9`: PR #18(HEAD `bac3251d349c09dae322712767f0e3c7a9f89e9e`) 병합 commit.
-  병합 후 master CI #332(run 35941127415, job 107449006148)는 completed/success다. 전체 1,843 passed /
-  6 deselected, 수집 계약 78, FID 집중 259 / 8 subtests, 시작·종료 71 passed는 컨트롤타워의 로그 확인 보고다.
-  집중·전체·subtest를 합산하지 않고 deselected는 통과가 아니다.
-- PR #29(FID 누적 후보)는 `8d84c9be728be25a707063559459324a61557585`로 병합됐다. PR #24는 간접 병합으로 처리됐다.
-  #20·#22·#23·#25~#28은 개발 이력 보존용으로 열려 있다.
-- PR #19(역사적 revision 비교, `9421afdccf9cfd1797cd7b5ac4e1f5d67ebe1127`)는 draft/open/unmerged다.
-  PR CI #330은 이전 master `8d84c9b`와의 검증이며 현재 master 결합 검증이 아니다.
-- **PR #21(이 branch)**: 원래 HEAD `4ce504dabca9baf37fd5c0a8dc062f484511c7ad`(세션 근거 표시)에 최신 master를
-  정상 merge한 병합 직전 후보다. 과거 CI #228·Session assessment #2는 당시 HEAD 검증이다.
-  실제 master 병합은 컨트롤타워 검토 단계로 남긴다. 최종 HEAD/run/job은 PR #21 checks와 완료 보고에서 확인한다.
+- master `01b7ade8086afddfda946cd82950e3e1a055a5bd`: PR #21(세션 근거 표시) 병합 commit.
+  그 전 PR #18은 `9dba95378f40481339eb05fd161b1e2743d99ee9`, PR #29는 `8d84c9be728be25a707063559459324a61557585`로
+  병합됐고 PR #24는 #29를 통한 간접 병합으로 처리됐다. #20·#22·#23·#25~#28은 개발 이력 보존용으로 열려 있다.
+- 병합 후 master 일반 CI #334(run 35943845789, job 107457357624)와 Session assessment #4(run 35943845787,
+  job 107457357676)는 completed/success다. 전체 1,900 passed / 6 deselected, 표시 집중 127, 수집 계약 78,
+  FID 259 / 8 subtests, 시작·종료 71 passed는 컨트롤타워의 로그 확인 보고다. 집중·전체·subtest를 합산하지 않고
+  deselected는 통과가 아니다. 3.10 문법 검사는 실제 x86/native 검증이 아니다.
+- **PR #19(이 branch)**: 준비 HEAD `9421afdccf9cfd1797cd7b5ac4e1f5d67ebe1127`(원래 benchmark HEAD
+  `32e6285e2bd5a224a63152c2ed1f492b57afd841` 이력 포함)에 최신 master를 정상 merge한 병합 직전 후보다.
+  CI #330은 이전 master `8d84c9b`와의 결합 검증이며 현재 master 결합 검증이 아니다. 실제 master 병합은
+  컨트롤타워 검토 단계로 남긴다. 최종 HEAD/run/job은 PR #19 checks와 완료 보고에서 확인한다.
+
+## 과거 수집기 비교(#19)의 현재 의미
+
+비교 스크립트는 원래 blob `6cfd405efa249fd45bb4d72f6d89ee4132f24faf` 그대로이며 REVISIONS와
+CURRENT_TELEMETRY_REVISION은 역사적 비교 대상 고정값이다. 두 workflow는 master 그대로이고 historical benchmark를
+상시 실행하지 않는다. 비교 조건·해석 금지선·#205/#206 harness 실패와 #207/#208 완료 근거·명시적 재측정 방법은
+[과거 비교 계약](tests/COLLECTOR_REVISION_BENCHMARK.md)에만 둔다. 이번 통합에서 benchmark를 재실행하지 않았다.
+uv `--offline`은 스크립트 전체의 네트워크 차단이 아니다(필요 시 bounded Git fetch와 임시 worktree 생성).
+fake Qt/OCX 합성 비교는 실제 32비트 처리율·native callback delivery·장애 원인을 인증하지 않는다.
 
 ## 세 계약의 역할
 
@@ -31,7 +42,7 @@
   [수집 의사결정 계약](docs/COLLECTION_RUNBOOK.md#collection-decision)·[구간별 coverage](docs/COLLECTION_RUNBOOK.md#collection-coverage)·
   [live 작업 경계](docs/COLLECTION_RUNBOOK.md#collection-live-boundary). 특정 진단 실험은
   [Mock FID A-B-A 실행 계약](docs/COLLECTION_RUNBOOK.md#fid-aba-contract)이 따로 다루며 09:15<=KST<15:15는 그 실험 창일 뿐이다.
-- **#21 (이 후보)**: UI의 [세션 근거 표시](docs/SESSION_ASSESSMENT.md). 최근 일일 로그를 세션 콜백 진행·source freshness로
+- **#21 (병합)**: UI의 [세션 근거 표시](docs/SESSION_ASSESSMENT.md). 최근 일일 로그를 세션 콜백 진행·source freshness로
   승격하지 않고, stale/future/타 세션 관측으로 생존·종료를 인증하지 않는다. full identity와 관측 시각을 대조하며,
   process alive + 일반 OCX 창을 종료 장애로 보지 않는다. 저장 closed·process/native 관측·lease를 구분하고
   `exit_observed`는 표시 결과이지 실행 허가가 아니다. 새 컴포넌트는 버튼·권한을 늘리지 않는다.
@@ -55,10 +66,10 @@
 - #324: 감사 PowerShell AST parser subprocess 10초 `TimeoutExpired`(감사 테스트 timeout만 30초로 조정).
 - #327(run 35934021661, job 107426874350): live 침묵 종료 테스트가 `raw v2 시작 실패` 뒤 `len(calls)==0`으로 실패.
   **최초 startup 원인은 미확정**이다. 운영 timeout은 바꾸지 않았고 시작 성공 전제·원문 보존 메시지만 추가했다.
-- #328~#332 성공은 위 실패의 원인 해결이나 재발 불가 근거가 아니다.
+- #328~#334 성공은 위 실패의 원인 해결이나 재발 불가 근거가 아니다.
 - CI #156 flush 예외 close 누락, #162 일회성 raw startup 실패(근본 원인 미확정), PR #19 #205/#206,
   PR #22 초기 harness 실패, PR #26 CI #280 HANDOFF 초과 실패, PR #21 초기 HEAD CI #226의 성공 뒤 발견된
-  의미적 오판 이력을 보존한다.
+  의미적 오판 이력을 보존한다. #19의 #205/#206은 benchmark harness 수명주기 실패였다.
 
 ## live·과거 장애 근거 — 현재 상태로 쓰지 않음
 
@@ -93,9 +104,9 @@ raw→LOB/feature 변환을 현 raw-v2 틱 연구의 필수 선행 단계로 바
 
 ## 다음 행동
 
-1. PR #21 최종 HEAD의 일반 CI와 Session assessment workflow의 PR 실행 결과를 확인한다.
+1. PR #19 최종 HEAD의 일반 CI와 Session assessment workflow의 PR 실행 결과를 확인한다.
    실패하면 최초 원문을 보존하고 필요한 부분만 고친다.
-2. 컨트롤타워가 #21 diff·CI를 검토한 뒤 master 병합 여부를 정한다. #19는 별도 작업이다.
-3. native 관측기·source freshness 정책·운영 검증은 별도 설계·승인 대상이다.
+2. 컨트롤타워가 #19 diff·CI를 검토한 뒤 master 병합 여부를 정한다. 이력용 PR 정리는 별도 판단이다.
+3. native 관측기·source freshness 정책·운영 검증은 별도 설계·승인 대상이다. benchmark 재측정도 별도 요청 때만 한다.
 4. 실제 Mock A-B-A·수집은 별도 승인 후 당일 공식 거래일/시장 구간·사용자가 승인한 exact SHA·현재 CLI를
    다시 대조하고 RUNBOOK 절차를 따른다. 문서/CI 성공은 로그인·배포·재시작 승인이 아니다.
