@@ -325,6 +325,9 @@ def test_selected_v2_direction_quarantine_replays_into_strategy_window(tmp_path)
     assert saved["input_provenance"]["kind"] == "raw_v2_selected_prefix_smoke_v1"
     assert saved["input_provenance"]["strict_smoke_backtest_eligible"] is False
     assert saved["input_provenance"]["selected_policy_result"]["quarantine"]["selected_unknown_direction_pairs"] == 1
+    assert saved["input_provenance"]["selected_strategy_input_expected_count"] == 17
+    assert saved["input_provenance"]["selected_zero_quote_pairs_quarantined"] == 0
+    assert saved["input_provenance"]["selected_unknown_direction_pairs_forwarded"] == 1
     assert saved["input_provenance"]["whole_stream_assessed"] is False
     assert saved["input_provenance"]["performance_research_assessed"] is False
     assert saved["raw_identity_verified"] is False
@@ -350,6 +353,9 @@ def test_selected_zero_quote_pair_is_withheld_from_strategy_input(tmp_path):
     saved = json.loads(result.read_text(encoding="utf-8"))
 
     assert saved["event_count"] == 2
+    assert saved["input_provenance"]["selected_strategy_input_expected_count"] == 2
+    assert saved["input_provenance"]["selected_zero_quote_pairs_quarantined"] == 1
+    assert saved["input_provenance"]["selected_unknown_direction_pairs_forwarded"] == 0
     assert saved["strategy_signals"][0]["reason"] == "breakout"
     assert all(item["event_seq"] != 2 for item in saved["order_intents"])
 
