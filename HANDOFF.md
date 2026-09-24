@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-24 / NXT 단일전략 공유계좌 연결 후보
+# 현재 인계 — 2026-09-24 / 오전 bounded-prefix qualification 후보
 
 [문서 인덱스](README.md) · [공유 계좌 연결/계약](docs/PIPELINE_MAP.md#portfolio-research) ·
 [첫 실제 연구 체크](BACKTEST_TODO.md) · [기존 틱 연구 런북](TICK_RESEARCH_RUNBOOK.md) ·
@@ -23,12 +23,12 @@ FID hot path·admission/run-plan·OCX/QAx·queue/teardown/telemetry·실제 수�
 
 ## 원격 시작 기준과 현재 변경
 
-- 현재 master: `9b62c9286f94844ddf435df54586443b59f3455f` — PR #30 일반 merge.
-- master push 일반 CI #340: `1,963 passed / 6 deselected`; Session assessment #10: `127 passed`. 둘 다 success.
-- PR #30 최종 HEAD `4032a491cdf6e8f9157989777fb27bde7f59400a`의 PR CI #339도 `1,963 passed / 6 deselected`.
+- 현재 master: `926fda5335c5a4883775acf37f3c2f36a310f1d6` — PR #31 일반 merge.
+- PR #31 최종 HEAD `2d690c8e9222959e08021d538f09c09fe8cd1b45`의 CI #342는 `1,975 passed / 6 deselected`, Session assessment #12는 `127 passed`, 둘 다 success.
+- merge 후 master push CI #343은 이 인계 작성 중 실행 중이므로 완료 결과는 Actions에서 다시 확인한다.
 - #20/#22/#23/#25/#26/#27/#28은 수집기/FID 개발 이력이다. 임의 close/merge/retarget하지 않는다.
-- 현재 작업 branch: `feat/nxt-portfolio-adapter-20260924`.
-  신규 NXT adapter/runner/test가 이 branch에 있으며 최종 HEAD/base/CI/merge 근거는 해당 PR에서 확인한다.
+- 현재 작업 branch: `feat/morning-prefix-qualification-20260924`.
+  목표는 전체 세션 승격과 분리된 오전 bounded-prefix 검증이다.
 
 ## 실제 구현과 보존한 경계
 
@@ -59,10 +59,15 @@ context 모두에서 같은 정확한 금액·새 rounding 없음·부모 flag �
 **보존:** 기존 TickSimulator·NxtResearchStrategy·run_research/run_raw_v2·실제 CLI·입력 정책·
 collector·workflows·기존 테스트는 변경하지 않는다. 합성 상태 snapshot은 운영 계좌 조회가 아니다.
 
-**현재 후보:** 기존 `NxtResearchStrategy`를 종목별 상태로 재사용하는 `NxtPortfolioStrategy`와
-`run_nxt_portfolio()`를 추가한다. 전략에는 mutable account를 주지 않고 symbol-scoped port가 순수 intent만 만든다.
+**PR #31 통합:** 기존 `NxtResearchStrategy`를 종목별 상태로 재사용하는 `NxtPortfolioStrategy`와
+`run_nxt_portfolio()`가 master에 들어갔다. 전략에는 mutable account를 주지 않고 symbol-scoped port가 순수 intent만 만든다.
 한 전략을 여러 종목에 적용해도 공유 cash/risk는 PortfolioSimulator가 소유한다. 결과는 새 UUID 디렉토리의
 `portfolio_research_result_v1` JSON으로 보존하고 전략 설정·코드 hash·signals를 reproducibility key에 포함한다.
+
+**현재 prefix 후보:** `raw_v2_prefix_qualification_v1`은 seq=1부터 사전에 정한 KST exclusive cutoff까지의
+구간만 검증한다. cutoff 시각 이상에서 구조적으로 유효한 다음 record를 sentinel로 요구해 실제 수집이 경계까지
+도달했음을 확인한다. tail은 의도적으로 읽지 않고 `whole_stream_assessed=false`를 기록한다. prefix 통과가 전체 raw의
+FIRST_RESEARCH_CANDIDATE 승격을 뜻하지 않는다. prefix 안의 parse/control/normalized issue는 기존 quality 계약으로 거부한다. 이 단계의 합격 명칭은 `smoke_backtest_eligible`이며, producer whole-stream checksum이나 외부 immutable file-hash anchor를 확인하지 않았으므로 성과 연구 적격성은 별도 미평가다.
 
 **미연결/미완료:** 평균단가·원가·실현/미실현 PnL·equity와 표준 Trade 변환, 실제 raw 입력,
 Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. 현행 회계는 현금·보유수량·수수료·체결 원장까지다.
@@ -70,13 +75,15 @@ Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. �
 
 ## 다음 행동
 
-1. 현재 NXT 단일전략 adapter 후보의 focused/전체 CI와 기존 단일종목 경제 결과 동치를 확인한다.
-   충분히 검증되면 기존 자율권 범위에서 merge하고 master push CI까지 확인한다.
-2. 다음 묶음은 **한 전략의 평가 가능성**을 우선한다. fill ledger에서 평균단가/실현손익을 정의하고,
-   open position의 mark/equity와 MDD를 어떤 가격·비용 계약으로 계산할지 먼저 고정한다.
-3. 검증된 실제 raw가 준비되기 전에는 수익률 파라미터 탐색/종목·시간 사후선택을 하지 않는다.
-   다중 전략 registry/arbitration은 첫 전략의 연구·안정화가 진행된 뒤 실제 필요가 생길 때 추가한다.
-4. 합성 엔진 성공만으로 FIRST_RESEARCH_CANDIDATE를 승격하거나 실주문 단계로 넘어가지 않는다.
+1. bounded-prefix 후보의 Windows 합성 CI를 확인한다. 핵심 반례는 **cutoff 이후 callback_error는 clean prefix를 소급 실패시키지 않음**,
+   cutoff 이전 parse/quality issue는 거부, cutoff에 도달하지 못한 세션은 실패, sidecar는 그대로 보존/거부다.
+2. 후보가 합격·병합되면 실제 50.6GB 원본에는 직접 적용하지 않는다. 현재 보고된 0-byte WAL/32KiB SHM 때문에 sealed reader 계약상
+   원본은 즉시 거부 대상이다. 먼저 로컬 에이전트용 **원본 비변경·bounded·fail-closed 점검 프롬프트**를 작성해 현재 파일집합/가용한
+   안전 복제 경로를 확인한다.
+3. 안전한 sidecar-free frozen snapshot을 확보할 수 있을 때만 예를 들어 10:00 KST(`end_market_second=36000`) prefix를 검증한다.
+   prefix가 합격하면 그 정확한 digest/seq 범위를 NXT portfolio smoke backtest 입력으로 연결한다.
+4. smoke 단계에서는 수익 최적화보다 event→signal→order→fill→cash/position/reject 흐름과 재현성을 먼저 확인한다.
+   PnL/equity/MDD는 그 다음 계약으로 추가한다. 다중 전략은 계속 후순위다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
