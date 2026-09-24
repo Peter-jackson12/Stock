@@ -152,10 +152,14 @@ class SelectedInstrumentSmokePolicy:
             {key: fids[key] for key in EXAMPLE_FIDS if key in fids}
             if isinstance(fids, dict) else {}
         )
+        normalized_names = (
+            ("price", "volume", "is_buy")
+            if event.kind == "trade"
+            else ("bid", "ask", "bid_size", "ask_size")
+        )
         normalized = {
             name: getattr(event, name)
-            for name in ("price", "volume", "is_buy", "bid", "ask", "bid_size", "ask_size")
-            if hasattr(event, name)
+            for name in normalized_names
         }
         self.selected_disqualifying_examples.append({
             "tick_seq": event.seq,
