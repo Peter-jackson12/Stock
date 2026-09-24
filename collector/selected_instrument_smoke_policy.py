@@ -22,6 +22,7 @@ permission to one-sided quotes.
 from __future__ import annotations
 
 from collections import Counter
+from decimal import Decimal, InvalidOperation
 
 from collector.raw_v2 import CaptureControl
 from collector.zero_quote_policy_experiment import (
@@ -31,9 +32,15 @@ from collector.zero_quote_policy_experiment import (
     classify_paired_zero_quote,
 )
 from engine.tick_ordering import OrderedTick
+from strategies.nxt_breakout.direction_window import (
+    POLICY as QUARANTINE_UNKNOWN_DIRECTION_POLICY,
+)
+
+STRICT_UNKNOWN_DIRECTION_POLICY = "strict"
+DIRECTION_ISSUE = "trade_direction_unverified"
 
 
-POLICY = "selected_instrument_smoke_quality_v1"
+POLICY = "selected_instrument_smoke_quality_v2"
 SAFE_CONTROL_TYPES = {"session_start", "session_note"}
 MAX_SELECTED_DISQUALIFYING_EXAMPLES = 10
 EXAMPLE_FIDS = ("10", "14", "15", "20", "21", "27", "28", "41", "51")
@@ -60,6 +67,53 @@ def _control_issues(event):
     return tuple(value)
 
 
+def _validate_unknown_direction_policy(value):
+    if value not in (
+        STRICT_UNKNOWN_DIRECTION_POLICY,
+        QUARANTINE_UNKNOWN_DIRECTION_POLICY,
+    ):
+        raise ValueError("unknown selected unknown-direction policy")
+    return value
+
+
+def _selected_direction_quarantine_candidate(envelope):
+    event = envelope.get("event") if isinstance(envelope, dict) else None
+    raw = envelope.get("raw_fields") if isinstance(envelope, dict) else None
+    issues = _tick_issues(envelope)
+    if (
+        not isinstance(event, OrderedTick)
+        or event.kind != "trade"
+        or issues != (DIRECTION_ISSUE,)
+        or event.is_buy is not None
+        or type(event.volume) is not int
+        or event.volume <= 0
+        or not isinstance(raw, dict)
+        or raw.get("normalization") != "kiwoom_fids_prototype_1"
+        or raw.get("direction_policy") != "signed_volume"
+    ):
+        return False
+    try:
+        price = Decimal(str(event.price))
+    except (InvalidOperation, ValueError):
+        return False
+    if not price.is_finite() or price <= 0:
+        return False
+    fids = raw.get("fids")
+    if not isinstance(fids, dict):
+        return False
+    raw_volume = fids.get("15")
+    if not isinstance(raw_volume, str):
+        return False
+    text = raw_volume.strip()
+    if not text or text[0] in "+-":
+        return False
+    try:
+        parsed = int(text)
+    except ValueError:
+        return False
+    return parsed > 0 and parsed == event.volume
+
+
 def _exact_mirrored_pair(tick_envelope, control):
     tick = tick_envelope.get("event") if isinstance(tick_envelope, dict) else None
     issues = _tick_issues(tick_envelope)
@@ -84,7 +138,7 @@ def _exact_mirrored_pair(tick_envelope, control):
 class SelectedInstrumentSmokePolicy:
     """Fail-closed sequential evaluator over the complete ordered prefix stream."""
 
-    def __init__(self, instruments):
+    def __init__(self, instruments, *, unknown_direction_policy=STRICT_UNKNOWN_DIRECTION_POLICY):
         if (
             not isinstance(instruments, dict)
             or not instruments
@@ -98,6 +152,9 @@ class SelectedInstrumentSmokePolicy:
         ):
             raise ValueError("nonempty CODE=VENUE mapping required")
         self.instruments = dict(instruments)
+        self.unknown_direction_policy = _validate_unknown_direction_policy(
+            unknown_direction_policy
+        )
         self.expected_seq = 1
         self.last_received_ns = 0
         self.identity = None
@@ -113,6 +170,7 @@ class SelectedInstrumentSmokePolicy:
 
         self.selected_zero_quote_pairs = 0
         self.selected_zero_quote_by_side = Counter()
+        self.selected_unknown_direction_pairs = 0
         self.unselected_issue_pairs_ignored = 0
         self.unselected_ignored_issues = Counter()
 
@@ -232,6 +290,11 @@ class SelectedInstrumentSmokePolicy:
             if zero.accepted and paired_zero.accepted:
                 self.selected_zero_quote_pairs += 1
                 self.selected_zero_quote_by_side[zero.side] += 1
+            elif (
+                self.unknown_direction_policy == QUARANTINE_UNKNOWN_DIRECTION_POLICY
+                and _selected_direction_quarantine_candidate(envelope)
+            ):
+                self.selected_unknown_direction_pairs += 1
             else:
                 self.selected_disqualifying_pairs += 1
                 self._record_selected_disqualifying_example(
@@ -321,6 +384,7 @@ class SelectedInstrumentSmokePolicy:
         return {
             "policy": POLICY,
             "selected_instruments": dict(sorted(self.instruments.items())),
+            "unknown_direction_policy": self.unknown_direction_policy,
             "selected_smoke_quality_eligible": eligible,
             "selected_input_present": self.selected_tick_records > 0,
             "counts": {
@@ -336,6 +400,7 @@ class SelectedInstrumentSmokePolicy:
             "quarantine": {
                 "selected_zero_quote_pairs": self.selected_zero_quote_pairs,
                 "selected_zero_quote_by_side": dict(sorted(self.selected_zero_quote_by_side.items())),
+                "selected_unknown_direction_pairs": self.selected_unknown_direction_pairs,
                 "unselected_issue_pairs_ignored": self.unselected_issue_pairs_ignored,
                 "unselected_ignored_issue_counts": dict(sorted(self.unselected_ignored_issues.items())),
                 "zero_quote_execution_permission_granted": False,
@@ -357,7 +422,12 @@ class SelectedInstrumentSmokePolicy:
                 "unselected_issues_require_exact_mirrored_pair": True,
                 "unselected_ignored_issues_are_whitelisted": True,
                 "selected_zero_quote_is_non_executable_quarantine_only": True,
-                "selected_trade_direction_unverified_is_disqualifying": True,
+                "selected_unknown_direction_default_strict": True,
+                "selected_unknown_direction_requires_explicit_policy": True,
+                "selected_unknown_direction_requires_unsigned_fid15": True,
+                "selected_trade_direction_unverified_is_disqualifying": (
+                    self.unknown_direction_policy == STRICT_UNKNOWN_DIRECTION_POLICY
+                ),
                 "unsafe_controls_are_global": True,
             },
         }
