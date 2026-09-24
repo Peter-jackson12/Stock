@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-24 / qualified prefix → NXT portfolio smoke 후보
+# 현재 인계 — 2026-09-24 / 실제 raw 오전 prefix 사전점검 차단
 
 [문서 인덱스](README.md) · [공유 계좌 연결/계약](docs/PIPELINE_MAP.md#portfolio-research) ·
 [첫 실제 연구 체크](BACKTEST_TODO.md) · [기존 틱 연구 런북](TICK_RESEARCH_RUNBOOK.md) ·
@@ -23,13 +23,26 @@ FID hot path·admission/run-plan·OCX/QAx·queue/teardown/telemetry·실제 수�
 
 ## 원격 시작 기준과 현재 변경
 
-- 현재 master: `215d371a3cb54510d086ff60670ce739d6f61f82` — PR #32 일반 merge.
+- 2026-09-24 직접 확인한 원격 master: `8a8402a074f9b2d980deb0ee7579dfd172eeb6bd` — PR #33 통합.
 - PR #32 최종 HEAD `6eee1885015340ed65f2808936fc1c825b50ea9d`의 CI #348는 `1,992 passed / 6 deselected`, Session assessment #18 success.
 - merge 후 master push CI #349와 Session assessment #19도 success다.
 - PR #31 merge 후 CI #343은 `1,975 passed / 6 deselected`, Session assessment #13 success로 확인됐다.
 - #20/#22/#23/#25/#26/#27/#28은 수집기/FID 개발 이력이다. 임의 close/merge/retarget하지 않는다.
-- 현재 작업 branch: `feat/nxt-prefix-smoke-20260924`.
-  목표는 이미 합격한 bounded prefix report와 **동일 raw snapshot**을 NXT 공유계좌 smoke runner에 연결하는 것이다.
+- PR #33의 prefix→NXT smoke runner는 통합됐다. 이번 로컬 사전점검에서는 실제 raw를 SQLite로 열지 않았다.
+
+## 2026-09-24 로컬 filesystem-only 사전점검
+
+대상: `sampledata/raw_ticks_v2/20260921/6f39117671c048f6b60477ceafbf40b6.db`.
+main 50,635,071,488 bytes (mtime UTC `2026-09-21T06:35:00.9280174Z`),
+`-wal` 0 bytes (mtime UTC `2026-09-21T07:08:26.3320855Z`),
+`-shm` 32,768 bytes (mtime UTC `2026-09-21T07:23:29.9155482Z`), `-journal` 부재를
+시작/종료 시 파일 메타데이터로 확인했다. C:는 NTFS, 관측 당시 여유 1,280,788,324,352 bytes였다.
+`Get-Process` 이름 필터에서 Python/Kiwoom/collector 관련 프로세스는 보이지 않았으나,
+WMI 명령줄 조회는 접근 거부라 모든 writer 부재를 입증하지 못했다. 프로젝트의 세션 raw 디렉터리와
+logs/operations_state/results/runs/sampledata/temp의 관련 파일명·receipt를 확인했으나,
+출처가 검증된 sidecar-free frozen snapshot/receipt는 찾지 못했다.
+0-byte WAL도 보존해야 하므로 prefix qualification과 NXT smoke는 실행하지 않았다.
+원본·sidecar에 SQLite 접속, 복제, 정리, 변경을 하지 않았다. 전체 raw·전략 성과·실전 가능성은 미평가다.
 
 ## 실제 구현과 보존한 경계
 
@@ -70,7 +83,7 @@ collector·workflows·기존 테스트는 변경하지 않는다. 합성 상태 
 도달했음을 확인한다. tail은 의도적으로 읽지 않고 `whole_stream_assessed=false`를 기록한다. 합격 명칭은
 `smoke_backtest_eligible`이며 전체 raw 승격·전략 성과 연구 적격성과 분리된다.
 
-**현재 smoke 후보:** `run_nxt_prefix_smoke()`는 합격한 prefix report와 정확히 같은 raw 경로만 받는다.
+**통합된 smoke 경로:** `run_nxt_prefix_smoke()`는 합격한 prefix report와 정확히 같은 raw 경로만 받는다.
 실행 직전에 sealed/no-sidecar 상태에서 prefix를 다시 읽어 manifest·digest·record count·quality diagnostics·sentinel을
 qualification report와 대조하고, 모두 같을 때만 명시한 종목 tick을 `run_nxt_portfolio()`로 스트리밍한다.
 결과 provenance는 `purpose=smoke_backtest_only`, `whole_stream_assessed=false`, `performance_research_assessed=false`,
@@ -82,15 +95,10 @@ Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. �
 
 ## 다음 행동
 
-1. 현재 prefix→NXT smoke 후보의 Windows end-to-end CI를 확인한다. 합격 report→동일 raw 재검증→전략 signal/order/fill,
-   qualifier 뒤 raw 변경 거부, 다른 raw path 재사용 거부, 빈 종목 선택, cutoff monotonic 경계를 검증한다.
-2. 후보가 합격·병합되면 **실제 50.6GB 원본을 바로 열지 않는다.** 먼저 로컬 에이전트로 filesystem-only preflight를 수행한다.
-   원본의 현재 main/WAL/SHM/journal 상태·free space·writer 부재를 확인하되 원본 SQLite open/sidecar 변경/삭제는 하지 않는다.
-3. 원본에 sidecar가 하나라도 있으면 qualifier/smoke를 실행하지 않는다. 이미 검증된 sidecar-free frozen snapshot/receipt가 있는지만 찾고,
-   없다면 안전 snapshot acquisition이 다음 blocker라고 보고하고 중단한다.
-4. sidecar-free frozen snapshot을 확보한 경우에만 10:00 KST(`end_market_second=36000`) prefix qualification → NXT smoke를 순서대로 실행한다.
-   최초 smoke는 수익 최적화가 아니라 event→signal→order→fill→cash/position/reject 흐름과 동일-command 재현성 확인이 목적이다.
-5. PnL/equity/MDD와 성과 연구 적격성은 그 다음 별도 계약이다. 다중 전략은 계속 후순위다.
+1. 다음 blocker는 **safe sidecar-free frozen snapshot acquisition**이다. 원본 sidecar를 직접 처리하지 말고
+   대상 identity·sidecar 출처·외부 reader/writer/namespace 격리·I/O 예산·실패 보존을 별도 설계한다.
+2. 출처가 검증된 sidecar-free frozen snapshot을 확보한 뒤에만 10:00 KST(`end_market_second=36000`)
+   prefix qualification → 동일 prefix의 NXT smoke를 순서대로 검토한다. PnL/equity/MDD는 별도 후속 계약이다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
