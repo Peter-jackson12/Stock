@@ -246,3 +246,32 @@ bounded scan은 producer의 whole-stream payload checksum을 검증하지 않으
 
 prefix 시간대는 성과를 본 뒤 고르는 파라미터가 아니다. 예를 들어 09:00~10:00 전략을 연구한다면
 10:00 cutoff를 성과 확인 전에 고정한다. 이후 tail 장애를 이유로 유리한 종료 시각을 사후 선택하지 않는다.
+
+
+<a id="nxt-prefix-smoke"></a>
+## 9. qualified prefix → NXT portfolio smoke
+
+[smoke adapter](../engine/nxt_prefix_smoke.py)와
+[CLI](../scripts/run_nxt_prefix_smoke.py)는 §8의 `smoke_backtest_eligible=true` 결과만 받는다.
+목적은 **실제 raw-v2 형태의 bounded prefix가 NXT 공유계좌 경로에서 재현 가능하게 실행되는지** 확인하는 것이다.
+전략 수익성·전체 세션 품질·실거래 준비를 판정하지 않는다.
+
+실행은 prefix report에 기록된 raw path와 호출 경로가 정확히 같을 때만 허용한다.
+같은 source를 sealed/no-sidecar 상태로 다시 열어 seq=1부터 boundary sentinel까지 재생하면서
+manifest, `prefix_event_sha256`, consumed record count, prefix counts/quality diagnostics, sentinel을
+qualification report와 다시 대조한다. qualifier 뒤 raw bytes가 달라졌거나 다른 복사본을 report에
+끼워 넣으면 실행을 정상 완료로 인정하지 않는다.
+
+검증을 통과한 prefix 안에서도 strategy에는 호출자가 명시한 `code=venue` 종목 tick만 전달한다.
+control과 미선택 종목은 strategy 입력에서 빠지지만 prefix 재검증에는 계속 포함된다.
+결과는 기존 `portfolio_research_result_v1`을 사용하며 input provenance에
+`raw_v2_prefix_smoke_v1`, prefix report SHA-256/run id/digest/cutoff/sentinel,
+선택 종목과 adapter code hash를 기록한다. 이 provenance도 외부 서명이나 raw identity 인증이 아니다.
+
+결과의 `raw_identity_verified=false`, `realized_pnl/unrealized_pnl/equity=null`을 유지한다.
+`purpose=smoke_backtest_only`, `whole_stream_assessed=false`,
+`performance_research_assessed=false`가 핵심 해석 경계다.
+같은 snapshot/report/settings의 재실행은 같은 reproducibility key와 fill/order 결과를 내야 한다.
+
+현재 운영 50GB 원본에 보고된 sidecar가 하나라도 남아 있으면 이 경로도 시작하지 않는다.
+§8 qualifier와 동일하게 **sidecar-free frozen snapshot**이 선행 조건이다.

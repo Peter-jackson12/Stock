@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-24 / 오전 bounded-prefix qualification 후보
+# 현재 인계 — 2026-09-24 / qualified prefix → NXT portfolio smoke 후보
 
 [문서 인덱스](README.md) · [공유 계좌 연결/계약](docs/PIPELINE_MAP.md#portfolio-research) ·
 [첫 실제 연구 체크](BACKTEST_TODO.md) · [기존 틱 연구 런북](TICK_RESEARCH_RUNBOOK.md) ·
@@ -23,12 +23,13 @@ FID hot path·admission/run-plan·OCX/QAx·queue/teardown/telemetry·실제 수�
 
 ## 원격 시작 기준과 현재 변경
 
-- 현재 master: `926fda5335c5a4883775acf37f3c2f36a310f1d6` — PR #31 일반 merge.
-- PR #31 최종 HEAD `2d690c8e9222959e08021d538f09c09fe8cd1b45`의 CI #342는 `1,975 passed / 6 deselected`, Session assessment #12는 `127 passed`, 둘 다 success.
-- merge 후 master push CI #343은 이 인계 작성 중 실행 중이므로 완료 결과는 Actions에서 다시 확인한다.
+- 현재 master: `215d371a3cb54510d086ff60670ce739d6f61f82` — PR #32 일반 merge.
+- PR #32 최종 HEAD `6eee1885015340ed65f2808936fc1c825b50ea9d`의 CI #348는 `1,992 passed / 6 deselected`, Session assessment #18 success.
+- merge 후 master push CI #349와 Session assessment #19도 success다.
+- PR #31 merge 후 CI #343은 `1,975 passed / 6 deselected`, Session assessment #13 success로 확인됐다.
 - #20/#22/#23/#25/#26/#27/#28은 수집기/FID 개발 이력이다. 임의 close/merge/retarget하지 않는다.
-- 현재 작업 branch: `feat/morning-prefix-qualification-20260924`.
-  목표는 전체 세션 승격과 분리된 오전 bounded-prefix 검증이다.
+- 현재 작업 branch: `feat/nxt-prefix-smoke-20260924`.
+  목표는 이미 합격한 bounded prefix report와 **동일 raw snapshot**을 NXT 공유계좌 smoke runner에 연결하는 것이다.
 
 ## 실제 구현과 보존한 경계
 
@@ -64,10 +65,16 @@ collector·workflows·기존 테스트는 변경하지 않는다. 합성 상태 
 한 전략을 여러 종목에 적용해도 공유 cash/risk는 PortfolioSimulator가 소유한다. 결과는 새 UUID 디렉토리의
 `portfolio_research_result_v1` JSON으로 보존하고 전략 설정·코드 hash·signals를 reproducibility key에 포함한다.
 
-**현재 prefix 후보:** `raw_v2_prefix_qualification_v1`은 seq=1부터 사전에 정한 KST exclusive cutoff까지의
+**PR #32 통합:** `raw_v2_prefix_qualification_v1`은 seq=1부터 사전에 정한 KST exclusive cutoff까지의
 구간만 검증한다. cutoff 시각 이상에서 구조적으로 유효한 다음 record를 sentinel로 요구해 실제 수집이 경계까지
-도달했음을 확인한다. tail은 의도적으로 읽지 않고 `whole_stream_assessed=false`를 기록한다. prefix 통과가 전체 raw의
-FIRST_RESEARCH_CANDIDATE 승격을 뜻하지 않는다. prefix 안의 parse/control/normalized issue는 기존 quality 계약으로 거부한다. 이 단계의 합격 명칭은 `smoke_backtest_eligible`이며, producer whole-stream checksum이나 외부 immutable file-hash anchor를 확인하지 않았으므로 성과 연구 적격성은 별도 미평가다.
+도달했음을 확인한다. tail은 의도적으로 읽지 않고 `whole_stream_assessed=false`를 기록한다. 합격 명칭은
+`smoke_backtest_eligible`이며 전체 raw 승격·전략 성과 연구 적격성과 분리된다.
+
+**현재 smoke 후보:** `run_nxt_prefix_smoke()`는 합격한 prefix report와 정확히 같은 raw 경로만 받는다.
+실행 직전에 sealed/no-sidecar 상태에서 prefix를 다시 읽어 manifest·digest·record count·quality diagnostics·sentinel을
+qualification report와 대조하고, 모두 같을 때만 명시한 종목 tick을 `run_nxt_portfolio()`로 스트리밍한다.
+결과 provenance는 `purpose=smoke_backtest_only`, `whole_stream_assessed=false`, `performance_research_assessed=false`,
+`raw_identity_verified=false`를 보존한다. qualifier 이후 prefix bytes가 달라지면 정상 성과가 아니라 failed diagnostics로 끝낸다.
 
 **미연결/미완료:** 평균단가·원가·실현/미실현 PnL·equity와 표준 Trade 변환, 실제 raw 입력,
 Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. 현행 회계는 현금·보유수량·수수료·체결 원장까지다.
@@ -75,15 +82,15 @@ Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. �
 
 ## 다음 행동
 
-1. bounded-prefix 후보의 Windows 합성 CI를 확인한다. 핵심 반례는 **cutoff 이후 callback_error는 clean prefix를 소급 실패시키지 않음**,
-   cutoff 이전 parse/quality issue는 거부, cutoff에 도달하지 못한 세션은 실패, sidecar는 그대로 보존/거부다.
-2. 후보가 합격·병합되면 실제 50.6GB 원본에는 직접 적용하지 않는다. 현재 보고된 0-byte WAL/32KiB SHM 때문에 sealed reader 계약상
-   원본은 즉시 거부 대상이다. 먼저 로컬 에이전트용 **원본 비변경·bounded·fail-closed 점검 프롬프트**를 작성해 현재 파일집합/가용한
-   안전 복제 경로를 확인한다.
-3. 안전한 sidecar-free frozen snapshot을 확보할 수 있을 때만 예를 들어 10:00 KST(`end_market_second=36000`) prefix를 검증한다.
-   prefix가 합격하면 그 정확한 digest/seq 범위를 NXT portfolio smoke backtest 입력으로 연결한다.
-4. smoke 단계에서는 수익 최적화보다 event→signal→order→fill→cash/position/reject 흐름과 재현성을 먼저 확인한다.
-   PnL/equity/MDD는 그 다음 계약으로 추가한다. 다중 전략은 계속 후순위다.
+1. 현재 prefix→NXT smoke 후보의 Windows end-to-end CI를 확인한다. 합격 report→동일 raw 재검증→전략 signal/order/fill,
+   qualifier 뒤 raw 변경 거부, 다른 raw path 재사용 거부, 빈 종목 선택, cutoff monotonic 경계를 검증한다.
+2. 후보가 합격·병합되면 **실제 50.6GB 원본을 바로 열지 않는다.** 먼저 로컬 에이전트로 filesystem-only preflight를 수행한다.
+   원본의 현재 main/WAL/SHM/journal 상태·free space·writer 부재를 확인하되 원본 SQLite open/sidecar 변경/삭제는 하지 않는다.
+3. 원본에 sidecar가 하나라도 있으면 qualifier/smoke를 실행하지 않는다. 이미 검증된 sidecar-free frozen snapshot/receipt가 있는지만 찾고,
+   없다면 안전 snapshot acquisition이 다음 blocker라고 보고하고 중단한다.
+4. sidecar-free frozen snapshot을 확보한 경우에만 10:00 KST(`end_market_second=36000`) prefix qualification → NXT smoke를 순서대로 실행한다.
+   최초 smoke는 수익 최적화가 아니라 event→signal→order→fill→cash/position/reject 흐름과 동일-command 재현성 확인이 목적이다.
+5. PnL/equity/MDD와 성과 연구 적격성은 그 다음 별도 계약이다. 다중 전략은 계속 후순위다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
