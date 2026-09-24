@@ -23,8 +23,15 @@
 
 ## 2. 가장 먼저 할 일 — 시험 입력 결정
 
-**현재 바로 사용할 수 있다고 판정한 실제 raw 후보는 없다.** 다음은 기존 보고와 사용자가 전달한
-9월 21일 로컬 제한 검사 결과에 근거한다. 이번 원격 문서 수정에서 raw 직접 조회·전체 검사는 하지 않았다.
+**whole-file strict 연구 입력으로 바로 사용할 수 있다고 판정한 실제 raw 후보는 아직 없다.**
+다만 2026-09-21 세션의 frozen working snapshot에서 10:00 KST bounded prefix + `005930=unknown`에 한정한
+**selected-v2 pipeline-smoke 입력 경로**는 별도 증거 체계로 검증됐다.
+
+이 selected-v2 경로는 whole raw 승격이 아니다. strict whole/prefix quality failure를 유지한 채
+명시적 `unknown_direction_recent_window_quarantine_v0` 정책, selected v2 overlay,
+전용 smoke runner가 같은 evidence를 다시 검증하며 선택 종목만 pipeline smoke에 사용한다.
+
+아래 기존 whole-file 후보 표는 그대로 유지한다.
 
 | session_id | 확인된 제한 | 현재 처리 |
 |---|---|---|
@@ -82,6 +89,38 @@ raw seq와 별도로 콜백 단위 committed 수를 늘리며 중단 경로는 �
 
 별도 진단 파일을 만들지 않았다는 로컬 보고다. 후속 evidence 보존 시 전달 보고와 실제 원시 파일을 구분한다.
 
+### 2026-09-21 selected-v2 bounded 경로 — 실제 pipeline smoke 완료
+
+whole-file strict candidate와 구분하는 별도 bounded 경로다.
+
+- Frozen working snapshot과 10:00 KST exclusive prefix 사용.
+- strict prefix는 `smoke_backtest_eligible=false`, whole-stream 미평가 상태를 유지한다.
+- selected v2 overlay:
+  - instrument `005930=unknown`
+  - policy `unknown_direction_recent_window_quarantine_v0`
+  - selected tick 77,558 / clean 77,557
+  - unsigned-direction quarantine pair 1
+  - selected disqualifying 0
+  - selected smoke quality eligible=true
+- 실제 selected-v2 NXT pipeline smoke:
+  - 설정: quantity 1 / cash 1,000,000 / fee 0.001 per-side /
+    buy·sell·cancel latency 각 1초 / max quote age 2초 / cooldown 10초 / fixed exit
+  - expected / actual / processed event 77,558 / 77,558 / 77,558
+  - signal buy 1 / sell 1
+  - order intents 2 / fills 2 / rejects 0
+  - completed_flat / final position 0 / open orders 0
+  - result:
+    `C:\StockSnapshots\raw_v2_snapshot_24f657163264432da7af3ed533656eac\selected_prefix_smoke\9165453f3f85416bbecdc16946237e78\result.json`
+  - reproducibility key:
+    `f3ad6b6095891460033f2e1c784d28e19ba0cf6e78055092b43eeab7307692dd`
+
+이 PASS는 bounded selected input → strategy → portfolio simulator 연결 완료만 뜻한다.
+strategy performance, NXT venue, whole raw, live readiness를 승인하지 않는다.
+
+**다음 증거:** result의 실제 buy/sell/order/fill을 원본 exact seq lookup으로 대표 사례 대조한 뒤,
+같은 input/settings/code의 명시적 두 번째 smoke 1회로 reproducibility를 확인한다.
+그 전에는 이 경로를 performance-research input으로 승격하지 않는다.
+
 ### 기본 경로 A — 9월 21일 실행 결과
 
 - [x] **수집 승인·당일 사전 점검 수행 보고:** 사용자 live 수집 승인 및 preflight 근거는 HANDOFF 참조.
@@ -120,6 +159,18 @@ raw seq와 별도로 콜백 단위 committed 수를 늘리며 중단 경로는 �
   실제 대용량 실행 계획과 현재 sidecar의 안전한 해결은 여전히 별도 미완료다.
 - [ ] **입력 전체 검증:** 승인된 장외 범위에서 순번·checksum·품질 제어 기록·whole-file 입력 계약을 검사하고 근거를 보존한다.
   조기 중단은 전체 checksum 완료가 아니다. 실패를 합격 처리하거나 표본·closed·CI로 대체하지 않는다.
+
+### Selected-v2 bounded pipeline 진행 상태
+
+아래는 기존 whole-file 연구 입력 체크와 별개의 bounded selected smoke 증거다.
+
+- [x] **실제 pipeline smoke 1회:** input/settings/code/result/provenance를 HANDOFF와 result에 기록했다.
+- [x] **결과 상태:** 77,558/77,558 event 처리, diagnostics_only=false, completed_flat, fills 2, rejects 0.
+- [ ] **대표 사례 대조:** smoke의 buy/sell 신호·order intent·fill을 raw exact seq evidence와 연결한다.
+- [ ] **재현성:** 같은 input/settings/code로 smoke를 명시적으로 1회 재실행해
+  reproducibility key·order intents·fills·final account를 대조한다.
+- [ ] **research-input 승격 결정:** 대표 사례와 재현성 확인 뒤 bounded selected 경로의
+  performance-research 입력 범위/한계를 별도 계약으로 결정한다.
 
 ## 4. 첫 시험 실행과 결과 대조
 
