@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-24 / frozen snapshot acquisition 후보
+# 현재 인계 — 2026-09-24 / frozen snapshot 통합·실데이터 적용 준비
 
 [문서 인덱스](README.md) · [공유 계좌 연결/계약](docs/PIPELINE_MAP.md#portfolio-research) ·
 [첫 실제 연구 체크](BACKTEST_TODO.md) · [기존 틱 연구 런북](TICK_RESEARCH_RUNBOOK.md) ·
@@ -23,13 +23,13 @@ FID hot path·admission/run-plan·OCX/QAx·queue/teardown/telemetry·실제 수�
 
 ## 원격 시작 기준과 현재 변경
 
-- 현재 원격 master: `db4a6ea03371c36c0ff578f17c4ef85768e253e9` — 실제 raw filesystem-only 사전점검 기록.
-- PR #32 최종 HEAD `6eee1885015340ed65f2808936fc1c825b50ea9d`의 CI #348는 `1,992 passed / 6 deselected`, Session assessment #18 success.
-- merge 후 master push CI #349와 Session assessment #19도 success다.
-- PR #31 merge 후 CI #343은 `1,975 passed / 6 deselected`, Session assessment #13 success로 확인됐다.
+- 현재 원격 master: `51077b4fea6e07bdcd3a4e3b50dd2ca78c6b3bd8` — PR #35 통합.
+- PR #34는 frozen snapshot acquisition 기반을 통합했고, PR #35는 source main/WAL/SHM exclusive seal을 working cleanup·hash·최종 source 재검증까지 유지하도록 보강했다.
+- PR #34 후보 HEAD `463a71cc636431a02ca0e254e1ff71e3013564a3`에서 전체 Git-only 회귀 `2,012 passed / 6 deselected`를 확인했다. 이후 작은 변경마다 Actions를 반복하지 않는 정책으로 전환했다.
+- GitHub Actions는 자동 PR/push 실행을 중단했다. 일반 CI는 매주 일요일 09:00 KST, Session assessment는 09:15 KST 정기 실행이며 필요할 때만 수동 실행한다.
+- 작은 코드/문서 변경마다 Actions를 돌리지 않는다. 큰 기능 묶음, 배포/운영 전, 또는 주간 회귀에서만 전체 CI를 사용한다.
 - #20/#22/#23/#25/#26/#27/#28은 수집기/FID 개발 이력이다. 임의 close/merge/retarget하지 않는다.
-- PR #33의 prefix→NXT smoke runner는 통합됐다. 이번 로컬 사전점검에서는 실제 raw를 SQLite로 열지 않았다.
-- 현재 작업 branch: `feat/raw-v2-frozen-snapshot-20260924`. 기존 synthetic clone lab 계약을 실제 입력용 fail-closed acquisition 후보로 옮기는 중이다.
+- PR #31~#33의 NXT 공유계좌·bounded prefix·prefix→NXT smoke 경로도 master에 통합돼 있다.
 
 ## 2026-09-24 로컬 filesystem-only 사전점검
 
@@ -96,17 +96,14 @@ Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. �
 
 ## 다음 행동
 
-1. 현재 후보 `collector/raw_v2_snapshot.py` / `scripts/acquire_raw_v2_snapshot.py`의 Windows 합성 CI를 확인한다.
-   후보는 외부 raw를 SQLite로 열지 않고 main/0-byte WAL/32KiB SHM을 동시에 exclusive handle로 획득한다.
-   source를 한 번 스트리밍해 `evidence/`와 `working/` 두 fresh copy를 만들고, source main/WAL/SHM exclusive handle을 최종 working cleanup·hash 검증까지 유지한 채
-   오직 별도 working copy를 SQLite로 열어 residue cleanup을 시도한다.
-2. success는 working sidecar 전부 부재, working main SHA-256이 sealed source stream digest와 동일,
-   expected session 일치, source stat/identity 불변일 때만 `snapshot_ready_for_prefix_qualification=true`다.
-   whole-stream/research/performance eligibility는 계속 false다.
-3. 후보가 CI/검토를 통과해 merge된 뒤에만 실제 50.6GB 원본에 로컬 에이전트로 적용한다.
-   실제 실행은 원본 파일집합을 변경하지 않고 별도 output root에 evidence/working/result를 보존한다.
-4. snapshot ready일 때만 working main에 10:00 KST bounded prefix qualification → 동일 prefix NXT smoke를 순서대로 실행한다.
-   PnL/equity/MDD는 그 다음 별도 계약이며 다중 전략은 후순위다.
+1. 다음 단계는 실제 50.6GB 원본에 `scripts/acquire_raw_v2_snapshot.py`를 로컬 에이전트로 적용하는 것이다.
+   원본 main/WAL/SHM을 동시에 exclusive seal할 수 있을 때만 evidence/working frozen snapshot을 만든다.
+2. snapshot report가 `snapshot_ready_for_prefix_qualification=true`일 때만 working main을 대상으로
+   10:00 KST(`end_market_second=36000`) bounded prefix qualification을 실행한다.
+3. prefix가 `smoke_backtest_eligible=true`일 때만 동일 working raw/prefix report로 NXT prefix smoke를 실행한다.
+4. smoke 목적은 수익률 탐색이 아니라 event→signal→order→fill→cash/position/reject 흐름과 실제 대용량 입력의 재현 가능성 확인이다.
+5. PnL/equity/MDD·전략 성과 적격성은 그 다음 별도 계약이다. 다중 전략은 계속 후순위다.
+6. 로컬 50GB 작업이 필요할 때 Work/로컬 에이전트를 직접 호출하지 않는다. 복사 가능한 프롬프트와 권장 모델/추론 수준만 제공한다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
