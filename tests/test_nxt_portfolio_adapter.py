@@ -11,6 +11,9 @@ from engine.tick_ordering import OrderedTick
 from engine.tick_session import replay_chunk
 from execution.portfolio_simulator import PortfolioSimulator, RiskLimits
 from execution.tick_simulator import TickSimulator
+from strategies.nxt_breakout.direction_window import (
+    POLICY as QUARANTINE_UNKNOWN_DIRECTION_POLICY,
+)
 from strategies.nxt_breakout.portfolio_adapter import NxtPortfolioStrategy
 from strategies.nxt_breakout.tick_research import NxtResearchStrategy
 
@@ -183,10 +186,12 @@ def test_persisted_runner_records_strategy_identity_and_signals(tmp_path):
         "adapter_version": "nxt_portfolio_adapter_v1",
     }
     assert saved["settings"]["strategy"]["quantity"] == 2
+    assert saved["settings"]["strategy"]["unknown_direction_policy"] == "strict"
     assert saved["strategy_signals"][0]["reason"] == "breakout"
     assert saved["raw_identity_verified"] is False
     assert saved["realized_pnl"] is None
     assert "strategies/nxt_breakout/portfolio_adapter.py" in saved["code_sha256"]
+    assert "strategies/nxt_breakout/direction_window.py" in saved["code_sha256"]
     assert len(saved["reproducibility_key"]) == 64
 
 
@@ -294,3 +299,81 @@ def test_runner_accepts_explicit_risk_limits_object(tmp_path):
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert saved["settings"]["risk"]["max_open_orders"] == 1
     assert saved["settings"]["risk"]["max_position_per_symbol"] == {"A": 2}
+
+
+
+def test_portfolio_quarantine_mode_accepts_unknown_direction_without_intent():
+    sim = portfolio_sim()
+    strategy = NxtPortfolioStrategy(
+        instruments={"A": "unknown"},
+        quantity=1,
+        unknown_direction_policy=QUARANTINE_UNKNOWN_DIRECTION_POLICY,
+    )
+
+    replay_portfolio_chunk(sim, [
+        quote(),
+        trade(is_buy=None, volume=237016),
+    ], strategy)
+
+    assert strategy.signals == []
+    assert len(sim.orders) == 0
+    assert strategy.settings()["unknown_direction_policy"] == QUARANTINE_UNKNOWN_DIRECTION_POLICY
+
+
+def test_runner_records_direction_policy_and_changes_reproducibility(tmp_path):
+    common = dict(
+        events=[quote()],
+        output_root=tmp_path,
+        dataset_label="direction-policy",
+        simulator_config=portfolio_config(),
+        close_ns=20,
+        quantity=1,
+    )
+    strict = json.loads(run_nxt_portfolio(**common).read_bytes())
+    quarantine = json.loads(run_nxt_portfolio(
+        **common,
+        unknown_direction_policy=QUARANTINE_UNKNOWN_DIRECTION_POLICY,
+    ).read_bytes())
+
+    assert strict["order_intents"] == quarantine["order_intents"] == []
+    assert strict["settings"]["strategy"]["unknown_direction_policy"] == "strict"
+    assert (
+        quarantine["settings"]["strategy"]["unknown_direction_policy"]
+        == QUARANTINE_UNKNOWN_DIRECTION_POLICY
+    )
+    assert strict["reproducibility_key"] != quarantine["reproducibility_key"]
+
+
+def test_runner_quarantine_mode_accepts_unknown_direction_stream(tmp_path):
+    path = run_nxt_portfolio(
+        [quote(), trade(is_buy=None, volume=237016)],
+        output_root=tmp_path,
+        dataset_label="unknown-direction-quarantine",
+        simulator_config=portfolio_config(),
+        close_ns=20,
+        quantity=1,
+        unknown_direction_policy=QUARANTINE_UNKNOWN_DIRECTION_POLICY,
+    )
+    saved = json.loads(path.read_text(encoding="utf-8"))
+
+    assert saved["status"] == "completed_no_fills"
+    assert saved["order_intents"] == []
+    assert saved["strategy_signals"] == []
+    assert (
+        saved["settings"]["strategy"]["unknown_direction_policy"]
+        == QUARANTINE_UNKNOWN_DIRECTION_POLICY
+    )
+
+
+def test_invalid_runner_direction_policy_fails_before_output(tmp_path):
+    with pytest.raises(ValueError, match="unknown-direction policy"):
+        run_nxt_portfolio(
+            [quote()],
+            output_root=tmp_path,
+            dataset_label="invalid-direction-policy",
+            simulator_config=portfolio_config(),
+            close_ns=20,
+            quantity=1,
+            unknown_direction_policy="guess-direction",
+        )
+    assert list(tmp_path.iterdir()) == []

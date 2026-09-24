@@ -11,21 +11,47 @@ from decimal import Decimal
 
 from engine.nxt_tick_engine import PARAMS, get_tick_size
 from execution.quote_validation import check_ordered_quote
+from strategies.nxt_breakout.direction_window import (
+    POLICY as QUARANTINE_UNKNOWN_DIRECTION_POLICY,
+    DirectionFeatureWindow,
+)
+
+
+STRICT_UNKNOWN_DIRECTION_POLICY = "strict"
 
 
 class NxtResearchStrategy:
-    def __init__(self, *, quantity, exit_rule="fixed", cooldown_ns=10_000_000_000, params=None):
+    def __init__(
+        self,
+        *,
+        quantity,
+        exit_rule="fixed",
+        cooldown_ns=10_000_000_000,
+        params=None,
+        unknown_direction_policy=STRICT_UNKNOWN_DIRECTION_POLICY,
+    ):
         if type(quantity) is not int or quantity <= 0:
             raise ValueError("positive integer quantity required")
         if exit_rule not in ("fixed", "tick_trail", "step_trail"):
             raise ValueError("unknown exit rule")
         if type(cooldown_ns) is not int or cooldown_ns < 0:
             raise ValueError("invalid cooldown")
+        if unknown_direction_policy not in (
+            STRICT_UNKNOWN_DIRECTION_POLICY,
+            QUARANTINE_UNKNOWN_DIRECTION_POLICY,
+        ):
+            raise ValueError("unknown unknown-direction policy")
         self.params = deepcopy(PARAMS if params is None else params)
         if self.params["macro"]["enabled"]:
             raise ValueError("point-in-time macro adapter not connected")
         self.quantity, self.exit_rule, self.cooldown_ns = quantity, exit_rule, cooldown_ns
+        self.unknown_direction_policy = unknown_direction_policy
         self.window, self.recent = deque(), deque()
+        self.direction_window = (
+            DirectionFeatureWindow(self.params["entry"]["recent_ticks"])
+            if unknown_direction_policy == QUARANTINE_UNKNOWN_DIRECTION_POLICY
+            else None
+        )
         self.open = None
         self.pre_open = self.pre_last = None
         self.pre_volume = 0
@@ -68,7 +94,20 @@ class NxtResearchStrategy:
         entry, pre = self.params["entry"], self.params["nxt_overheat"]
         if event.kind == "trade":
             price = Decimal(str(event.price))
-            if not price.is_finite() or price <= 0 or type(event.volume) is not int or event.volume <= 0 or type(event.is_buy) is not bool:
+            direction_valid = (
+                type(event.is_buy) is bool
+                or (
+                    self.unknown_direction_policy == QUARANTINE_UNKNOWN_DIRECTION_POLICY
+                    and event.is_buy is None
+                )
+            )
+            if (
+                not price.is_finite()
+                or price <= 0
+                or type(event.volume) is not int
+                or event.volume <= 0
+                or not direction_valid
+            ):
                 raise ValueError("valid normalized trade price/volume/direction required")
             if pre["window"][0] <= second < pre["window"][1]:
                 if self.pre_open is None:
@@ -83,6 +122,8 @@ class NxtResearchStrategy:
             self.recent.append((event.volume, event.is_buy))
             while len(self.recent) > entry["recent_ticks"]:
                 self.recent.popleft()
+            if self.direction_window is not None:
+                self.direction_window.append(event.volume, event.is_buy)
             if self.held:
                 self.peak = max(self.peak, price)
         else:
@@ -125,12 +166,19 @@ class NxtResearchStrategy:
         bid3, ask3 = sum(q.bid_sizes[:3]), sum(q.ask_sizes[:3])
         if q.bid_sizes[0] != q.bid_size or q.ask_sizes[0] != q.ask_size or ask3 <= 0:
             return
-        volume = sum(v for v, _ in self.recent)
-        buy_volume = sum(v for v, buy in self.recent if buy)
+        if self.direction_window is None:
+            volume = sum(v for v, _ in self.recent)
+            buy_ratio = Decimal(sum(v for v, buy in self.recent if buy)) / volume
+        else:
+            direction_state = self.direction_window.state()
+            if not direction_state.entry_direction_eligible:
+                return
+            volume = direction_state.total_volume
+            buy_ratio = direction_state.buy_ratio
         spread = (checked.book.ask - checked.book.bid) / checked.book.bid
         if (price >= self.open and price >= prior_high
                 and spread <= Decimal(str(entry["spread_max_pct"]))
-                and Decimal(buy_volume) / volume >= Decimal(str(entry["buy_ratio_min"]))
+                and buy_ratio >= Decimal(str(entry["buy_ratio_min"]))
                 and bid3 > Decimal(str(entry["obi_min_ratio"])) * ask3
                 and volume >= entry["min_vol_15t"]):
             self._submit(sim, "buy", self.quantity, "breakout")

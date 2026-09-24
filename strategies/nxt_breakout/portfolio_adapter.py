@@ -70,7 +70,8 @@ class NxtPortfolioStrategy:
 
     def __init__(self, *, instruments: Mapping[str, str], quantity: int,
                  exit_rule: str = "fixed", cooldown_ns: int = 10_000_000_000,
-                 params=None, order_prefix: str = "nxt") -> None:
+                 params=None, order_prefix: str = "nxt",
+                 unknown_direction_policy: str = "strict") -> None:
         if not isinstance(instruments, Mapping) or not instruments:
             raise ValueError("nonempty instruments mapping required")
         if any(not isinstance(code, str) or not code or not isinstance(venue, str) or not venue
@@ -83,12 +84,14 @@ class NxtPortfolioStrategy:
         self.exit_rule = exit_rule
         self.cooldown_ns = cooldown_ns
         self.order_prefix = order_prefix
+        self.unknown_direction_policy = unknown_direction_policy
         self._states = {
             code: NxtResearchStrategy(
                 quantity=quantity,
                 exit_rule=exit_rule,
                 cooldown_ns=cooldown_ns,
                 params=deepcopy(params),
+                unknown_direction_policy=unknown_direction_policy,
             )
             for code in self.instruments
         }
@@ -108,6 +111,7 @@ class NxtPortfolioStrategy:
             "exit_rule": self.exit_rule,
             "cooldown_ns": self.cooldown_ns,
             "order_prefix": self.order_prefix,
+            "unknown_direction_policy": self.unknown_direction_policy,
             "params": self.params,
         }
 
