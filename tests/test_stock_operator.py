@@ -12,6 +12,7 @@ from types import ModuleType
 import pytest
 
 from scripts import stock_operator as operator
+from control_tower.operator_environment import inspect_operator_environment
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -84,6 +85,20 @@ def test_doctor_success_is_inventory_only(inventory):
     assert report["execution_approved"] is False
     optional = next(c for c in report["checks"] if c["name"] == "collector_runtime_file")
     assert optional["status"] == "WARN"
+
+
+def test_cli_doctor_preserves_shared_environment_report(inventory):
+    root, _ = inventory
+    shared = inspect_operator_environment(
+        root,
+        base=operator._base("doctor", root),
+        runtime_provider=operator._runtime,
+        package_version=operator.metadata.version,
+    )
+    cli = operator.doctor(root)
+    assert cli.pop("observed_at_utc")
+    assert shared.pop("observed_at_utc")
+    assert cli == shared
 
 
 @pytest.mark.parametrize("field,value", [("platform", "linux"), ("bits", 32),
@@ -190,6 +205,16 @@ def test_read_only_python_helper_has_no_execution_api():
     imports |= {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
     assert not imports.intersection({"subprocess", "sqlite3", "streamlit", "webbrowser", "winreg"})
     assert "control_tower.status" in imports
+
+
+def test_shared_environment_check_has_no_execution_or_mutation_api():
+    import ast
+    from control_tower import operator_environment
+
+    tree = ast.parse(Path(operator_environment.__file__).read_text(encoding="utf-8"))
+    imports = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+    imports |= {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
+    assert not imports.intersection({"subprocess", "sqlite3", "streamlit", "webbrowser", "winreg", "shutil"})
 
 
 # 기존 reader와의 결합 검사. pytest 임시 fixture만 사용한다.

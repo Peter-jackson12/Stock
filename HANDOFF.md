@@ -11,6 +11,12 @@
 
 ## 현재 두 트랙
 
+**Operator UX 보조 트랙:** 최신 master `7635bb4`의 상단 요약에 읽기 전용 환경 목록을 덧붙이는
+별도 브랜치를 사용한다. CLI `doctor`와 화면은 `control_tower/operator_environment.py`를 함께 쓰며,
+Windows/64-bit/Python/프로젝트 `.venv`/필수 파일/GUI 패키지 metadata/`.venv32` 파일 존재만 본다.
+PASS는 GUI·수집·OCX 준비나 실행 승인이 아니다. 자동 설치·수정·로그인·시장 조회는 연결하지 않는다.
+collector/native, raw/qualification, engine/execution/strategies와 아래 research/backtest 상태는 유지한다.
+
 **수집기/native 트랙은 다음 실제 시장 세션까지 의도적으로 보류한다.**
 그때의 별도 승인된 Mock A-B-A 1회가 다음 실질 단계이며, 이번 개발에서 그 실행 준비를 늘리지 않는다.
 FID hot path·admission/run-plan·OCX/QAx·queue/teardown/telemetry·실제 수집·PID/창/lease 관측·

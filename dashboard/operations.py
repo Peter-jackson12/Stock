@@ -13,6 +13,7 @@ from control_tower.managed_capture import ManagedCaptures, start_managed_capture
 from control_tower.offline_worker import start_replay_worker, retry_replay_worker
 from control_tower.capture_health import CaptureHealth
 from control_tower.operator_summary import summarize_operator_state
+from control_tower.operator_environment import inspect_operator_environment
 from control_tower.replay_schedule import schedule_replay, schedules, expire_missed
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +30,7 @@ def render_control_tower(root=None):
     observation = observe_collector(root)
     raw = observe_raw_capture(root)
     render_operator_overview(observation, raw)
+    render_operator_environment(root)
     if "payload" in raw:
         payload = raw["payload"]
         snapshot = payload["snapshot"]
@@ -218,6 +220,24 @@ def render_operator_overview(observation, raw):
             """
         )
         st.caption("이 요약은 원본 DB·PID·창·lease를 열지 않으며, 수집 시작 승인이나 데이터 품질 인증을 만들지 않습니다.")
+
+
+def render_operator_environment(root):
+    """CLI doctor와 같은 작은 읽기 전용 환경 목록을 표시한다."""
+    with st.expander("읽기 전용 환경 점검"):
+        st.caption("Windows · 64-bit · Python 버전 · 프로젝트 .venv · 필수 파일 · GUI 패키지 metadata · .venv32 파일 존재만 확인합니다.")
+        try:
+            report = inspect_operator_environment(Path(root))
+        except (OSError, ValueError) as exc:
+            st.warning(f"환경 목록을 읽지 못했습니다: {exc}. 자동 설치하거나 수정하지 않았습니다.")
+            return
+        for check in report["checks"]:
+            st.text(f"[{check['status']}] {check['name']}: {check['detail']}")
+        if report["inventory_passed"]:
+            st.info("환경 목록 점검: 통과")
+        else:
+            st.warning("환경 목록 점검: 미충족 — 자동 설치하거나 수정하지 않았습니다.")
+        st.caption("PASS는 위 작은 목록 점검만 뜻합니다. GUI 정상 기동·수집 준비·OCX 준비 또는 실행 승인이 아닙니다.")
 
 
 
