@@ -50,6 +50,12 @@ journal 부재, main 단일 링크. 원본 SQLite 접속·sidecar 정리는 하�
   trade_direction_unverified 3,233. `stream_error=null`, `tail_scanned=false`, 전체 raw·전략 성과 미평가.
 - 지정된 실패 정책에 따라 NXT smoke는 실행하지 않았다. 원본/evidence/working/result는 보존하고
   cutoff 변경·자동 재시도·whole-file 검사는 하지 않는다.
+- 후속 bounded 조사: 위 result의 문제 tick 30개·직후 parse_error 30개·session_start 1개만
+  working DB의 INTEGER PRIMARY KEY exact lookup으로 읽었다(61/61 row).
+  FID41·51 각 10개 모두 raw `-0`, 해당 쪽 top3 가격 `-0`·잔량 0, 반대편 최우선 호가 유효.
+  FID15 예시 10개는 선행 공백이 있는 무부호 양수로 volume은 보존됐으나 `is_buy=null`.
+  30개 pair의 seq/시각/code/issues가 모두 일치했다. 두 호가 오류 동시 발생 18건은 집계상 추론이며
+  bounded 예시에는 없다. `005930`은 top20/예시에 없고 전체 affected code 목록은 결과에 없다.
 
 ## 실제 구현과 보존한 경계
 
@@ -69,13 +75,8 @@ journal 부재, main 단일 링크. 원본 SQLite 접속·sidecar 정리는 하�
 `5513432`에서 보강했다. 최초 59 / 보강 후 62 집중 통과는 이전 작업의 격리 Python 3.13 보고이며,
 원격 전체 통과와 혼동하지 않는다.
 
-**재개 시 확인한 실패:** HEAD `5513432`의 [CI #338](https://github.com/Peter-jackson12/Stock/actions/runs/35953047208)
-(job `107485482846`)은 **1 failed / 1,961 passed / 6 deselected**였다. 현금/수수료 assertion은
-통과했지만 새 테스트가 localcontext에 상속된 Inexact/Rounded sticky flag를 초기화하지 않아 실패했다.
-이전 flag를 켠 합성 재현으로 원인을 대조했다. 테스트만 자기 시작 flag를 지우고, clean/dirty 부모
-context 모두에서 같은 정확한 금액·새 rounding 없음·부모 flag 보존을 확인하도록 변경했다.
-63개 portfolio case가 최종 전체 CI의 실행 대상이다. 통과 판정은 최종 HEAD의 완료 로그에 따른다.
-기존 실패 run을 삭제/재실행으로 감추거나 xfail/skip으로 우회하지 않는다.
+**보존된 CI 이력:** [#338](https://github.com/Peter-jackson12/Stock/actions/runs/35953047208)의
+Decimal sticky flag 테스트 실패는 테스트 수정 후 해결했다. 기존 실패 run은 유지한다.
 
 **보존:** 기존 TickSimulator·NxtResearchStrategy·run_research/run_raw_v2·실제 CLI·입력 정책·
 collector·workflows·기존 테스트는 변경하지 않는다. 합성 상태 snapshot은 운영 계좌 조회가 아니다.
@@ -102,8 +103,8 @@ Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. �
 
 ## 다음 행동
 
-다음 한 단계는 위 prefix result의 세 품질 오류 범주와 기존 파서 계약을 대조하는
-**prefix quality investigation**이다. 이 1회 실행 승인은 다른 cutoff·재스캔·원본 수정 승인이 아니다.
+다음 한 단계는 **zero quote를 missing/non-executable quote로 표현하는 합성 parser policy 실험**이다.
+현재 표본만으로 공급자 의미를 확정하거나 정책을 변경하지 않는다. 추가 raw scan·smoke도 보류한다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
