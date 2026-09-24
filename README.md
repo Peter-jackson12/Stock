@@ -42,6 +42,7 @@ LOB/초봉 변환과 기존 런 비교는 유지하는 레거시 경로이며 �
 | 독립 execution oracle·유한 검증 범위·미해결 반례 | [실행 감사 명세](tests/EXECUTION_ORACLE_SPEC.md) |
 | 원본 보호 handle 기반 격리 복제 합성 lab·운영 미승인 경계 | [복제 lab 명세](tests/RAW_V2_CLONE_LAB_SPEC.md) |
 | 운영 화면·제어 계약·IPC·예약·권한 | [CONTROL_TOWER](CONTROL_TOWER.md) |
+| 세션별 저장·시각·종료·연구 적격 근거의 표시 경계 | [컨트롤타워 세션 근거 표시](docs/SESSION_ASSESSMENT.md) |
 | 이벤트·시계·체결·전략의 설계 근거 | [ARCHITECTURE_TICK](ARCHITECTURE_TICK.md) |
 | Git-only/로컬 검증의 구분과 명령 | [테스트 안내](docs/TESTING.md) |
 | AI 읽기 순서·역할·문서 유지 원칙 | [AGENTS](AGENTS.md) |
