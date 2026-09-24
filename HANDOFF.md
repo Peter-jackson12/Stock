@@ -99,11 +99,19 @@ reproducibility key는 `f3ad6b6095891460033f2e1c784d28e19ba0cf6e78055092b43eeab7
 `whole_stream_assessed=false`, `performance_research_assessed=false`; PnL/equity는 null이다.
 실행 전후 working DB sidecar는 없었다. GitHub Actions·자동 재시도는 실행하지 않았다.
 
-다음 한 단계는 **`selected-v2 representative trade audit`**이다.
-이번 PASS는 bounded 입력·전략·simulator 연결 확인이며 성과·NXT venue·live 적격성 승격이 아니다.
-실제 smoke의 buy/sell signal·order intent·fill을 raw exact-seq evidence와 먼저 연결하고,
-그 다음 동일 input/settings/code의 명시적 재실행 1회로 reproducibility를 확인한 뒤
-`selected-v2 research-input gate decision`으로 넘어간다.
+2026-09-24 기존 smoke 대표 왕복 1회를 working DB의 INTEGER PRIMARY KEY exact lookup
+4건(seq `2320266`, `2322490`, `3904370`, `3906354`)으로 감사했다. sidecar는 전후 부재했다.
+매수: `breakout` signal `8032223285400 ns` / intent seq `2320266`(trade, `is_buy=true`) → order
+`nxt:005930:nxt-fixed-1` → quote seq `2322490`의 ask `270500`에 1주 체결, fee `270.500`.
+매도: `fixed` signal `8752412620500 ns` / intent seq `3904370`(quote) → order
+`nxt:005930:nxt-fixed-2` → quote seq `3906354`의 bid `269000`에 1주 체결, fee `269.000`.
+두 signal·intent 시각은 각 raw `received_ns`와 같고 제출→체결은 각 정확히 1초다.
+두 주문 모두 `created → pending → active → filled`; 거절·취소·만료·열린 주문 0.
+현금 원장: `1000000 → 729229.500 → 997960.500`, 저장된 최종 cash와 일치한다.
+**`005930 selected-v2 representative trade audit: PASS`**. 전략·prefix 재실행, PnL 연구,
+GitHub Actions는 하지 않았다. 이 감사도 성과·NXT venue·live 적격성을 승격하지 않는다.
+
+다음 한 단계는 **`selected-v2 reproducibility rerun`**이다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
