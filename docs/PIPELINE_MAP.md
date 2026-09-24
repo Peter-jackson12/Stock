@@ -878,3 +878,80 @@ NXT result reproducibility identity에 포함한다.
 
 이번 단계가 통과해도 actual bounded result를 performance-certified 결과로 승격하지 않는다.
 open-position fresh-bid mark integration과 legacy/top-level schema migration은 별도 후속 단계다.
+
+
+<a id="portfolio-final-bid-mark-provenance"></a>
+## 23. final fresh-bid mark provenance candidate
+
+[PortfolioSimulator](../execution/portfolio_simulator.py)의
+`bid_mark_observations()`는 execution state를 바꾸지 않는 read-only valuation provenance 후보 경계다.
+
+### Valuation clock
+
+관측 시각은 메서드 호출 시점의 simulator `now`다.
+정상 `run_portfolio()` 완료 후에는 exclusive `close_ns` boundary가 valuation time이 된다.
+실패 run에서는 실패가 확정된 현재 simulator clock 기준 진단 provenance다.
+
+### Priced condition
+
+open long position에 대해 마지막 적용 quote를 사용하되,
+기존 quote eligibility 계약을 **그대로 다시 적용**한다.
+
+- quote 존재
+- age <= `max_quote_age_ns`
+- bid/ask positive finite
+- bid/ask size positive integer
+- bid < ask
+- 기존 policy = `positive_two_sided_top_v1`
+
+모두 만족할 때만:
+
+- status = `priced`
+- reason = `eligible`
+- mark = validated bid
+
+로 기록한다.
+
+다음은 `unpriced`다.
+
+- missing quote
+- stale quote
+- invalid bid/ask/size
+- locked/crossed quote
+- unknown quote status
+
+과거 valid quote, last trade, ask, mid, zero를 fallback으로 사용하지 않는다.
+
+### Provenance
+
+각 open position record에는 최소:
+
+- code / venue / quantity
+- valuation_time_ns
+- status / reason / quote policy
+- quote seq / quote received_ns / quote age
+- validated bid / bid_size (priced일 때만)
+
+를 기록한다.
+
+generic portfolio report는:
+
+`portfolio_final_bid_mark_provenance_v1`
+
+subrecord를 보존하고 generic reproducibility identity에도 포함한다.
+flat portfolio는 open position이 없으므로 records는 빈 목록이다.
+
+### NXT accounting integration
+
+NXT finalizer는 provenance에서 `status=priced`인 bid만
+PR #46 accounting helper의 explicit bid mark로 전달한다.
+
+- 모든 open position priced → `performance_accounting.status=open_marked`
+- 하나라도 unpriced → `open_unpriced`, unrealized/total/equity unavailable
+- flat → 기존 `flat_complete`
+- failed diagnostics → `diagnostics_only`
+
+accounting subrecord는 mark provenance 전체를 다시 포함한다.
+
+legacy top-level `realized_pnl/unrealized_pnl/equity`는 계속 null이며,
+이 candidate는 performance-research 승격이나 forced liquidation을 만들지 않는다.
