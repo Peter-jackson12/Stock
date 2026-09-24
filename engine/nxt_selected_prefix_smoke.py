@@ -285,8 +285,10 @@ def _selected_v2_events(path, *, selected_report, strict_report, instruments):
                 before_unknown = selected_policy.selected_unknown_direction_pairs
                 before_zero = selected_policy.selected_zero_quote_pairs
                 before_disqualifying = selected_policy.selected_disqualifying_pairs
+                before_unapproved = selected_policy.unselected_unapproved_issue_pairs
                 before_unpaired = selected_policy.unpaired_issue_ticks
                 before_unsafe = selected_policy.unsafe_controls
+                before_global = sum(selected_policy.global_disqualifying_issues.values())
                 had_pending_selected = pending_selected is not None
 
                 selected_policy.accept(envelope)
@@ -315,8 +317,10 @@ def _selected_v2_events(path, *, selected_report, strict_report, instruments):
 
                 if (
                     selected_policy.selected_disqualifying_pairs > before_disqualifying
+                    or selected_policy.unselected_unapproved_issue_pairs > before_unapproved
                     or selected_policy.unpaired_issue_ticks > before_unpaired
                     or selected_policy.unsafe_controls > before_unsafe
+                    or sum(selected_policy.global_disqualifying_issues.values()) > before_global
                 ):
                     raise ValueError("selected policy became disqualifying during smoke replay")
 
