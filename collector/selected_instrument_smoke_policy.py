@@ -116,6 +116,7 @@ class SelectedInstrumentSmokePolicy:
 
         self.selected_disqualifying_pairs = 0
         self.selected_disqualifying_issues = Counter()
+        self.unselected_unapproved_issue_pairs = 0
         self.unpaired_issue_ticks = 0
         self.unsafe_controls = 0
         self.global_disqualifying_issues = Counter()
@@ -200,7 +201,7 @@ class SelectedInstrumentSmokePolicy:
                 for issue in issues:
                     self.unselected_ignored_issues[issue] += 1
             else:
-                self.unsafe_controls += 1
+                self.unselected_unapproved_issue_pairs += 1
                 for issue in issues:
                     self.global_disqualifying_issues[
                         "unselected_unapproved_issue:" + issue
@@ -265,6 +266,7 @@ class SelectedInstrumentSmokePolicy:
         eligible = not (
             self.selected_disqualifying_pairs
             or self.selected_disqualifying_issues
+            or self.unselected_unapproved_issue_pairs
             or self.unpaired_issue_ticks
             or self.unsafe_controls
             or self.global_disqualifying_issues
@@ -294,6 +296,7 @@ class SelectedInstrumentSmokePolicy:
             "disqualifying": {
                 "selected_issue_pairs": self.selected_disqualifying_pairs,
                 "selected_issue_counts": dict(sorted(self.selected_disqualifying_issues.items())),
+                "unselected_unapproved_issue_pairs": self.unselected_unapproved_issue_pairs,
                 "unpaired_issue_ticks": self.unpaired_issue_ticks,
                 "unsafe_controls": self.unsafe_controls,
                 "global_issue_counts": dict(sorted(self.global_disqualifying_issues.items())),
