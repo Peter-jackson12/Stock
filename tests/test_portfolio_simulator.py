@@ -647,3 +647,17 @@ def test_run_portfolio_persists_final_bid_mark_provenance():
         "bid": "99",
         "bid_size": 3,
     }]
+
+
+
+def test_bid_mark_observation_is_read_only():
+    s = sim(cash=1000, buy_latency_ns=0, max_quote_age_ns=10)
+    s.on_event(quote(ns=1, bid=99, ask=100))
+    buy(s)
+    before = (s.snapshot(), s.orders, s.fills, s.transitions)
+
+    first = s.bid_mark_observations()
+    second = s.bid_mark_observations()
+
+    assert first == second
+    assert (s.snapshot(), s.orders, s.fills, s.transitions) == before
