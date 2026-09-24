@@ -388,3 +388,42 @@ quarantine은 quality classification의 후보일 뿐 execution permission이 �
 policy result의 `smoke_quality_eligible`는 이 synthetic evaluator에 입력된 stream에 대해서만 의미한다.
 현재 `raw_v2_prefix_qualification_v1.smoke_backtest_eligible`이나 실제 NXT smoke gate를 바꾸지 않는다.
 실데이터 prefix에 연결하기 전 focused local regression을 먼저 통과해야 한다.
+
+
+<a id="selected-instrument-smoke-quality"></a>
+## 13. selected-instrument smoke-quality pure evaluator candidate
+
+[policy evaluator](../collector/selected_instrument_smoke_policy.py)는 단일 전략/선택 종목 smoke를 위해
+**whole-prefix research quality와 selected-strategy input quality를 분리**하는 합성 정책 후보다.
+아직 raw-v2 reader, prefix report schema, NXT smoke gate에는 연결하지 않는다.
+
+전체 ordered stream을 모두 관측하며 다음 구조 계약을 자체 확인한다.
+
+- common seq는 1부터 contiguous
+- received_ns는 nondecreasing
+- source/session identity는 하나
+- unsafe control은 종목과 관계없이 전체 차단
+
+선택 종목은 호출자가 명시한 `CODE=VENUE` mapping으로 판정한다.
+
+선택 종목:
+- clean tick 허용
+- §11의 strict one-sided zero-quote tick + exact mirrored parse_error pair만 quarantine
+- `trade_direction_unverified` 및 다른 normalized issue는 exact pair여도 disqualifying
+
+비선택 종목:
+- 실제 2026-09-21 오전 prefix에서 관측된 세 issue
+  `out_of_range_fid_41`, `out_of_range_fid_51`, `trade_direction_unverified`
+  에 한해 exact mirrored parse_error pair이면 selected-strategy smoke에는 비영향으로 분리한다.
+- unknown issue는 exact pair여도 fail-closed다.
+- unpaired/mismatched issue는 항상 fail-closed다.
+
+이 evaluator의 `selected_smoke_quality_eligible`는 선택 종목 pipeline smoke 목적에만 쓰는 후보 값이다.
+`whole_prefix_research_quality_upgraded=false`, `strict_prefix_qualification_unchanged=true`,
+`nxt_smoke_gate_unchanged=true`를 명시한다.
+
+zero-quote quarantine은 execution 허가가 아니다. 기존 quote validation은 한쪽 price=null인 book을 계속
+`invalid_ask` / `invalid_bid`로 거부한다.
+
+실데이터에 연결하기 전 focused local regression을 먼저 통과해야 하며,
+이 단계에서는 실제 50GB prefix 재스캔이나 selected instrument 결과를 생성하지 않는다.
