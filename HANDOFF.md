@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-25 / selected-v2 actual accounting regression
+# 현재 인계 — 2026-09-25 / Operator preflight + selected-v2 accounting regression
 
 [문서 인덱스](README.md) · [첫 실데이터 체크](BACKTEST_TODO.md) ·
 [파이프라인 지도](docs/PIPELINE_MAP.md#portfolio-research) ·
@@ -24,6 +24,13 @@ OCX/QAx·queue/teardown/telemetry·실제 수집·PID/창/lease 관측·#327/#16
 Operator UX는 PR #45/#49/#50까지 master에 통합됐다.
 `stock.cmd/stock.ps1`의 help/doctor/status/ui와 운영 화면의 상태·환경 요약은 사용 편의 계층이며,
 수집 준비·OCX 준비·시장 상태·데이터 품질·실행 승인을 만들지 않는다.
+
+운영 화면에는 환경 목록과 분리된 **수집 전 읽기 전용 preflight**가 추가됐다.
+기존 collector admission의 process/window·lease·disk reader와 로그인 없는 공식 32-bit/OCX
+preflight만 재사용한다. 각 축을 PASS/WARN/BLOCKED/UNVERIFIED와 다음 확인으로 표시하지만,
+실행 대상 revision·CLI 계약과 시장 날짜·장 구간·실행 승인은 UNVERIFIED다. 시작 버튼과 연결하지 않으며
+설치·수정·로그인·구독·수집·kill/restart·lock 삭제·시장 조회·raw DB 접근은 하지 않는다.
+GitHub/PR 사실을 운영 PC의 현재 process/window/lease 상태로 승격하지 않는다.
 
 ## selected-v2에서 이미 확인한 것
 

@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 
+import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
@@ -9,6 +10,33 @@ from collector.raw_v2 import RawV2Writer
 from control_tower.jobs import JobStore
 from control_tower.service import run_one_inspection
 from dashboard import operations as ui
+
+
+def synthetic_preflight(status="UNVERIFIED", local_status="PASS"):
+    return {
+        "status": status,
+        "local_status": local_status,
+        "checks": [
+            {
+                "status": "PASS",
+                "label": "collector 런타임",
+                "detail": "합성 로컬 사실",
+                "next_check": "실행 직전 다시 확인",
+            },
+            {
+                "status": "UNVERIFIED",
+                "label": "실제 시장 날짜·장 구간",
+                "detail": "외부 조회 안 함",
+                "next_check": "공식 출처 확인",
+            },
+        ],
+    }
+
+
+@pytest.fixture(autouse=True)
+def isolate_collector_preflight(monkeypatch):
+    """Every UI smoke test remains synthetic and never probes this workstation."""
+    monkeypatch.setattr(ui, "inspect_collector_preflight", lambda root: synthetic_preflight())
 
 
 def screen(tmp_path):
@@ -55,6 +83,24 @@ def test_environment_inventory_is_read_only_and_keeps_pass_narrow(tmp_path, monk
     assert any(item.label == "읽기 전용 환경 점검" for item in app.expander)
     assert any("[PASS] windows: win32" in item.value for item in app.text)
     assert any("GUI 정상 기동·수집 준비·OCX 준비" in item.value for item in app.caption)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_collector_preflight_shows_status_and_next_check_without_actions(tmp_path, monkeypatch):
+    starts = []
+    monkeypatch.setattr(ui, "start_managed_capture", lambda *args: starts.append(args))
+    monkeypatch.setattr(
+        ui,
+        "inspect_collector_preflight",
+        lambda root: synthetic_preflight(status="BLOCKED", local_status="BLOCKED"),
+    )
+    app = screen(tmp_path)
+    assert not app.exception and not starts
+    assert any(item.label == "수집 전 읽기 전용 preflight" for item in app.expander)
+    assert any("현재 표시: BLOCKED" in item.value for item in app.error)
+    assert any("[PASS] collector 런타임" in item.value for item in app.text)
+    assert any("다음 확인: 공식 출처 확인" in item.value for item in app.caption)
+    assert any("시작 버튼" in item.value and "승격하지 않습니다" in item.value for item in app.caption)
     assert list(tmp_path.iterdir()) == []
 
 
