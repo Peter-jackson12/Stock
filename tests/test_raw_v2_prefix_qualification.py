@@ -187,7 +187,7 @@ def test_known_diagnostic_feed_scope_is_excluded_even_when_prefix_is_clean(tmp_p
 
     assert data["prefix_structure_verified"] is True
     assert data["smoke_backtest_eligible"] is False
-    assert "diagnostic feed_scope" in data["prefix_research_eligibility"]["reasons"][0]
+    assert "diagnostic feed_scope" in data["smoke_backtest_eligibility"]["reasons"][0]
 
 
 @pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
