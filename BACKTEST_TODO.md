@@ -252,6 +252,32 @@ selected-v2 bounded input은 strategy-research fixture로 승인됐지만 perfor
 - [ ] legacy top-level PnL/equity schema migration 필요성은 별도 검토한다. 현재 다음 실제 입력 확보의 blocker는 아니다.
 - [x] actual selected-v2 result는 회귀 fixture로만 사용하며 parameter tuning에 사용하지 않음
 
+### Independent actual input candidate 01 — 사전등록, 아직 미실행
+
+두 번째 날짜의 actual regression fixture를 결과 확인 전에 고정한다.
+
+- [ ] source/session: `2026-09-18 / 21f8c124e64e421893275ccdc83818ad`
+- [ ] historical raw path 존재/identity/종료 근거/프로세스 부재/sidecar 상태를 원본 비변경으로 재확인
+- [ ] 필요 시 기존 frozen snapshot acquisition으로 별도 working copy 생성
+- [ ] strict bounded prefix: **10:00:00 KST exclusive**, 정확히 1회
+- [ ] selected overlay: **`005930=unknown`**, `unknown_direction_recent_window_quarantine_v0`, 정확히 1회
+- [ ] selected gate PASS일 때만 2026-09-21과 동일 smoke/accounting 설정으로 replay 정확히 1회
+- [ ] execution/result/accounting/provenance와 한계를 기록하고 결과 파일은 Git에 추가하지 않음
+
+고정 smoke 설정: quantity 1 / cash 1,000,000 / fee 0.001 per-side /
+buy·sell·cancel latency 각 1초 / max quote age 2초 / cooldown 10초 / fixed exit.
+
+중단 규칙:
+
+- raw 부재, identity/closure 불일치, 보호 조건 불충족, snapshot 실패, prefix 구조 실패,
+  selected gate false면 **FAIL/INCONCLUSIVE로 중단**한다.
+- 결과를 보고 cutoff·종목·policy·parameter를 바꾸거나 다른 과거 raw로 자동 대체하지 않는다.
+- whole-file quality failure와 말미 방향 미확인 8건은 그대로 유지한다.
+- PASS여도 performance-research·수익성·robustness·NXT venue·whole raw·live 승격은 하지 않는다.
+
+비교 가능한 고정 cutoff를 우선하므로 2026-09-17 `cf18cb43…` 세션은 12:35경 시작한
+시간 범위 때문에 candidate 01에서 제외한다.
+
 ## 5. 첫 시험 이후 — 전략 평가
 
 - [ ] 여러 날짜·시장 상황·종목에서 품질 확인된 입력과 진입 사례를 축적한다.
