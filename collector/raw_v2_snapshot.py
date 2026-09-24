@@ -397,6 +397,9 @@ def acquire_frozen_snapshot(source, *, output_root, expected_session_id,
         with ExitStack() as stack:
             source_parent_check = stack.enter_context(_pinned_directory(source_parent))
             output_check = stack.enter_context(_pinned_directory(output_root))
+            run_check = stack.enter_context(_pinned_directory(run_dir))
+            evidence_check = stack.enter_context(_pinned_directory(evidence_dir))
+            working_check = stack.enter_context(_pinned_directory(working_dir))
             current_source, members = _source_members(
                 source, residue_policy=residue_policy
             )
@@ -409,6 +412,9 @@ def acquire_frozen_snapshot(source, *, output_root, expected_session_id,
             report["exclusive_source_members_acquired"] = True
             source_parent_check()
             output_check()
+            run_check()
+            evidence_check()
+            working_check()
             if _member_stat_records(members) != source_stat_before:
                 raise ValueError("source file set changed after exclusive acquisition")
 
@@ -421,6 +427,9 @@ def acquire_frozen_snapshot(source, *, output_root, expected_session_id,
 
             source_parent_check()
             output_check()
+            run_check()
+            evidence_check()
+            working_check()
             _, final_members = _source_members(source, residue_policy=residue_policy)
             final_stats = _member_stat_records(final_members)
             if final_stats != source_stat_before:
