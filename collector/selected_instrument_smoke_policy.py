@@ -86,6 +86,8 @@ def _selected_direction_quarantine_candidate(envelope):
         or event.kind != "trade"
         or issues != (DIRECTION_ISSUE,)
         or event.is_buy is not None
+        or type(event.market_second) is not int
+        or not 0 <= event.market_second < 86_400
         or type(event.volume) is not int
         or event.volume <= 0
         or not isinstance(raw, dict)
@@ -431,9 +433,8 @@ class SelectedInstrumentSmokePolicy:
                 "selected_unknown_direction_requires_unsigned_fid15": True,
                 "selected_unknown_direction_requires_observed_kiwoom_trade_shape": True,
                 "selected_unknown_direction_requires_strategy_window_quarantine": True,
-                "selected_trade_direction_unverified_is_disqualifying": (
-                    self.unknown_direction_policy == STRICT_UNKNOWN_DIRECTION_POLICY
-                ),
+                "selected_trade_direction_unverified_default_disqualifying": True,
+                "selected_trade_direction_quarantine_exception_is_bounded": True,
                 "unsafe_controls_are_global": True,
             },
         }
