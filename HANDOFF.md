@@ -89,31 +89,37 @@ GitHub Actions는 실행하지 않았다.
 normalized price 264000 / volume 237016 / is_buy=null의 explicitly unsigned FID15였다.
 기존 strict `smoke_backtest_eligible=false`, whole-stream 미평가, NXT smoke 미실행 상태는 그대로다.
 
-현재 작업 branch `feat/selected-direction-quarantine-gate-20260924`는
-**selected-prefix quality gate를 PR #42의 explicit opt-in strategy policy와 정렬하는 v2 후보**다.
+PR #43의 selected-prefix unknown-direction quarantine gate v2는
+HEAD `57240e477d3a98ca10f3d3e2fd3f5d5b18d2feb9`를 detached worktree에서
+Python 3.14.7 / pytest 9.1.1로 검증했고, Python 3.10 grammar PASS,
+지정 focused tests 117 passed / 0 failed / 0 skipped 후 master에 통합됐다.
+GitHub Actions는 실행하지 않았다.
 
-v2 candidate의 핵심:
+통합된 v2 gate:
 - selected policy default는 계속 `strict`
 - opt-in policy ID는 strategy와 동일한 `unknown_direction_recent_window_quarantine_v0`
 - selected `trade_direction_unverified`를 무조건 허용하지 않음
-- exact mirrored parse_error pair + trade + valid positive price/volume + `is_buy=None`
-- `normalization=kiwoom_fids_prototype_1`
-- `real_type=주식체결`
-- `price_policy=signed_magnitude`
-- `direction_policy=signed_volume`
+- exact mirrored parse_error pair + trade + valid market_second/positive price/volume + `is_buy=None`
+- `normalization=kiwoom_fids_prototype_1`, `real_type=주식체결`
+- `price_policy=signed_magnitude`, `direction_policy=signed_volume`
 - FID15가 명시적 +/- 없는 양의 정수 문자열이고 normalized volume과 정확히 일치
 조건을 모두 만족할 때만 selected unknown-direction pair를 quarantine 후보로 분류한다.
 
-selected overlay schema는 이 의미 변경을 구분하기 위해
-`raw_v2_selected_prefix_qualification_v2` 후보로 올린다.
-report에 `unknown_direction_policy`를 명시하고 direction-window helper와 NXT consumer strategy code hash를 provenance에 포함한다.
-quarantine은 즉시 entry permission이 아니며
+selected overlay schema는 `raw_v2_selected_prefix_qualification_v2`이며
+report에 explicit `unknown_direction_policy`, direction-window helper SHA,
+NXT consumer strategy `tick_research.py` SHA를 기록한다.
+quality quarantine은 즉시 entry permission이 아니므로
 `unknown_direction_immediate_entry_permission_granted=false`,
-`selected_unknown_direction_requires_strategy_window_quarantine=true`를 기록한다.
+`selected_unknown_direction_requires_strategy_window_quarantine=true`를 유지한다.
 
-다음 단계는 이 v2 selected policy/overlay/CLI의 focused local regression이다.
-통과 전에는 merge, 실제 8.4M prefix v2 overlay 실행, selected smoke runner 연결, NXT smoke를 하지 않는다.
-GitHub Actions도 실행하지 않는다.
+다음 단계는 실제 working snapshot + 기존 strict 10:00 prefix report를 대상으로
+`005930=unknown` v2 overlay를 explicit quarantine policy로 **정확히 1회만 실행**하는 것이다.
+목표는 실제 8.4M prefix에서도 selected unknown-direction pair 1건이 quarantine되고
+`selected_smoke_quality_eligible=true`가 되는지 확인하는 것이다.
+
+이 실행이 PASS해도 기존 strict `smoke_backtest_eligible=false`는 그대로이며,
+selected overlay consumer/NXT smoke runner는 아직 없다.
+실제 NXT smoke는 실행하지 않고 GitHub Actions도 실행하지 않는다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
