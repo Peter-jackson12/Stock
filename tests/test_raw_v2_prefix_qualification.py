@@ -112,10 +112,11 @@ def test_clean_prefix_is_eligible_but_whole_stream_is_unassessed(tmp_path):
     _, data = run(path, tmp_path)
 
     assert data["prefix_structure_verified"] is True
-    assert data["prefix_research_eligible"] is True
+    assert data["smoke_backtest_eligible"] is True
     assert data["scope"]["tail_scanned"] is False
     assert data["scope"]["whole_stream_assessed"] is False
     assert data["scope"]["whole_stream_research_eligible"] is None
+    assert data["performance_research_eligibility"]["eligible"] is None
     assert data["scope"]["boundary_sentinel"]["seq"] == 3
     assert data["counts"]["raw_records"] == 2
     assert data["counts"]["tick_records"] == 1
@@ -128,7 +129,7 @@ def test_tail_failure_after_cutoff_does_not_retroactively_fail_clean_prefix(tmp_
     build(path, tail_issue=True)
     _, data = run(path, tmp_path)
 
-    assert data["prefix_research_eligible"] is True
+    assert data["smoke_backtest_eligible"] is True
     assert data["scope"]["boundary_sentinel"]["seq"] == 3
     assert data["records_consumed_through_sentinel"] == 3
     assert data["counts"]["control_by_type"] == {"session_start": 1}
@@ -141,7 +142,7 @@ def test_quality_issue_before_cutoff_rejects_prefix(tmp_path):
     _, data = run(path, tmp_path)
 
     assert data["prefix_structure_verified"] is True
-    assert data["prefix_research_eligible"] is False
+    assert data["smoke_backtest_eligible"] is False
     assert data["quality_diagnostics"]["logical_issue_counts"] == {"bad_prefix": 1}
 
 
@@ -152,7 +153,7 @@ def test_frozen_incomplete_session_can_have_eligible_prefix_if_boundary_was_reac
 
     assert data["input"]["manifest"]["state"] == "incomplete"
     assert data["prefix_structure_verified"] is True
-    assert data["prefix_research_eligible"] is True
+    assert data["smoke_backtest_eligible"] is True
     assert data["scope"]["boundary_sentinel"]["seq"] == 3
 
 
@@ -163,7 +164,7 @@ def test_capture_that_never_reached_cutoff_is_not_a_verified_prefix(tmp_path):
 
     assert data["status"] == "failed"
     assert data["prefix_structure_verified"] is False
-    assert data["prefix_research_eligible"] is False
+    assert data["smoke_backtest_eligible"] is False
     assert "did not reach" in data["stream_error"]
 
 
@@ -175,7 +176,7 @@ def test_gap_before_cutoff_fails_structure(tmp_path):
     _, data = run(path, tmp_path)
 
     assert data["prefix_structure_verified"] is False
-    assert data["prefix_research_eligible"] is False
+    assert data["smoke_backtest_eligible"] is False
     assert "sequence" in data["stream_error"]
 
 
@@ -185,7 +186,7 @@ def test_known_diagnostic_feed_scope_is_excluded_even_when_prefix_is_clean(tmp_p
     _, data = run(path, tmp_path)
 
     assert data["prefix_structure_verified"] is True
-    assert data["prefix_research_eligible"] is False
+    assert data["smoke_backtest_eligible"] is False
     assert "diagnostic feed_scope" in data["prefix_research_eligibility"]["reasons"][0]
 
 
