@@ -8,6 +8,7 @@ import streamlit as st
 from control_tower.jobs import JobStore
 from control_tower.service import queue_inspection, plan_replay, start_inspection_worker
 from control_tower.status import observe_collector, observe_raw_capture
+from dashboard.session_assessment_view import render_session_assessment
 from control_tower.managed_capture import ManagedCaptures, start_managed_capture, ACTIVE
 from control_tower.offline_worker import start_replay_worker, retry_replay_worker
 from control_tower.capture_health import CaptureHealth
@@ -41,6 +42,7 @@ def render_control_tower(root=None):
         elif raw["status"] != "recent":
             st.warning("상태 파일이 오래됐거나 시각 확인이 필요합니다. 현재 수집기 생존은 미확인입니다.")
         st.caption("콜백 수와 raw 수는 다릅니다. 상태 파일은 관측 자료이며 프로세스 생존·데이터 품질 인증이 아닙니다.")
+    render_session_assessment(raw, observation)
     st.subheader("오늘 수집")
     heartbeat = observation["heartbeat"]
     if heartbeat:
@@ -174,7 +176,7 @@ def render_control_tower(root=None):
                             try:
                                 cancelled = store.cancel(job["id"])
                             except sqlite3.Error as exc:
-                                st.error(f"취소 요청 저장 실패: {exc}")
+                                st.error(f"취소 요청 실패: {exc}")
                             else:
                                 if cancelled:
                                     st.rerun()

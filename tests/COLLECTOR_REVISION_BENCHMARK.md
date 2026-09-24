@@ -1,7 +1,8 @@
 # 과거 수집기 revision 고정 입력 비교
 
 이 진단은 2026-09-23 native/live 수집 장애를 좁히기 위한 **GitHub-hosted 합성 비교**다.
-운영 raw/evidence/OCX/사용자 Windows 체크아웃을 읽지 않으며 PR #18의 문서 계약 작업과 분리한다.
+운영 raw/evidence/OCX/사용자 Windows 체크아웃을 읽지 않는다. 병합된 PR #18(수집 판단 계약)·
+PR #21(세션 근거 표시)·PR #29(FID 진단)와 별개의 과거 진단 기록이다.
 [문서 인덱스](../README.md) · [테스트 안내](../docs/TESTING.md) · [비교 스크립트](../scripts/benchmark_collector_revisions.py)
 
 ## 비교 revision
