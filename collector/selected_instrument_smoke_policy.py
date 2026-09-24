@@ -7,11 +7,12 @@ The intended use is a single-strategy pipeline smoke where only explicitly
 selected CODE=VENUE ticks reach the strategy. The whole ordered stream is still
 observed for structural/control quality.
 
-Policy v0:
+Policy v2:
 - selected clean ticks: allowed,
 - selected exact one-sided zero-quote + mirrored parse_error pair: quarantined,
-- selected any other normalized issue (including trade_direction_unverified):
-  disqualifying,
+- selected trade_direction_unverified is disqualifying by default,
+- only explicit unknown-direction quarantine mode may quarantine the observed
+  unsigned-FID15 raw shape,
 - unselected normalized-issue ticks: ignored for selected-strategy quality only
   when immediately followed by an exact mirrored parse_error,
 - any unpaired/mismatched issue or unsafe control: globally disqualifying.
@@ -89,6 +90,8 @@ def _selected_direction_quarantine_candidate(envelope):
         or event.volume <= 0
         or not isinstance(raw, dict)
         or raw.get("normalization") != "kiwoom_fids_prototype_1"
+        or raw.get("real_type") != "주식체결"
+        or raw.get("price_policy") != "signed_magnitude"
         or raw.get("direction_policy") != "signed_volume"
     ):
         return False
@@ -425,6 +428,7 @@ class SelectedInstrumentSmokePolicy:
                 "selected_unknown_direction_default_strict": True,
                 "selected_unknown_direction_requires_explicit_policy": True,
                 "selected_unknown_direction_requires_unsigned_fid15": True,
+                "selected_unknown_direction_requires_observed_kiwoom_trade_shape": True,
                 "selected_trade_direction_unverified_is_disqualifying": (
                     self.unknown_direction_policy == STRICT_UNKNOWN_DIRECTION_POLICY
                 ),
