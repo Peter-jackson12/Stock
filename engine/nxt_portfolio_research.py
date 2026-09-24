@@ -202,7 +202,7 @@ def _finalize_report(report: dict, *, dataset_label: str, strategy: NxtPortfolio
         "no_live_broker",
         "no_performance_certified_raw_adapter",
         "performance_accounting_subrecord_only_legacy_top_level_pnl_fields_unpopulated",
-        "open_position_final_bid_mark_integration_not_connected",
+        "open_position_mark_requires_fresh_valid_bid_and_may_be_unavailable",
         "no_forced_liquidation",
         "no_trade_store_conversion",
     ]
