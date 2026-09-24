@@ -4,6 +4,10 @@
 운영 화면은 수집·조회·연구 작업을 관리하며, 화면·수집기·작업 워커는 별도 프로세스로 둔다.
 실제 주문 연결과 전략 수익성 입증은 별도 단계다. 합성/CI 성공을 실데이터 검증 완료로 해석하지 않는다.
 
+[처음 실행하는 사람](START_HERE.md)은 `.\stock.cmd help → doctor → status`부터 시작한다.
+이 세 명령은 읽기 전용 점검이며, `.\stock.cmd ui`를 명시적으로 실행할 때만 기존 Streamlit 운영 화면을 연다.
+PowerShell wrapper도 제공하지만 `.cmd`는 PowerShell script execution policy를 요구하지 않는다.
+
 처음에는 이 문서에서 필요한 경로만 고른다. AI 작업자는 [AGENTS](AGENTS.md) →
 [현재 HANDOFF](HANDOFF.md)부터 읽고, 상세 계약은 해당 작업에 필요한 것만 연다.
 전체 과거 인계를 매 작업마다 읽지 않는다.
@@ -64,12 +68,15 @@ LOB/초봉 변환과 기존 런 비교는 유지하는 레거시 경로이며 �
 
 ## 운영 화면 실행
 
-로컬 실행이 승인된 경우에만 저장소 루트 `C:\Projects\Stock`에서 기존 64비트 환경으로 실행한다.
-GitHub-only 감사 중에는 아래 명령도 실행하지 않는다.
+로컬 실행이 승인된 경우 저장소 루트에서 다음처럼 기존 화면을 연다.
 
 ```powershell
-.\.venv\Scripts\python.exe -m streamlit run dashboard/app.py --server.address 127.0.0.1
+.\stock.cmd ui
 ```
+
+PowerShell wrapper를 선호하면 `.\stock.ps1 ui`도 같다. 두 wrapper는 기존 64비트 `.venv`에서
+`dashboard/app.py`를 Streamlit으로 전경 실행한다. 상세 사용법과 실행 정책 대안은
+[처음 실행 안내](START_HERE.md)를 따른다.
 
 기본 **운영 관리** 화면은 상태·작업을, 왼쪽 **백테스트 분석**은 기존 런 비교를 보여준다.
 수집 버튼은 화면에서 새로 만든 소규모 세션만 제어하며 외부 CLI 수집기를 자동 인수하지 않는다.
@@ -91,7 +98,8 @@ GitHub-only 감사 중에는 아래 명령도 실행하지 않는다.
 
 ## 개발 검증과 GitHub Actions
 
-master push와 PR마다 Windows + 64비트 Python 3.14 + 고정 uv/lock으로 Git-only pytest를 실행한다.
+일반 CI는 매주 일요일 09:00 KST 정기 실행과 필요 시 수동 실행만 한다. master push/PR마다 자동 실행하지 않는다.
+Windows + 64비트 Python 3.14 + 고정 uv/lock으로 Git-only pytest를 실행한다.
 Windows 파일 잠금·프로세스·소켓 합성 회귀를 포함한다. 상세 범위는 [테스트 안내](docs/TESTING.md)를 따른다.
 아래 로컬 명령은 live 수집 중에 실행하지 않는다. GitHub-only 작업의 검증 위치는 GitHub-hosted Actions다.
 
