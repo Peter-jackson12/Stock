@@ -328,3 +328,35 @@ snapshot ready 조건:
 
 실패/중단 시 partial evidence/working/result를 삭제하지 않는다. source 자동 cleanup, checkpoint,
 재시도, 원본 교체, sidecar unlink는 제공하지 않는다.
+
+
+<a id="zero-quote-policy-experiment"></a>
+## 11. one-sided zero quote synthetic policy experiment
+
+[experimental classifier](../collector/zero_quote_policy_experiment.py)는 2026-09-21 오전 prefix의 bounded evidence에서
+관측한 한쪽 zero quote 패턴을 **dataset corruption이 아닌 missing/non-executable market-state 후보로 표현할 수 있는지**만 합성 검증한다.
+기존 `tick_normalizer`, `raw_v2_prefix_qualification`, `run_nxt_prefix_smoke`의 동작과 eligibility는 바꾸지 않는다.
+
+candidate는 다음 조건을 모두 만족할 때만 성립한다.
+
+- event kind = quote
+- `normalization=kiwoom_fids_prototype_1`
+- `price_policy=signed_magnitude`
+- issue는 정확히 하나: `out_of_range_fid_41` 또는 `out_of_range_fid_51`
+- 문제 side의 top3 raw price가 모두 정확히 `-0`
+- 같은 side top3 raw size가 모두 numeric zero
+- normalized top1 price는 null, top1/top3 size는 zero
+- 반대편 raw top1 price와 normalized top1 price/size는 positive
+- 바로 다음 parse_error를 pair로 볼 때 seq+1, received_ns, code, issues가 정확히 일치
+
+양쪽 zero, 다른 issue 혼합, 잔량 양수, 반대편 book 부재, 다른 price policy는 모두 disqualifying이다.
+`trade_direction_unverified`도 이 실험의 대상이 아니며 계속 disqualifying이다.
+
+중요하게, candidate quote는 execution eligibility가 아니다.
+[quote validation](../execution/quote_validation.py)은 normalized bid/ask 중 한쪽이 null인 candidate를 계속
+`invalid_bid` 또는 `invalid_ask`로 거부한다. 따라서 이 실험이 향후 quality classification 완화를 지지하더라도
+체결 가격 fallback, one-sided fill, fake liquidity를 허용하지 않는다.
+
+이 v0는 provider 문서상 `-0` 의미를 확정하지 않고, 실제 prefix 전체에 적용하지 않으며,
+`smoke_backtest_eligible`를 변경하지 않는다. 다음 단계가 있다면 별도 opt-in smoke-quality policy에서
+zero-quote pair와 진짜 disqualifying issue를 분리하는 설계를 먼저 검증해야 한다.
