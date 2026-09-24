@@ -103,8 +103,20 @@ Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. �
 
 ## 다음 행동
 
-다음 한 단계는 **zero quote를 missing/non-executable quote로 표현하는 합성 parser policy 실험**이다.
-현재 표본만으로 공급자 의미를 확정하거나 정책을 변경하지 않는다. 추가 raw scan·smoke도 보류한다.
+현재 후보 `collector/zero_quote_policy_experiment.py`는 실제 prefix에서 관측한 **한쪽 top3 가격 모두 `-0` + 같은 쪽 top3 잔량 0 + 반대편 top1 양수** 패턴만
+`missing_non_executable_quote_candidate`로 분류하는 synthetic-only 실험이다.
+기존 normalizer/qualification/smoke eligibility는 변경하지 않는다.
+
+실험의 핵심 안전 조건:
+- 정확히 하나의 `out_of_range_fid_41` 또는 `out_of_range_fid_51`만 허용
+- signed_magnitude + Kiwoom prototype normalization만 허용
+- 양쪽 zero, 추가 issue, 같은 쪽 양수 잔량, 반대편 비정상은 계속 disqualifying
+- 후보 quote도 `check_ordered_quote`에서 계속 invalid_bid/invalid_ask로 실행 불가
+- 정확한 mirrored parse_error pair만 candidate로 묶음
+- `trade_direction_unverified`는 절대 완화하지 않음
+
+다음 실제 단계는 이 합성 실험을 focused local test로 확인한 뒤, 통과하면 **zero-quote pair만 smoke-quality quarantine 후보로 취급하는 별도 opt-in prefix policy**를 설계할지 결정하는 것이다.
+실제 50GB prefix 재실행·smoke·정책 변경은 아직 하지 않는다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
