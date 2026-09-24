@@ -174,7 +174,8 @@ def test_unselected_unapproved_issue_pair_remains_global_failure():
 
     assert result["selected_smoke_quality_eligible"] is False
     assert result["quarantine"]["unselected_issue_pairs_ignored"] == 0
-    assert result["disqualifying"]["unsafe_controls"] == 1
+    assert result["disqualifying"]["unselected_unapproved_issue_pairs"] == 1
+    assert result["disqualifying"]["unsafe_controls"] == 0
     assert result["disqualifying"]["global_issue_counts"] == {
         "unselected_unapproved_issue:invalid_or_missing_fid_21": 1
     }
