@@ -218,8 +218,9 @@ performance-research 미승격 이유:
 2. `venue=unknown`이며 NXT 원천 인증이 아니다.
 3. 실제 검증 입력이 한 날짜·한 종목·10:00 bounded prefix 하나다.
 4. 실제 왕복 사례는 1건뿐이며 성과 표본으로 해석할 수 없다.
-5. 현재 portfolio result의 `realized_pnl/unrealized_pnl/equity`가 null이고
-   평가 회계 계약이 아직 없다.
+5. accounting pure contract와 NXT `performance_accounting` subrecord는 구현됐지만,
+   legacy top-level PnL/equity는 null이고 open-position final fresh-bid provenance 및
+   실제 bounded accounting regression은 아직 완료 전이다.
 6. 학습/조정 구간과 평가 구간 분리, 비용/지연 민감도, 여러 시장 상황 검증이 아직 없다.
 
 따라서 다음 개발은 이 데이터의 성과를 더 캐는 것이 아니라
@@ -243,8 +244,8 @@ selected-v2 bounded input은 strategy-research fixture로 승인됐지만 perfor
 - [x] pure weighted-average cost / realized PnL contract focused regression — PR #46, 97 passed
 - [x] explicit fresh-valid-bid mark / unrealized PnL / equity contract focused regression — PR #46
 - [x] fill cashflow ↔ simulator cash reconciliation contract — PR #46
-- [ ] NXT result finalization에 `performance_accounting` subrecord integration focused regression
-- [ ] open-position final fresh-bid mark provenance integration 설계
+- [x] NXT result finalization에 `performance_accounting` subrecord integration focused regression — PR #47, 119 passed
+- [ ] open-position final fresh-bid mark provenance integration focused regression
 - [ ] accounting subrecord 안정화 후에만 legacy top-level PnL/equity schema migration 검토
 - [ ] actual selected-v2 result는 integration 후 회귀 fixture로만 재검증하며 parameter tuning에 사용하지 않음
 

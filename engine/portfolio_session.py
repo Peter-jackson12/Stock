@@ -96,10 +96,17 @@ def run_portfolio(events, *, simulator_config, close_ns, strategy, strategy_id):
     except Exception as exc:
         error = exc
     snapshot = asdict(simulator.snapshot())
+    final_bid_marks = [asdict(item) for item in simulator.bid_mark_observations()]
     status = ("failed" if error else "completed_empty_input" if count == 0 else
               "completed_with_open_position" if any(n for _, n in snapshot["positions"]) else
               "completed_no_fills" if not snapshot["fills"] else "completed_flat")
-    key = dict(events=digest.hexdigest(), settings=settings, code=identity, intents=records)
+    key = dict(
+        events=digest.hexdigest(),
+        settings=settings,
+        code=identity,
+        intents=records,
+        final_bid_mark_provenance=final_bid_marks,
+    )
     report = dict(schema="portfolio_research_result_v1", status=status,
                   diagnostics_only=error is not None, input_complete=error is None,
                   event_count=count, processed_event_count=processed,
@@ -107,6 +114,11 @@ def run_portfolio(events, *, simulator_config, close_ns, strategy, strategy_id):
                   reproducibility_key=hashlib.sha256(_json(key).encode("utf-8")).hexdigest(),
                   error=f"{type(error).__name__}: {error}" if error else None,
                   order_intents=records, account=snapshot,
+                  final_bid_mark_provenance={
+                      "schema": "portfolio_final_bid_mark_provenance_v1",
+                      "valuation_time_ns": snapshot["now"],
+                      "records": final_bid_marks,
+                  },
                   order_transitions=[asdict(t) for t in simulator.transitions],
                   realized_pnl=None, unrealized_pnl=None, equity=None,
                   raw_identity_verified=False,

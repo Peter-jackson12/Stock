@@ -142,10 +142,27 @@ GitHub Actions와 실제 데이터 실행은 하지 않았다.
 - legacy top-level `realized_pnl/unrealized_pnl/equity`는 계속 null
 - accounting helper SHA와 subrecord는 reproducibility identity에 포함
 
-다음 한 단계는 **`portfolio final fresh-bid mark provenance`**다.
-simulator execution을 바꾸지 않고 read-only marking snapshot을 추가해,
-open position의 종료/실패 시점에서 fresh + valid two-sided quote의 bid만 mark로 인정한다.
-quote seq/received_ns/age/policy/reason을 provenance로 보존하고 stale/missing/invalid는 unpriced로 남긴다.
+현재 작업 branch `feat/portfolio-final-bid-mark-provenance-20260925`는
+**portfolio final fresh-bid mark provenance** 후보를 추가한다.
+
+candidate 경계:
+- `PortfolioSimulator.bid_mark_observations()`는 read-only
+- open long position만 대상으로 현재/final simulator clock에서 mark 후보를 평가
+- 기존 `max_quote_age_ns`와 `positive_two_sided_top_v1` quote validation을 그대로 재사용
+- fresh + valid two-sided quote만 `status=priced`, bid를 mark로 사용
+- stale/missing/locked-crossed/invalid quote는 `status=unpriced`
+- 과거 valid quote, last trade, mid, ask를 fallback으로 사용하지 않음
+- quote seq / received_ns / age / policy / reason / bid / bid_size를 provenance로 보존
+- flat portfolio는 mark record가 필요 없어 빈 목록
+- generic `run_portfolio()`가 `portfolio_final_bid_mark_provenance_v1`을 result와 reproducibility identity에 기록
+- NXT accounting은 priced record만 pure accounting helper에 전달
+- open position 전부 priced면 `open_marked`; 하나라도 unpriced면 `open_unpriced`
+- failed run accounting status는 `diagnostics_only`
+- legacy top-level PnL/equity는 계속 null
+
+다음 단계는 simulator provenance + generic run + NXT accounting + 기존 strict/selected smoke의 focused local regression이다.
+통과 전에는 actual selected-v2 result를 다시 실행하거나 재작성하지 않는다.
+GitHub Actions도 실행하지 않는다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
