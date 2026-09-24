@@ -71,17 +71,10 @@ Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. �
 
 ## 다음 행동
 
-PR #41의 pure direction-window policy는 focused tests 46 passed 후 master에 통합됐다.
-PR #42의 NXT strategy opt-in integration은 HEAD `9bcdbf6ef1589751a5816f2b9f59496f66bb02d4`를
-detached worktree에서 Python 3.14.7 / pytest 9.1.1로 검증했고,
-Python 3.10 grammar PASS, 지정 focused tests 65 passed / 0 failed / 0 skipped 후 master에 통합됐다.
-GitHub Actions는 실행하지 않았다.
-
-현재 strategy/runner 계약:
-- default `unknown_direction_policy="strict"` — 기존처럼 `is_buy=None` 거부
-- opt-in `unknown_direction_recent_window_quarantine_v0` — unknown trade를 보존하고 recent direction window가 깨끗해질 때까지 신규 entry만 차단
-- policy 값은 adapter/runner settings와 reproducibility key에 반영
-- 기존 `run_nxt_prefix_smoke()`와 strict prefix gate는 여전히 strict
+PR #41 direction-window와 PR #42 NXT strategy opt-in은 master에 통합됐다.
+기본 `strict`는 `is_buy=None`을 거부한다. opt-in `unknown_direction_recent_window_quarantine_v0`은
+unknown trade를 보존하고 recent window가 깨끗해질 때까지 신규 entry를 차단한다.
+기존 NXT smoke runner와 strict prefix gate는 여전히 strict다.
 
 과거 실제 selected overlay 결과는 **v1 역사 근거**로 보존한다.
 `005930=unknown`은 v1에서 selected tick 77,558 / clean 77,557 / selected direction blocker 1건으로 FAIL했고,
@@ -89,37 +82,26 @@ GitHub Actions는 실행하지 않았다.
 normalized price 264000 / volume 237016 / is_buy=null의 explicitly unsigned FID15였다.
 기존 strict `smoke_backtest_eligible=false`, whole-stream 미평가, NXT smoke 미실행 상태는 그대로다.
 
-PR #43의 selected-prefix unknown-direction quarantine gate v2는
-HEAD `57240e477d3a98ca10f3d3e2fd3f5d5b18d2feb9`를 detached worktree에서
-Python 3.14.7 / pytest 9.1.1로 검증했고, Python 3.10 grammar PASS,
-지정 focused tests 117 passed / 0 failed / 0 skipped 후 master에 통합됐다.
-GitHub Actions는 실행하지 않았다.
+PR #43 selected-prefix v2 gate는 focused tests 117 passed 후 master에 통합됐다.
+기본은 `strict`; opt-in에서는 exact mirrored parse_error pair, 관측된 Kiwoom trade 형태,
+정상 market_second·양의 price/volume·`is_buy=None`, 무부호 양의 FID15와 normalized volume 일치를
+모두 요구한다. 세부 계약은 [파이프라인 지도 §6](docs/PIPELINE_MAP.md#portfolio-research)에 둔다.
 
-통합된 v2 gate:
-- selected policy default는 계속 `strict`
-- opt-in policy ID는 strategy와 동일한 `unknown_direction_recent_window_quarantine_v0`
-- selected `trade_direction_unverified`를 무조건 허용하지 않음
-- exact mirrored parse_error pair + trade + valid market_second/positive price/volume + `is_buy=None`
-- `normalization=kiwoom_fids_prototype_1`, `real_type=주식체결`
-- `price_policy=signed_magnitude`, `direction_policy=signed_volume`
-- FID15가 명시적 +/- 없는 양의 정수 문자열이고 normalized volume과 정확히 일치
-조건을 모두 만족할 때만 selected unknown-direction pair를 quarantine 후보로 분류한다.
+2026-09-24 지정 working snapshot·strict 10:00 KST report로 `005930=unknown` v2 overlay를
+`unknown_direction_recent_window_quarantine_v0` policy로 **정확히 1회** 실행했다.
+결과: `C:\StockSnapshots\raw_v2_snapshot_24f657163264432da7af3ed533656eac\selected_prefix_overlay\a59dbf1f37b64648bf791258ea0f5783\result.json`.
+schema `raw_v2_selected_prefix_qualification_v2`, `status=completed`, 소요 448.756161초,
+구조 검증·strict 재검증 5항목 모두 true다. 선택 tick 77,558 / clean 77,557,
+unknown-direction quarantine pair 1 / zero-quote 0 / selected disqualifying 0,
+비선택 exact ignored pair 13,901이며 unapproved·unpaired·unsafe 0이다.
+**`005930 selected-prefix v2 quarantine quality: PASS`**, selected gate true.
+기존 strict `smoke_backtest_eligible=false`, `whole_stream_assessed=false`,
+`whole_prefix_quality_upgraded=false`는 유지됐다. 즉시 entry permission도 false다.
+새 report에는 policy ID, strict report SHA, direction-window·tick-research SHA가 있다.
+NXT smoke·GitHub Actions·추가 DB 조회는 실행하지 않았다.
 
-selected overlay schema는 `raw_v2_selected_prefix_qualification_v2`이며
-report에 explicit `unknown_direction_policy`, direction-window helper SHA,
-NXT consumer strategy `tick_research.py` SHA를 기록한다.
-quality quarantine은 즉시 entry permission이 아니므로
-`unknown_direction_immediate_entry_permission_granted=false`,
-`selected_unknown_direction_requires_strategy_window_quarantine=true`를 유지한다.
-
-다음 단계는 실제 working snapshot + 기존 strict 10:00 prefix report를 대상으로
-`005930=unknown` v2 overlay를 explicit quarantine policy로 **정확히 1회만 실행**하는 것이다.
-목표는 실제 8.4M prefix에서도 selected unknown-direction pair 1건이 quarantine되고
-`selected_smoke_quality_eligible=true`가 되는지 확인하는 것이다.
-
-이 실행이 PASS해도 기존 strict `smoke_backtest_eligible=false`는 그대로이며,
-selected overlay consumer/NXT smoke runner는 아직 없다.
-실제 NXT smoke는 실행하지 않고 GitHub Actions도 실행하지 않는다.
+다음 한 단계는 **`selected-prefix v2 NXT smoke runner integration`**이다.
+이번 PASS는 selected-overlay consumer 구현의 입력 품질 근거이며 전략 성과나 live 승인이 아니다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
