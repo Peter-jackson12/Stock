@@ -115,8 +115,14 @@ PR #36으로 통합된 `collector/zero_quote_policy_experiment.py`는 실제 pre
 - 정확한 mirrored parse_error pair만 candidate로 묶음
 - `trade_direction_unverified`는 절대 완화하지 않음
 
-다음 실제 단계는 이 합성 실험을 **focused local test**로 확인하는 것이다. 통과하면 그 다음에야 **zero-quote pair만 smoke-quality quarantine 후보로 취급하는 별도 opt-in prefix policy**를 설계할지 결정한다.
-실제 50GB prefix 재실행·smoke·정책 변경은 아직 하지 않는다. GitHub Actions도 이 작은 단계에서는 실행하지 않는다.
+기존 zero-quote classifier focused test는 Python 3.14.7에서 65 passed로 확인됐다.
+
+현재 작업 branch `feat/zero-quote-smoke-policy-20260924`는 그 다음 단계인 **순수 opt-in smoke-quality evaluator** 후보를 추가한다.
+`collector/zero_quote_smoke_policy.py`는 ordered envelope stream에서 정확히 짝지어진 one-sided zero-quote tick + mirrored parse_error만 quarantine한다.
+`trade_direction_unverified`, pairing mismatch, extra issue, callback/disconnect 등 다른 control은 계속 fail-closed다.
+
+아직 실제 prefix reader나 NXT smoke에는 연결하지 않았다. 다음 단계는 이 새 evaluator와 기존 classifier/quote-validation을 묶은 focused local test다.
+통과 전에는 PR을 merge하지 않고, 실제 50GB prefix 재실행·smoke·production eligibility 변경도 하지 않는다. GitHub Actions도 실행하지 않는다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
