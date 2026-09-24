@@ -182,7 +182,6 @@ def test_unselected_other_issue_pair_can_be_ignored_but_is_reported():
 @pytest.mark.parametrize("change", [
     {"code": "wrong"},
     {"ns": 2},
-    {"seq": 3},
     {"issues": ["other"]},
 ])
 def test_unselected_issue_requires_exact_mirrored_pair(change):
@@ -192,6 +191,14 @@ def test_unselected_issue_requires_exact_mirrored_pair(change):
     assert result["selected_smoke_quality_eligible"] is False
     assert result["disqualifying"]["unpaired_issue_ticks"] == 1
     assert result["disqualifying"]["unsafe_controls"] == 1
+
+
+def test_pair_sequence_mismatch_is_rejected_as_stream_structure_error():
+    other = issue_quote(1, 1)
+    policy = SelectedInstrumentSmokePolicy(SELECTED)
+    policy.accept(other)
+    with pytest.raises(ValueError, match="contiguous"):
+        policy.accept(parse_error(other, seq=3))
 
 
 def test_unselected_issue_without_pair_at_eof_is_global_failure():
