@@ -166,7 +166,9 @@ strategy performance, NXT venue, whole raw, live readiness를 승인하지 않�
 
 - [x] **실제 pipeline smoke 1회:** input/settings/code/result/provenance를 HANDOFF와 result에 기록했다.
 - [x] **결과 상태:** 77,558/77,558 event 처리, diagnostics_only=false, completed_flat, fills 2, rejects 0.
-- [ ] **대표 사례 대조:** smoke의 buy/sell 신호·order intent·fill을 raw exact seq evidence와 연결한다.
+- [x] **대표 사례 대조:** buy/sell signal·order intent·fill을 working DB의 INTEGER PRIMARY KEY exact lookup 4건으로
+  원본까지 연결했다. ask/bid fill 가격, 1초 latency, fee, lifecycle, 최종 cash ledger가 모두 result와 일치했다.
+  상세 근거는 HANDOFF의 `005930 selected-v2 representative trade audit: PASS` 기록을 따른다.
 - [ ] **재현성:** 같은 input/settings/code로 smoke를 명시적으로 1회 재실행해
   reproducibility key·order intents·fills·final account를 대조한다.
 - [ ] **research-input 승격 결정:** 대표 사례와 재현성 확인 뒤 bounded selected 경로의
