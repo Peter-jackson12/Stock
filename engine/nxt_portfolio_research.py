@@ -83,7 +83,8 @@ def _finalize_report(report: dict, *, dataset_label: str, strategy: NxtPortfolio
         if item != "no_live_broker_no_nxt_multi_asset_adapter"
     ] + [
         "nxt_breakout_strategy_only_no_multi_strategy_arbitration",
-        "no_live_broker_or_raw_input_adapter",
+        "no_live_broker",
+        "no_performance_certified_raw_adapter",
         "no_pnl_valuation_or_trade_store_conversion",
     ]
     identity = {
