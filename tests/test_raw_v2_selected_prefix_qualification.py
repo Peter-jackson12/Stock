@@ -228,6 +228,8 @@ def test_clean_strict_prefix_stays_selected_eligible(tmp_path):
     assert selected["selected_prefix_structure_verified"] is True
     assert selected["selected_smoke_quality_eligible"] is True
     assert all(selected["strict_revalidation"].values())
+    assert "strategies/nxt_breakout/direction_window.py" in selected["code_provenance"]
+    assert "strategies/nxt_breakout/tick_research.py" in selected["code_provenance"]
 
 
 def test_unselected_direction_can_fail_strict_but_pass_selected_overlay(tmp_path):
@@ -275,7 +277,9 @@ def test_selected_direction_can_pass_only_with_explicit_quarantine_policy(tmp_pa
     assert selected["selected_smoke_quality_eligible"] is True
     policy = selected["selected_policy_result"]
     assert policy["quarantine"]["selected_unknown_direction_pairs"] == 1
+    assert policy["quarantine"]["unknown_direction_immediate_entry_permission_granted"] is False
     assert policy["disqualifying"]["selected_issue_pairs"] == 0
+    assert policy["contracts"]["selected_unknown_direction_requires_strategy_window_quarantine"] is True
     assert selected["strict_prefix"]["smoke_backtest_eligible"] is False
     assert selected["strict_prefix"]["whole_prefix_quality_upgraded"] is False
     assert selected["contracts"]["selected_unknown_direction_policy_explicit"] is True
