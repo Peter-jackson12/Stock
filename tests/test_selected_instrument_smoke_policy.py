@@ -7,6 +7,9 @@ import pytest
 
 from collector.raw_v2 import CaptureControl
 from collector.selected_instrument_smoke_policy import SelectedInstrumentSmokePolicy
+from strategies.nxt_breakout.direction_window import (
+    POLICY as QUARANTINE_UNKNOWN_DIRECTION_POLICY,
+)
 from engine.tick_ordering import OrderedTick
 
 
@@ -117,8 +120,11 @@ def unsafe_control(seq, ns):
     }
 
 
-def evaluate(*records, instruments=SELECTED):
-    policy = SelectedInstrumentSmokePolicy(instruments)
+def evaluate(*records, instruments=SELECTED, unknown_direction_policy="strict"):
+    policy = SelectedInstrumentSmokePolicy(
+        instruments,
+        unknown_direction_policy=unknown_direction_policy,
+    )
     for record in records:
         policy.accept(record)
     return policy.result()
@@ -168,6 +174,60 @@ def test_selected_trade_direction_pair_is_disqualifying():
     }]
     assert result["disqualifying"]["selected_issue_example_limit"] == 10
     assert result["contracts"]["selected_trade_direction_unverified_is_disqualifying"] is True
+
+
+def test_selected_unsigned_direction_pair_is_quarantined_only_with_explicit_policy():
+    tick = trade(1, 1, is_buy=None, issues=("trade_direction_unverified",))
+    result = evaluate(
+        tick,
+        parse_error(tick),
+        unknown_direction_policy=QUARANTINE_UNKNOWN_DIRECTION_POLICY,
+    )
+
+    assert result["selected_smoke_quality_eligible"] is True
+    assert result["unknown_direction_policy"] == QUARANTINE_UNKNOWN_DIRECTION_POLICY
+    assert result["quarantine"]["selected_unknown_direction_pairs"] == 1
+    assert result["disqualifying"]["selected_issue_pairs"] == 0
+    assert result["disqualifying"]["selected_issue_counts"] == {}
+    assert result["disqualifying"]["selected_issue_examples"] == []
+    assert result["contracts"]["selected_unknown_direction_default_strict"] is True
+    assert result["contracts"]["selected_unknown_direction_requires_explicit_policy"] is True
+    assert result["contracts"]["selected_unknown_direction_requires_unsigned_fid15"] is True
+    assert result["contracts"]["selected_trade_direction_unverified_is_disqualifying"] is False
+
+
+@pytest.mark.parametrize("mutation", [
+    "signed_plus",
+    "signed_minus",
+    "volume_mismatch",
+    "wrong_direction_policy",
+    "wrong_normalization",
+])
+def test_selected_direction_quarantine_rejects_unapproved_raw_shapes(mutation):
+    tick = trade(1, 1, is_buy=None, issues=("trade_direction_unverified",))
+    if mutation == "signed_plus":
+        tick["raw_fields"]["fids"]["15"] = "+10"
+    elif mutation == "signed_minus":
+        tick["raw_fields"]["fids"]["15"] = "-10"
+    elif mutation == "volume_mismatch":
+        tick["raw_fields"]["fids"]["15"] = " 11"
+    elif mutation == "wrong_direction_policy":
+        tick["raw_fields"]["direction_policy"] = "other"
+    elif mutation == "wrong_normalization":
+        tick["raw_fields"]["normalization"] = "other"
+
+    result = evaluate(
+        tick,
+        parse_error(tick),
+        unknown_direction_policy=QUARANTINE_UNKNOWN_DIRECTION_POLICY,
+    )
+
+    assert result["selected_smoke_quality_eligible"] is False
+    assert result["quarantine"]["selected_unknown_direction_pairs"] == 0
+    assert result["disqualifying"]["selected_issue_pairs"] == 1
+    assert result["disqualifying"]["selected_issue_counts"] == {
+        "trade_direction_unverified": 1
+    }
 
 
 def test_unselected_trade_direction_pair_is_ignored_for_selected_smoke_only():
@@ -337,3 +397,13 @@ def test_selected_disqualifying_quote_example_uses_quote_fields_only():
     assert "price" not in example["normalized"]
     assert "volume" not in example["normalized"]
     assert "is_buy" not in example["normalized"]
+
+
+
+@pytest.mark.parametrize("policy", ["", "signed_volume", "guess", None, 1])
+def test_invalid_unknown_direction_policy_is_rejected(policy):
+    with pytest.raises(ValueError, match="unknown selected unknown-direction policy"):
+        SelectedInstrumentSmokePolicy(
+            SELECTED,
+            unknown_direction_policy=policy,
+        )
