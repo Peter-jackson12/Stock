@@ -412,9 +412,9 @@ def acquire_frozen_snapshot(source, *, output_root, expected_session_id,
 
     source_stat_before = _member_stat_records(initial_members)
     try:
-        # Keep destination namespace pins for the entire acquisition + cleanup.
-        # Source handles live only in the nested stack and are released before
-        # SQLite is allowed to touch the disposable working copy.
+        # Destination namespace pins and evidence seals stay live through finalization.
+        # Source main/WAL/SHM also remain exclusive while the separate working copy
+        # is cleaned and hashed; source SQLite itself is never opened.
         with ExitStack() as output_stack:
             output_check = output_stack.enter_context(_pinned_directory(output_root))
             run_check = output_stack.enter_context(_pinned_directory(run_dir))
@@ -460,50 +460,59 @@ def acquire_frozen_snapshot(source, *, output_root, expected_session_id,
                 run_check()
                 evidence_check()
                 working_check()
+                if _member_stat_records(members) != source_stat_before:
+                    raise ValueError("source file set changed after snapshot copy")
+
+                # Work only on the copied database while source handles remain sealed.
+                main_record = report["copy_records"][source.name]
+                manifest = _read_working_manifest_and_cleanup(paths.working_main)
+                report["working_cleanup"] = {
+                    "manifest": manifest,
+                    "sidecars_after_close": _sidecars(paths.working_main),
+                }
+                if manifest["session_id"] != expected_session_id:
+                    raise ValueError("working raw manifest session does not match expected session")
+                if any(item["exists"] for item in report["working_cleanup"]["sidecars_after_close"].values()):
+                    raise ValueError("SQLite sidecar remains on working copy after managed close")
+
+                working_hash = _hash_file(paths.working_main)
+                report["working_cleanup"]["main_sha256_after_close"] = working_hash
+                report["working_cleanup"]["main_readback_verified"] = True
+                if working_hash != main_record["source"]["sha256"]:
+                    raise ValueError("working main bytes changed during sidecar cleanup")
+
+                # Sidecar evidence is tiny and independently read back. The 50 GiB
+                # evidence main is retained but not re-read here; its hash was computed
+                # from the sealed source stream while both destinations were written.
+                evidence_sidecars = {}
+                for name in sorted(report["copy_records"]):
+                    if name == source.name:
+                        continue
+                    path = evidence_dir / name
+                    digest = _hash_file(path)
+                    evidence_sidecars[name] = {
+                        "path": str(path),
+                        "size": path.stat().st_size,
+                        "sha256": digest,
+                    }
+                    if digest != report["copy_records"][name]["source"]["sha256"]:
+                        raise ValueError("evidence sidecar readback hash mismatch")
+                report["evidence_sidecar_readback"] = evidence_sidecars
+
+                source_parent_check()
+                output_check()
+                run_check()
+                evidence_check()
+                working_check()
                 _, final_members = _source_members(source, residue_policy=residue_policy)
                 final_stats = _member_stat_records(final_members)
                 if final_stats != source_stat_before:
-                    raise ValueError("source file set changed during snapshot acquisition")
+                    raise ValueError("source file set changed through snapshot finalization")
                 report["source_unchanged_during_acquisition"] = True
                 report["source_stat_before"] = source_stat_before
                 report["source_stat_after"] = final_stats
 
-            # Source handles are released here. Destination namespace pins remain.
-            main_record = report["copy_records"][source.name]
-            manifest = _read_working_manifest_and_cleanup(paths.working_main)
-            report["working_cleanup"] = {
-                "manifest": manifest,
-                "sidecars_after_close": _sidecars(paths.working_main),
-            }
-            if manifest["session_id"] != expected_session_id:
-                raise ValueError("working raw manifest session does not match expected session")
-            if any(item["exists"] for item in report["working_cleanup"]["sidecars_after_close"].values()):
-                raise ValueError("SQLite sidecar remains on working copy after managed close")
-
-            working_hash = _hash_file(paths.working_main)
-            report["working_cleanup"]["main_sha256_after_close"] = working_hash
-            report["working_cleanup"]["main_readback_verified"] = True
-            if working_hash != main_record["source"]["sha256"]:
-                raise ValueError("working main bytes changed during sidecar cleanup")
-
-            # Sidecar evidence is tiny and independently read back. The 50 GiB
-            # evidence main is retained but not re-read here; its hash was computed
-            # from the sealed source stream while both destinations were written.
-            evidence_sidecars = {}
-            for name in sorted(report["copy_records"]):
-                if name == source.name:
-                    continue
-                path = evidence_dir / name
-                digest = _hash_file(path)
-                evidence_sidecars[name] = {
-                    "path": str(path),
-                    "size": path.stat().st_size,
-                    "sha256": digest,
-                }
-                if digest != report["copy_records"][name]["source"]["sha256"]:
-                    raise ValueError("evidence sidecar readback hash mismatch")
-            report["evidence_sidecar_readback"] = evidence_sidecars
-
+            # Source handles close only after working/evidence verification succeeds.
             output_check()
             run_check()
             evidence_check()

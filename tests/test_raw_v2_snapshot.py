@@ -255,3 +255,31 @@ def test_evidence_members_stay_write_delete_sealed_through_working_cleanup(tmp_p
     assert result["snapshot_ready_for_prefix_qualification"] is True
     assert result["evidence_members_sealed_through_finalization"] is True
     assert observed == [source.name, source.name + "-wal", source.name + "-shm"]
+
+
+def test_source_members_stay_exclusive_through_working_cleanup(tmp_path, monkeypatch):
+    source = residue_fixture(tmp_path / "source" / "raw.db")
+    root = output_root(tmp_path)
+    original = snapshot._read_working_manifest_and_cleanup
+    observed = []
+
+    def guarded(path):
+        for candidate in (
+            source,
+            Path(str(source) + "-wal"),
+            Path(str(source) + "-shm"),
+        ):
+            with pytest.raises(PermissionError):
+                with candidate.open("rb"):
+                    pass
+            observed.append(candidate.name)
+        return original(path)
+
+    monkeypatch.setattr(snapshot, "_read_working_manifest_and_cleanup", guarded)
+    paths = snapshot.acquire_frozen_snapshot(
+        source, output_root=root, expected_session_id="s"
+    )
+    result = load_result(paths)
+    assert result["snapshot_ready_for_prefix_qualification"] is True
+    assert result["source_unchanged_during_acquisition"] is True
+    assert observed == [source.name, source.name + "-wal", source.name + "-shm"]
