@@ -167,15 +167,16 @@ def test_unselected_trade_direction_pair_is_ignored_for_selected_smoke_only():
     assert result["contracts"]["whole_prefix_research_quality_upgraded"] is False
 
 
-def test_unselected_other_issue_pair_can_be_ignored_but_is_reported():
+def test_unselected_unapproved_issue_pair_remains_global_failure():
     other = issue_quote(1, 1)
     selected = trade(3, 2)
     result = evaluate(other, parse_error(other), selected)
 
-    assert result["selected_smoke_quality_eligible"] is True
-    assert result["quarantine"]["unselected_issue_pairs_ignored"] == 1
-    assert result["quarantine"]["unselected_ignored_issue_counts"] == {
-        "invalid_or_missing_fid_21": 1
+    assert result["selected_smoke_quality_eligible"] is False
+    assert result["quarantine"]["unselected_issue_pairs_ignored"] == 0
+    assert result["disqualifying"]["unsafe_controls"] == 1
+    assert result["disqualifying"]["global_issue_counts"] == {
+        "unselected_unapproved_issue:invalid_or_missing_fid_21": 1
     }
 
 
