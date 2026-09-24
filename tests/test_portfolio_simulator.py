@@ -549,3 +549,101 @@ def test_unserializable_intent_cannot_hide_prior_fills_or_failure_report(invalid
     assert len(report["order_intents"]) == 2
     assert report["order_intents"][-1]["kind"] == "invalid_intent"
     assert report["order_intents"][-1]["serialization_error"] in ("TypeError", "ValueError")
+
+
+
+def test_bid_mark_observation_uses_fresh_valid_bid_at_current_clock():
+    s = sim(cash=1000, buy_latency_ns=0, max_quote_age_ns=10)
+    s.on_event(quote(ns=1, bid=99, ask=100, bid_size=4, ask_size=3))
+    buy(s)
+    s.close(5)
+
+    marks = s.bid_mark_observations()
+    assert len(marks) == 1
+    mark = marks[0]
+    assert mark.code == "A"
+    assert mark.venue == "unknown"
+    assert mark.quantity == 1
+    assert mark.valuation_time_ns == 5
+    assert mark.status == "priced"
+    assert mark.reason == "eligible"
+    assert mark.quote_policy == "positive_two_sided_top_v1"
+    assert mark.quote_seq == 1
+    assert mark.quote_received_ns == 1
+    assert mark.quote_age_ns == 4
+    assert mark.bid == Decimal(99)
+    assert mark.bid_size == 4
+
+
+def test_bid_mark_observation_rejects_stale_quote_without_fallback():
+    s = sim(cash=1000, buy_latency_ns=0, max_quote_age_ns=2)
+    s.on_event(quote(ns=1, bid=99, ask=100))
+    buy(s)
+    s.close(5)
+
+    mark = s.bid_mark_observations()[0]
+    assert mark.status == "unpriced"
+    assert mark.reason == "stale"
+    assert mark.quote_seq == 1
+    assert mark.quote_received_ns == 1
+    assert mark.quote_age_ns == 4
+    assert mark.bid is None
+    assert mark.bid_size is None
+
+
+def test_bid_mark_observation_rejects_invalid_latest_quote_without_using_older_quote():
+    s = sim(cash=1000, buy_latency_ns=0, max_quote_age_ns=10)
+    s.on_event(quote(ns=1, bid=99, ask=100))
+    buy(s)
+    s.on_event(quote(2, 2, bid=101, ask=100))
+    s.close(5)
+
+    mark = s.bid_mark_observations()[0]
+    assert mark.status == "unpriced"
+    assert mark.reason == "locked_or_crossed"
+    assert mark.quote_seq == 2
+    assert mark.quote_received_ns == 2
+    assert mark.quote_age_ns == 3
+    assert mark.bid is None
+
+
+def test_flat_portfolio_has_no_bid_mark_observations():
+    s = sim(cash=1000, buy_latency_ns=0, sell_latency_ns=0, max_quote_age_ns=10)
+    s.on_event(quote(ns=1, bid=99, ask=100))
+    buy(s)
+    s.submit(OrderIntent("exit", "A", "sell", 1))
+    s.close(5)
+
+    assert dict(s.snapshot().positions)["A"] == 0
+    assert s.bid_mark_observations() == ()
+
+
+def test_run_portfolio_persists_final_bid_mark_provenance():
+    def buy_once(view, snapshot):
+        return [OrderIntent("a", "A", "buy", 1)] if view.event.seq == 1 else []
+
+    report = run_portfolio(
+        [quote(ns=1, bid=99, ask=100)],
+        simulator_config=config(cash=1000, buy_latency_ns=0, max_quote_age_ns=10),
+        close_ns=5,
+        strategy=buy_once,
+        strategy_id="mark-provenance-fixture",
+    )
+
+    provenance = report["final_bid_mark_provenance"]
+    assert provenance["schema"] == "portfolio_final_bid_mark_provenance_v1"
+    assert provenance["valuation_time_ns"] == 5
+    assert provenance["records"] == [{
+        "code": "A",
+        "venue": "unknown",
+        "quantity": 1,
+        "valuation_time_ns": 5,
+        "status": "priced",
+        "reason": "eligible",
+        "quote_policy": "positive_two_sided_top_v1",
+        "quote_seq": 1,
+        "quote_received_ns": 1,
+        "quote_age_ns": 4,
+        "bid": "99",
+        "bid_size": 3,
+    }]
