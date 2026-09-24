@@ -173,7 +173,8 @@ def test_selected_trade_direction_pair_is_disqualifying():
         "paired_parse_error": True,
     }]
     assert result["disqualifying"]["selected_issue_example_limit"] == 10
-    assert result["contracts"]["selected_trade_direction_unverified_is_disqualifying"] is True
+    assert result["contracts"]["selected_trade_direction_unverified_default_disqualifying"] is True
+    assert result["contracts"]["selected_trade_direction_quarantine_exception_is_bounded"] is True
 
 
 def test_selected_unsigned_direction_pair_is_quarantined_only_with_explicit_policy():
@@ -193,7 +194,8 @@ def test_selected_unsigned_direction_pair_is_quarantined_only_with_explicit_poli
     assert result["contracts"]["selected_unknown_direction_default_strict"] is True
     assert result["contracts"]["selected_unknown_direction_requires_explicit_policy"] is True
     assert result["contracts"]["selected_unknown_direction_requires_unsigned_fid15"] is True
-    assert result["contracts"]["selected_trade_direction_unverified_is_disqualifying"] is False
+    assert result["contracts"]["selected_trade_direction_unverified_default_disqualifying"] is True
+    assert result["contracts"]["selected_trade_direction_quarantine_exception_is_bounded"] is True
 
 
 @pytest.mark.parametrize("mutation", [
@@ -203,6 +205,7 @@ def test_selected_unsigned_direction_pair_is_quarantined_only_with_explicit_poli
     "wrong_direction_policy",
     "wrong_price_policy",
     "wrong_real_type",
+    "invalid_market_second",
     "wrong_normalization",
 ])
 def test_selected_direction_quarantine_rejects_unapproved_raw_shapes(mutation):
@@ -219,6 +222,8 @@ def test_selected_direction_quarantine_rejects_unapproved_raw_shapes(mutation):
         tick["raw_fields"]["price_policy"] = "positive_only"
     elif mutation == "wrong_real_type":
         tick["raw_fields"]["real_type"] = "other"
+    elif mutation == "invalid_market_second":
+        tick["event"] = replace(tick["event"], market_second=None)
     elif mutation == "wrong_normalization":
         tick["raw_fields"]["normalization"] = "other"
 
