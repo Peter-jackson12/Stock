@@ -6,6 +6,220 @@
 수집 중에는 재시작·추가 OCX 로그인·전체 DB 조회·변환·실제 재생을 하지 않는다.
 실행 중인 코드 버전과 현재 상태를 먼저 확인한다. 기록된 관측값은 현재 상태가 아니다.
 
+## Mock 전종목 FID A-B-A — 실행 전 사전점검과 1회 실행 계약
+
+상세 실험 의미·연구 배제·A2/POST 해석은
+[Mock 전종목 FID 읽기 A-B-A 계약](../tests/FID_READ_AB_DIAGNOSTIC.md)을 따른다.
+이 절은 **Windows/OCX에서 실제로 실행하기 직전의 운영 절차**만 정한다.
+GitHub CI 통과나 이 문서 자체는 로그인·실행 승인이 아니다.
+
+### 1. 실행 시점
+
+- 실제 피드 의미를 보려는 1차 실험은 **공식 거래일의 KRX 정규장 09:00~15:30 KST 안**에서 한다.
+- 개장/마감 burst를 별도 변수로 만들지 않기 위해 최초 1회는 가능하면 09:15 이후~15:15 이전에 한다.
+- 특별 개장·임시 휴장·공휴일은 실행 당일 공식 KRX 정보를 다시 확인한다. 휴장일·장외의 0건 실행으로 대신하지 않는다.
+- 동일 PC의 다른 collector/OCX 세션이나 Runtime 오류 창/PID 잔류 여부가 미확인이면 새 로그인을 시작하지 않는다.
+
+### 2. 로그인 없는 사전점검
+
+전용 clean checkout/worktree가 사용자가 선택·승인한 최종 실행 revision의 exact SHA인지 먼저 확인한다.
+특정 PR 번호를 영구 최신 기준으로 쓰지 않는다.
+사용자 변경이 있는 checkout을 reset/stash/clean하지 않는다. 필요하면 새 worktree를 사용한다.
+실제 실행과 같은 인자에 `--preflight`만 추가한다.
+
+```powershell
+git fetch origin
+git rev-parse HEAD
+git status --short
+
+.\.venv32\Scripts\python.exe collector\kiwoom\kiwoom_universe_logger.py `
+  --storage raw-v2 `
+  --capture-telemetry `
+  --fid-read-ab-test `
+  --duration-seconds 90 `
+  --preflight
+```
+
+정상 JSON은 최소한 `python_bits=32`, `login_attempted=false`, `ocx_instantiated=false`,
+`ocx_registered=true`, `ocx_file_exists=true`, `ready=true`를 만족해야 한다.
+`ready=true`는 로그인 성공·Mock 서버 가용성·실시간 수신·저장 여유를 인증하지 않는다.
+실행 직전 프로젝트 볼륨의 free bytes도 기록한다. 코드 admission 하한은 256 MiB지만
+그 하한 통과만으로 90초 전종목 raw에 충분한 공간이라고 일반화하지 않는다.
+
+### 3. 실행 직전 차단 조건
+
+아래 하나라도 충족하면 **로그인하지 않고 중단**한다.
+
+- checkout HEAD가 사용자가 선택·승인한 최종 실행 revision의 exact SHA와 다르거나 working tree가 깨끗하지 않다.
+- 32비트 Python/OCX preflight가 실패한다.
+- 다른 `kiwoom_universe_logger.py` collector가 살아 있거나 기존 OCX/Runtime 오류 상태 종료가 미확인이다.
+- collector lease를 안전하게 획득할 조건이 불명확하다. lock 파일 존재만으로 생존/종료를 단정하지 않는다.
+- 공식 거래일/시장 구간이 확인되지 않았거나 목표 정규장 구간 밖이다.
+- 저장 볼륨 여유가 코드 admission 하한보다 작다.
+- 기존 운영 raw/dump/operations_state를 삭제·덮어써야만 실행할 수 있다.
+
+차단을 없애려고 자동 kill/restart/relogin, lock 삭제, Runtime 창 강제 종료, LAA 변경, queue 확대, 기본 FID 축소를 하지 않는다.
+
+### 3-1. 당일 admission checker
+
+위 수동 차단 조건을 한 번에 정리하기 위해 `scripts/check_fid_read_ab_admission.py`를 사용한다.
+이 도구는 OCX를 만들거나 로그인하지 않고, raw DB도 열지 않는다. Git fetch도 수행하지 않으므로
+컨트롤타워/운영자가 **직전에 원격을 확인해 전달한 exact SHA**를 `--expected-revision`으로 넣는다.
+
+공식 거래일 여부는 이 로컬 도구가 인터넷 없이 추정하지 않는다. 컨트롤타워가 당일 공식 KRX 근거를
+확인한 뒤 그 날짜와 근거 메모를 명시적으로 전달한다. `--execution-approved`는 사용자가 그 1회 실행을
+명시적으로 승인한 뒤에만 붙인다.
+
+```powershell
+C:\Projects\Stock\.venv32\Scripts\python.exe scripts\check_fid_read_ab_admission.py `
+  --repo-root <승인된 exact SHA의 clean 실행 worktree> `
+  --expected-revision <컨트롤타워가 방금 확인한 정확한 SHA> `
+  --official-market-date YYYY-MM-DD `
+  --official-market-source-note "<확인한 공식 KRX 근거와 시각>" `
+  --execution-approved
+```
+
+checker는 **검사 대상 worktree 루트에서** 그 worktree의 `scripts\...`로 실행하고 `--repo-root`도 같은
+worktree를 준다. 실제로 import된 checker 코드의 checkout, `git rev-parse --show-toplevel`, `--repo-root`가
+하나라도 다르면 BLOCKED다. Python 실행 파일은 `C:\Projects\Stock\.venv32`처럼 다른 경로여도 된다
+(정상 sibling worktree). ignored 하위 폴더가 부모 저장소의 HEAD/clean을 빌리지 못한다.
+
+판정:
+
+- `RUN_READY` — 관측 **시작과 완료** 두 시점 모두에서 로그인 전 계약이 충족됨. 실제 수집 성공 인증은 아님.
+- `RUN_BLOCKED` — wrong HEAD/dirty tree/실행 root·checker 출처 불일치/collector entrypoint가 HEAD의 tracked
+  blob과 다름/skip-worktree·assume-unchanged 항목/preflight 실패/저장공간 하한/collector 또는 Runtime 창/
+  lease 미확인/시장 날짜·09:15~15:15 구간/승인 중 하나라도 차단.
+- `RUN_UNCERTAIN` — process probe 실패·누락·잘림, 명령줄/실행 경로를 읽을 수 없는 Python, 같은 `.venv32`
+  Python의 다른 프로세스, 벽시계 역행·단조 시계와 2초 초과 불일치처럼 정체나 시각을 확정하지 못한 상태.
+  실제 로그인 금지.
+
+READY 판정은 `RUN_READY` 문자열이나 `valid`/`meets_code_minimum` 플래그가 아니라 기록된 근거를 같은
+엄격한 pure evaluator로 다시 계산한 결과다. 필수 필드 누락·타입 오류(bool을 숫자로 보지 않음)·내부 모순은
+READY가 아니다. prepare와 verify도 같은 evaluator로 재검증한다.
+
+프로세스 탐색은 checker 자신, 조회용 PowerShell, 그리고 checker를 띄운 venv launcher를 제외한다.
+launcher 제외는 직계 부모가 같은 venv `python.exe` 경로이고, 부모와 checker의 명령줄을 모두 읽을 수 있으며
+실행 파일 뒤 인자가 정확히 같을 때(launcher가 같은 인자로 자식을 띄운 근거)만 한다. 명령줄 누락·빈 값은
+UNCERTAIN, 무관한 부모 스크립트는 일반 같은-runtime 프로세스(UNCERTAIN), collector 부모는 BLOCKED다. 조회 결과는 목록과 개수가 함께 있어야
+하며, 명시적 빈 목록만 "없음"이다. 명령줄에 `kiwoom_universe_logger`가 있는 프로세스는 interpreter와
+script/`-m` module 형식에 관계없이 BLOCKED다(편집기 등도 보수적으로 차단). 임의 CommandLine 원문은
+출력하지 않고 일치 여부만 남긴다. 프로세스·창 조작은 하지 않는다. 기존 lease 파일은 새로 만들거나 삭제하지 않고
+존재할 때만 잠금 가능 여부를 순간 확인한다. 파일이 없으면 실제 collector가 실행 시 다시 lease를 획득한다.
+
+`RUN_READY`라도 서버 가용성·실시간 수신·native 안정성·실험 성공은 미인증이다.
+
+### 3-2. short-lived run plan 생성과 fresh verify
+
+`RUN_READY` admission을 그대로 오래 들고 있다가 실행하지 않는다. 시간 경계는 모두 반개구간이다.
+
+- admission 근거: 관측 **시작** 기준 `0 <= age < 60초`. 완료 시각이 판단 시각보다 늦으면 거부.
+- plan: `created <= t < expires`(TTL 300초). 정확히 `expires`인 순간은 이미 만료.
+- verify: 시작 시각과, fresh admission·명령 재계산 뒤의 **완료 시각** 모두에서 TTL·09:15~15:15 구간·
+  fresh admission 신선도를 검사한다. 단조 시계 경과로도 만료를 재확인하고 벽시계 역행/불일치면 명령을 숨긴다.
+- prepare/verify CLI는 시작 시각을 고정하지 않는다. plan 생성 시각은 admission 완료 뒤에 읽는다.
+
+plan은 admission 사본과 canonical SHA-256을 보존한다. digest는 서명이 아니며 사용자 승인을 인증하지 않으므로,
+verify는 embedded admission이 **plan 생성 시각에도** READY·60초 이내였는지 재검증하고(created/expires만
+옮긴 plan 거부), 실제 명령을 보여주기 전에 trusted SHA와 실행 승인을 다시 받는다.
+
+plan 생성:
+
+```powershell
+C:\Projects\Stock\.venv32\Scripts\python.exe scripts\prepare_fid_read_ab_run.py `
+  --repo-root <clean execution worktree> `
+  --expected-revision <컨트롤타워가 방금 확인한 정확한 SHA> `
+  --official-market-date YYYY-MM-DD `
+  --official-market-source-note "<공식 KRX 근거와 확인 시각>" `
+  --execution-approved `
+  --output <repo-root>\operations_state\fid_read_ab_run_plans\<새 plan 이름>.json
+```
+
+prepare는 fresh admission을 직접 다시 수행한다. READY가 아니면 plan을 만들지 않는다.
+output은 gitignored `operations_state/fid_read_ab_run_plans/` 아래 새 파일만 허용하며 기존 plan을
+덮어쓰지 않는다. plan 생성 자체가 다음 fresh `git status`를 dirty로 만들지 않게 하는 계약이다.
+collector는 실행하지 않는다.
+
+실제 명령을 보기 직전 fresh verify:
+
+```powershell
+C:\Projects\Stock\.venv32\Scripts\python.exe scripts\verify_fid_read_ab_run_plan.py `
+  --plan <방금 만든 plan JSON> `
+  --expected-revision <컨트롤타워가 다시 확인한 정확한 SHA> `
+  --execution-approved
+```
+
+verify는 plan 만료·embedded admission digest·trusted revision을 확인한 뒤 admission checker를 또 실행한다.
+HEAD/clean tree/preflight/process/window/lease/시간 중 하나라도 달라지면 명령을 숨기고 NOT_READY로 끝난다.
+READY여도 plan에 저장된 명령을 그대로 믿지 않고 fresh admission의 Python executable과 현재 worktree의
+`kiwoom_universe_logger.py` 경로로 exact command를 다시 계산해 plan과 일치할 때만 출력한다.
+PowerShell 표시는 `& '<exe>' '<arg>' ...` 형식이며 작은따옴표류는 이중화하고 큰따옴표·제어문자 token은 거부한다.
+plan reader는 실제로 읽은 byte에도 1 MiB 상한을 두고 NaN/Infinity/중복 key JSON을 거부한다.
+verify 완료 뒤 사람이 실제로 실행하기까지의 사이는 검사하지 못한다(race-free 아님).
+digest가 plan 시각을 덮지 않으므로 created를 admission 60초 신선도 안에서 옮긴 plan은 구별하지 못한다.
+이 경우에도 verify는 fresh admission을 다시 요구한다. 제목에 `kiwoom`/`키움`/`OpenAPI`가 들어간 모든 창
+(터미널·편집기·브라우저 탭 포함)은 기존 계약대로 보수적으로 BLOCKED다.
+
+verify의 `MANUAL_COMMAND_READY`도 **자동 실행 승인이 아니다**. 출력된 명령은 사람이 확인해 수동으로
+실행할 대상일 뿐이고 verify/prepare 어느 쪽도 collector launch·OCX login·SetRealReg를 호출하지 않는다.
+
+### 4. 승인 후 실제 Mock 1회 실행
+
+사전점검과 당일 거래일/구간 확인이 통과한 경우에만 다음 **한 번의 독립 실행**을 사용한다.
+
+```powershell
+.\.venv32\Scripts\python.exe collector\kiwoom\kiwoom_universe_logger.py `
+  --storage raw-v2 `
+  --capture-telemetry `
+  --fid-read-ab-test `
+  --duration-seconds 90
+```
+
+추가하지 말아야 할 인자: `--codes`, `--nxt-codes`, `--managed-launch`, `--explicit-ocx-teardown`, 모든 `--aftermarket-*`.
+관측 서버가 Mock이 아니면 backend/구독 전에 실패해야 하며 live로 계속 진행하지 않는다.
+로그인 실패·구독 거부·FID 예외·queue/storage 오류가 나면 자동 재시도하지 않는다.
+
+### 5. 실행 후 기계적 성공과 실험 해석을 분리
+
+우선 새 session 폴더의 작은 근거만 bounded analyzer로 읽는다. 이 명령은 raw DB를 열거나
+COUNT/hash/SQLite scan하지 않는다.
+
+```powershell
+C:\Projects\Stock\.venv32\Scripts\python.exe scripts\analyze_fid_read_ab.py `
+  --session-dir operations_state\capture_sessions\<session_id> `
+  --expected-revision <실행한 정확한 SHA>
+```
+
+analyzer가 READY를 반환해도 연구 적격이나 native 원인 규명으로 해석하지 않는다.
+LIMITED/DIAGNOSTIC_ERROR/INCOMPLETE/INVALID이면 두 번째 실행으로 덮지 말고 해당 작은 근거를 보존한다.
+
+READY인 경우에만 실제 결과 전에 고정한 `fid_read_ab_assessment_v1` 규칙을 적용한다.
+
+```powershell
+C:\Projects\Stock\.venv32\Scripts\python.exe scripts\assess_fid_read_ab.py `
+  --session-dir operations_state\capture_sessions\<session_id> `
+  --expected-revision <실행한 정확한 SHA>
+```
+
+1차 자동 판정은 체결/호가를 분리한 `fid_read_ns` A1/B/A2 중앙값의 방향만 본다.
+각 phase·real_type 유효 표본 3개 미만이면 not-assessable이다. 효과크기 threshold와 p-value는 없고,
+`processing_ns`는 보조, `queue_submit_ns`는 guardrail일 뿐이다.
+source clock difference·callback/30·resource history·PRE/POST는 자동 판정에 넣지 않는다.
+
+- raw manifest `feed_scope == "kiwoom_universe_fid_read_diagnostic"`
+- sidecar `fid_read_ab_test.json`은 `fid_read_ab_test_v2`, `diagnostic_only=true`, `research_eligible=false`
+- 최종 저장 snapshot의 closed/writer_closed, pending callback 0
+- raw/sidecar/telemetry/diagnostics의 session identity와 code revision 일치
+- sidecar `diagnostic_error`, FID read failure, queue/storage 오류 유무
+- A1/B/A2/POST별 callback·FID attempt/success 계수와 telemetry 표본
+- 저장 종료 뒤 collector PID·native Runtime 창·lease는 서로 독립 사실로 확인
+
+저장이 정상 종료돼도 phase별 callback이 없거나 표본이 부족하면 기계적 성공과 해석 가능성을 분리한다.
+A1/B/A2 callback 수를 30으로 나눈 값을 독립 정상상태 service rate로 부르지 않는다.
+POST는 분석에서 제외하되 버리지 않는다. FID clock difference를 network latency라고 부르지 않는다.
+정상 종료 뒤 PID/Runtime 창 잔류가 보이면 두 번째 실험을 시작하지 않는다.
+첫 실행 검토 전에는 live 비교·동시 두 계정 비교·반복 전종목 실행으로 자동 확대하지 않는다.
+
 ## 2026-09-17 설치된 공식 명세 대조
 
 `C:/OpenAPI/koa_devguide.xml`(CP949, 관측 당시 수정 시각 2026-09-12)의 다음 항목을 직접 확인했다.

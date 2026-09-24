@@ -1,91 +1,116 @@
-# 현재 인계 — 2026-09-22 / 종료·수신 보강과 격리 복제 합성 경로
+# 현재 인계 — 2026-09-24 / FID 체인 fail-closed 감사와 보강
 
-[문서 인덱스](README.md) · [첫 시험 체크리스트](BACKTEST_TODO.md) ·
-[파이프라인 지도](docs/PIPELINE_MAP.md) · [보존본 안내](docs/archive/README.md)
+[문서 인덱스](README.md) · [실험 계약](tests/FID_READ_AB_DIAGNOSTIC.md) ·
+[실행 절차](docs/COLLECTION_RUNBOOK.md) · [보존본 안내](docs/archive/README.md)
 
-이전 상세 인계는 `4c677bf9ed535f4b9ba529af81b0c00f3eb8af97:HANDOFF.md`,
-종료·수신 보강 병합 직후 인계는 `c409eb6aa1c4b6eee22d562391165ca7f72f3020:HANDOFF.md`에 보존한다.
-매 작업 시작 시 원격 master/PR/CI를 확인한다. 아래 값은 통합 시작 기준이지 영구 최신 SHA가 아니다.
+## 이번 branch의 상태
 
-## 원격 기준과 검증 범위
+PR #29(draft/open/unmerged)의 현재 대상은 **master** `5b5156f810b7852c6b5fa4b5c42b77ddfbca0a70`이다.
+FID 누적 변경(#24~#28 개발 이력 포함)은 이 PR 한 곳에서 master 기준으로 검토한다. #24~#28은 이력 보존용이며
+merge/close/retarget하지 않는다. 개발 조상 관계로는 branch `audit/fid-chain-fail-closed-20260924`가 PR #28
+`c156108c269ffec55fc1bf7c843397d56781f112` 위의 감사 커밋 `8faa80ee1194bbabb3245862fb18f3355377d7e9`와
+그 반례를 해소하는 보강 커밋들로 구성된다(PR #28이 현재 대상이라는 뜻이 아니다).
+감사 CI #321(run 35926442378, job 107402550106)은 원래 production에서 26개 중 23개 실패였다.
+이 실패 이력은 지우지 않는다. 23개는 parameter case 수이며 독립 근본 원인 수가 아니다.
 
-이번 통합 시작 master: `c409eb6aa1c4b6eee22d562391165ca7f72f3020` (PR #17 병합).
-NUM-1(PR #12), RUN-1(PR #14), 수집 종료 보강(PR #16), 수신 진단(PR #17)은 병합됐다.
-PR #13은 superseded, closed/not merged다. 이전의 수정 대기/xfail 표시는 현재 판정이 아니다.
-시작 master의 CI #192는 전체 1,516 passed / 6 deselected였다.
-execution 감사 범위는 9,450조합 / 62,886 checkpoint다. RES-1/CLK-1 정책은 유지한다.
-집중 검사와 전체 검사는 중복이며 합산하지 않는다. deselected는 통과가 아니다.
+보강은 새 실행 계층 없이 기존 admission / run-plan / analyzer / assessment와 prepare/verify CLI를 고친다.
 
-- PR #16: `adf370ecb70f5490b44d629d46a3b87fa500c707`로 병합.
-  [종료 계약](docs/COLLECTOR_TEARDOWN.md). `--explicit-ocx-teardown`은 기본 꺼짐이다.
-  해제 보류와 실제 실패를 분리하고, 일반 log close 실패에도 Qt quit을 시도한다.
-- PR #17: [수신 진단 계약](docs/COLLECTOR_TELEMETRY.md). `--capture-telemetry`도 기본 꺼짐이며
-  해제 옵션과 독립이다. close 경합 인계, signed FID 시계 차이, 표본/진단 실패 경계를 유지한다.
-  CI #156의 flush 예외 close 누락과 #162의 일회성 raw startup 실패 이력은 지우지 않는다.
-  startup 상태 상세·4회 반복 회귀를 추가했지만 #162의 근본 원인은 미확정이다.
-- [PR #15](https://github.com/Peter-jackson12/Stock/pull/15): [격리 복제 합성 lab 명세](tests/RAW_V2_CLONE_LAB_SPEC.md).
-  독립 원격 감사는 기존 HEAD `257e8f1ea0e54e926466e8094d69865e9c6c4d37`에서 수행됐다.
-  해당 감사의 medium 권고를 반영해 계측처럼 보이던 상수 필드를 제거하고 원래 작업 오류와
-  최종 source 검증 오류를 별도 보존한다. source before/after 직접 대조와 실패/취소 회귀를 보강한다.
-  최신 master 위에 CI 집중 단계와 문서 인덱스를 합집합으로 통합하며 collector/qualification 코드는
-  이번 복제 변경에서 수정하지 않는다. 최종 HEAD/run/job와 병합 여부는 PR/Actions에서 확인한다.
+- admission: 명시적 빈 조회와 누락·잘림·접근 불가를 구분(후자는 UNCERTAIN), 모든 interpreter의
+  script/`-m` collector 탐지, CommandLine 원문 미출력, 관측 시작·완료 두 시점 평가와 단조 시계 대조,
+  Git `--show-toplevel`·checker 출처·collector entrypoint의 tracked HEAD blob 결합, skip-worktree 차단.
+- builder와 verifier가 같은 strict pure evaluator(`require_ready_admission`)로 READY를 재계산한다.
+- run plan: 반개구간 `created <= t < expires`, 60초 신선도는 관측 시작 기준, verify 완료 시각 재검사,
+  embedded admission의 plan 생성 시점 유효성 재검증, PowerShell `&` 호출 표시, 실제 read byte 상한.
+- analyzer: 실제 read byte·JSONL 줄/누적 상한, 기존 lifecycle validator로 full identity/Finalization,
+  명시적 UTC, bool이 아닌 정수 계수, 중첩 오류, 음수·비유한 telemetry를 근거 오류로 처리.
+- assessment: malformed 요약은 `INVALID_PHASE_METRIC_SUMMARY`로 not-assessable. 최소 3개·중앙값 방향·
+  효과크기 임계/p-value 없음이라는 사전등록 규칙은 바꾸지 않았다.
 
-원격 합성/CI 성공은 실제 32비트 키움/Qt/보안 모듈, native 오류 재발 방지, 실수집 처리량을 인증하지 않는다.
-이번 작업에서 로컬 설치·코드 동기화·새 로그인·수집 실행·운영 raw 복사는 하지 않았다.
+감사 대조군 `test_control_explicit_block_withholds_command`는 입력 객체가 plan과 공유돼 digest mismatch로
+먼저 거부되던 harness 결함이 있었다. fresh 응답을 deepcopy로 분리해 BLOCKED/UNCERTAIN 분기를 직접 검증한다.
+production도 plan에 admission 사본을 넣는다. 감사 assertion 자체는 약화하지 않았다.
 
-## 2026-09-22 수집 장애 — 과거 첨부 사본 및 사용자 관측
+CI는 감사 전용 workflow 대신 PR #28의 정상 CI로 복원하고 FID 집중 단계에 감사/보강 회귀를 넣었다.
+R1 보강 HEAD `e653194f532d61fa908c6161eb423302530fa9b4`에서 PR CI #325는 success였다.
+같은 SHA의 push CI #324는 제품 assertion이 아니라 감사의 PowerShell AST parser subprocess가
+정확히 10초 제한에 걸려 `TimeoutExpired`로 실패했다. 컨트롤타워가 job 로그를 직접 확인한 뒤
+그 **감사 테스트의 parser timeout만 30초로 늘렸고 production 코드는 건드리지 않았다**.
+#324 failure 이력은 보존한다. 집중·전체·반복·subtest 결과를 합산하지 않는다.
 
-session_id: `39b5af8b45024458be9a3ae2a2259685`.
-수집 revision: `6a6d6076649befc767e5d8d59151cbcfb2f27c34`, PID 11788, Python 3.10.11 32비트.
-raw: `sampledata/raw_ticks_v2/20260922/39b5af8b45024458be9a3ae2a2259685.db`.
+`9b94dbf61876167094af8b4a43de8ef600d0d477`의 CI #327(run 35934021661, job 107426874350, retarget 전
+old-base merge ref)은 FID 집중 259 passed였지만 전체 **1 failed / 1,823 passed / 6 deselected**였다.
+실패는 `tests/test_live_collector.py::test_silence_stop_requests_shutdown_even_if_final_dump_fails[False]`의
+`len(calls) == 0`이고, fixture 로그에 `raw v2 시작 실패`가 있었다. 테스트가 시작 성공을 확인하지 않아
+최초 startup 예외 전문은 남지 않았다. **원인은 미확정이다.** 로컬(64비트 3.14) 단독·파일 전체·teardown
+인접 순서 실행에서 재현되지 않았고, 같은 임시 fixture의 LiveRawCapture 시작은 약 0.03초였다.
+#327 전체 실행 시간(371초)은 #323(192초)의 약 2배였지만 5초 queue ready 대기와의 관련은 추정일 뿐이며
+운영 timeout은 바꾸지 않았다. 보강은 테스트 범위로 한정했다. 시작 성공이 필요한 live 테스트는 목표
+assertion 전에 시작 성공을 검사하고, 실패하면 `raw v2 시작 실패: ...` 원문과 exit/shutdown/queue
+ready·done·state 같은 작은 상태를 실패 메시지에 남긴다(재시도 없음). 실제 writer 스레드의 의도한
+시작 실패 대조군도 추가했다. 재발하면 이 메시지로 원인을 확인한다.
 
-첨부 로그/status 사본: 마지막 콜백 10:23:47 KST, 보호 종료 요청 10:33:47,
-저장 마무리 보고 10:33:48. accepted=committed=11,198,913, final_seq=11,212,670,
-writer_closed=true, pending/queued/in-flight/dropped=0, data_quality=unverified다.
-쓰기 실패 전용 필드는 없으므로 0으로 만들어 적지 않는다.
-로컬 에이전트의 17:40 조회 보고: 프로세스 부재, raw 12,940,107,776바이트, sidecar 부재.
-과거 보고이지 현재 프로세스 상태 인증이 아니다. 실제 raw 내용·해시·peer journal은 열지 않았다.
+CI는 master push와 pull_request에서 실행한다. feature branch push의 중복 전체 실행은 없앴다.
 
-사용자는 16시경 Runtime Error 창을 이미 보았고 17:07경 직접 닫았다.
-17:07 Application Error/WER는 최초 팝업 시각이 아니다. 정확한 최초 표시는 미상이며
-10:33:48 이후라는 하한도 입증되지 않았다. 수신 중단과 native 오류의 동일 원인은 미확정이다.
-앞단 버퍼 소진은 메모리/콜백 패턴과 양립하는 가설이지 입증된 원인이 아니다.
-화면의 대기큐는 Python 저장 큐이며 OCX/Qt 앞단 대기량이 아니다.
-faulthandler의 app.exec_()와 C++ e06d7363/KERNELBASE 표기만으로 최초 원인 모듈을 특정하지 않는다.
+## 검증 범위와 남는 한계
 
-## 2026-09-21 원본과 기존 차단 조건
+프로세스 입력은 합성 대역, Git 쓰기는 pytest 임시 저장소, PowerShell은 AST 파싱과 `python -c` dummy뿐이다.
+운영 프로세스 조회·실제 collector·OCX·사용자 raw/operations_state 접근은 없었다. Python 3.10은 3.10.11 x86
+인터프리터의 compile 검사이며 32비트 런타임에서 회귀를 실행한 것은 아니다.
 
-session_id `6f39117671c048f6b60477ceafbf40b6`, collection revision `4821762fd93230b658339fee084d6c08e3e53ce9`.
-raw 크기 50,635,071,488바이트. 최초 사용자 파일 SHA-256 주장은
-`E4304FE3C1CAD8A85EC6C297CEB9CFDADCA2D20001E93756303D567EC5077569`다.
-payload SHA-256 주장은 `a988d3bf86e36f44a209480658f537088a8910768c68c9fec83349f3de7f1755`다.
-두 해시의 대상은 다르며 재검증하지 않았다.
+- verify 완료 뒤 사람이 명령을 실행하기까지는 검사하지 못한다(race-free 아님).
+- SHA-256 digest는 서명이 아니며 `--execution-approved`는 사용자 인증이 아니다.
+- 명령줄에 collector 이름이 있는 비-collector 프로세스, 제목에 kiwoom/키움/OpenAPI가 있는 창(터미널·브라우저
+  포함)도 보수적으로 BLOCKED다. 권한 밖 Python 프로세스는 UNCERTAIN으로 남아 실행을 막을 수 있다.
+- plan created를 60초 신선도 안에서 옮긴 경우는 구별하지 못한다(verify는 fresh admission을 다시 요구).
+- 컨트롤타워 R1(부모 PID·같은 executable만으로 launcher 제외)은 부모·checker 명령줄의 인자 일치라는
+  명시적 연결이 있을 때만 제외하도록 좁혔다. 명령줄 누락은 UNCERTAIN, 무관한 부모는 제외하지 않는다.
+  인자까지 같은 무관한 부모 프로세스는 구별하지 못한다.
+- 최종 후보를 별도 agent가 독립 재검토했다. READY 오발급 경로는 찾지 못했고, 지적된 정상 경로 차단
+  (venv launcher 부모, 실행 경로 대소문자), CLI traceback, 엄격 타입 누락은 반영하고 회귀를 추가했다.
+- entrypoint 외 모듈의 ignored 파일 shadowing, `.pth`/sitecustomize 같은 import 환경은 범위 밖이다.
+- byte 상한은 메모리 상한이며 OS I/O 시간을 보장하지 않는다.
+- analyzer READY는 raw 품질 합격·프로세스 종료·연구 적격성이 아니다.
 
-종료 계수 callbacks=42,796,226 / final_seq=42,836,791.
-차이에서 도출한 40,564는 parse_error 예상 단서이지 SQL 집계나 unsigned 체결 확인 수가 아니다.
-제한 표본의 unsigned FID15 5건과 대응 parse_error는 품질 문제다. 임의 방향 보정은 없다.
-whole-file stream integrity, 품질 이유·시간·종목 분포, 첫 연구 실행은 미완료다.
+## 원격·기존 작업
 
-실제 -wal 0바이트 / -shm 32,768바이트는 삭제하지 않았다.
-원본 보호 해제 → writable SQLite 재연결의 in-place cleanup은 채택하지 않는다.
-PR #15는 외부 DB 인수를 받지 않는 작은 fixture lab이다. 원본 handle 보호·evidence/working 분리의
-합성 검증과 운영 namespace/동시 접근/실제 sidecar 출처 인증을 구별한다.
-새 자식 이름의 순간 생성·제거, 비협조적 working 쓰기, 총 물리 I/O, 전원 장애/실패 기록 원자성은
-이 lab의 성공으로 해결되지 않는다. 9월 22일 12.94GB raw와 21일 50.6GB raw를 혼동하지 않는다.
+감사 시작 master `5b5156f810b7852c6b5fa4b5c42b77ddfbca0a70`. PR #18~#29는 open이며 이번 작업에서
+병합·종료·force-push하지 않는다. 정확한 각 PR HEAD/CI는 사용 직전 다시 확인한다.
+#18 운영 판단 계약, #19 revision 비교, #21 UI 표시는 별도이며 변경하지 않는다(#21 UI 미통합).
+FID 통합 후보 #24 → analyzer #25 → 사전등록 #26 → admission #27 → run-plan #28 → 감사·보강 #29 순서다.
 
-## 다음 작업과 승인 경계
+이전 전체 인계와 수치/경로 원문은
+[PR #28 고정 HANDOFF](https://github.com/Peter-jackson12/Stock/blob/c156108c269ffec55fc1bf7c843397d56781f112/HANDOFF.md),
+로컬 장애 상세는
+[PR #21 고정 HANDOFF](https://github.com/Peter-jackson12/Stock/blob/4ce504dabca9baf37fd5c0a8dc062f484511c7ad/HANDOFF.md)를 따른다.
+archive 원문은 수정하지 않는다.
 
-PR #15의 최신 master 통합 diff/CI를 확인해 원격 작업을 마무리한다. 정확한 최종 결과는 PR에 둔다.
-그 이후 수집기 쪽 다음 단계는 로컬 32비트 환경의 읽기 전용 사전점검과 제한 실측 설계다.
-코드 배포·새 로그인·수집 재실행은 자동 승인하지 않는다. telemetry와 명시적 OCX 해제는 별도 조건으로 검토한다.
-수집 진단 실측과 50.6GB 파일 복제/qualification은 서로 다른 작업이다.
+## 보존·승인 경계
 
-운영 파일 집합 복제에는 대상 identity·sidecar 출처·외부 reader/writer 차단·namespace/경로 격리·
-장외 시각·collector 부재·free space·총 I/O/time 예산·실패 보존 설계와 별도 사용자 승인이 필요하다.
-그 후에도 whole-file qualification에서 무결성·연구 적격성·실제 parse_error 이유/분포를 분리한다.
+9월 21일 raw session `6f39117671c048f6b60477ceafbf40b6`, revision
+`4821762fd93230b658339fee084d6c08e3e53ce9`, 50,635,071,488 bytes 및 WAL/SHM은 보존한다.
+unsigned FID15/parse_error 문제, sidecar 출처·whole-file 무결성/품질 확인과 첫 실제 연구는 미완료다.
+FIRST_RESEARCH_CANDIDATE 미승격을 유지한다. writable 재연결·sidecar cleanup·전체 qualification에는
+대상 identity·접근 배제·namespace/경로 격리·free space·I/O/시간 예산과 별도 승인이 필요하다.
 
-closed != data quality pass; sample clean != whole-file clean;
-stream integrity != research eligibility; parse_error != file corruption;
-qualification != strategy validation; backtest != live trading approval.
-`Daily_baseline`·`old_data`·운영 raw·operations_state·사용자 변경·오류 근거를 보존한다.
-원본 폐기·시간 절단·방향 보정·venue 인증·FIRST_RESEARCH_CANDIDATE 승격은 승인하지 않는다.
+9월 23일 preflight READY, 장애 session `7a35b11eddff4dcea88c98acdc8b37df`의 메모리/dump,
+저장/Qt finally/lease 해제 뒤 PID·창 잔류는 사용자 전달 로컬 보고이지 직접 관측이 아니다.
+완료된 작은 canary·96,000 callback x86 offline 시험은 반복하지 않는다.
+popup 최초 표시와 failure-time VA exhaustion/fragmentation·최초 장애 인과는 미확정이다.
+FID clock difference는 network latency가 아니고 progression/lag slope는 독립 증거가 아니다.
+작은 processing_ns·queue 0·offline 성공으로 Qt/COM/GIL/native 병목을 배제하지 않는다.
+
+CI #156/#162, PR #19 #205/#206, PR #22 초기 harness 실패, PR #26 CI #280 HANDOFF 초과 실패,
+PR #29 감사 CI #321의 23 failed, #324 AST timeout, #327 live startup 실패를 보존한다.
+#162의 근본 원인은 미확정이다. deselected는 통과가 아니다.
+
+운영 raw/dump/operations_state/Daily_baseline/old_data/사용자 변경을 보존한다.
+자동 kill/restart/relogin, lock 삭제, Runtime 창 닫기, LAA 변경, queue 확대, 기본 FID 축소는 금지한다.
+raw→LOB/feature 변환을 현 raw-v2 연구의 필수 선행 단계로 바꾸지 않는다.
+
+## 다음 행동
+
+1. PR #29 최신 HEAD의 자동 pull_request CI 결과를 확인한다. #327 유형 실패가 재발하면 새 실패 메시지의
+   startup 원문으로 원인을 좁히며, 재시도·skip·timeout 완화로 숨기지 않는다. green 전에는 병합 후보가 아니다.
+2. 병합 순서와 여부는 사용자가 결정한다. #24~#29 readiness를 운영 승인처럼 쓰지 않는다.
+3. 실제 Mock A-B-A는 별도 승인 후 당일 공식 거래일/시장 구간·최종 revision·현재 CLI를 다시 대조하고
+   RUNBOOK 3-1/3-2 절차를 따른다. 이 branch 자체를 로컬 수집에 사용하지 않는다.
