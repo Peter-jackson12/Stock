@@ -12,6 +12,7 @@ from dashboard.session_assessment_view import render_session_assessment
 from control_tower.managed_capture import ManagedCaptures, start_managed_capture, ACTIVE
 from control_tower.offline_worker import start_replay_worker, retry_replay_worker
 from control_tower.capture_health import CaptureHealth
+from control_tower.operator_summary import summarize_operator_state
 from control_tower.replay_schedule import schedule_replay, schedules, expire_missed
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +28,7 @@ def render_control_tower(root=None):
         st.rerun()
     observation = observe_collector(root)
     raw = observe_raw_capture(root)
+    render_operator_overview(observation, raw)
     if "payload" in raw:
         payload = raw["payload"]
         snapshot = payload["snapshot"]
@@ -192,6 +194,32 @@ def render_control_tower(root=None):
 - **일봉·메타데이터:** 개별 파일럿 유지. 자동 작업 연결 미완료.
 - **모의·실전 주문:** 미구현. 주문 전송 버튼 없음.""")
         st.caption("다음 단계: 수집기 제어 계약 → 장외 작업 워커 → 종료/데이터 검증 후 단계별 실행. 로그인과 원격 접근 설정은 별도입니다.")
+
+
+def render_operator_overview(observation, raw):
+    """현재 저장 근거를 사람이 먼저 읽을 수 있는 안전한 요약으로 표시한다."""
+    summary = summarize_operator_state(observation, raw)
+    st.subheader("Operator 요약")
+    columns = st.columns(3)
+    columns[0].metric("저장된 raw 상태", summary["raw_evidence"])
+    columns[1].metric("로그 heartbeat", summary["heartbeat_evidence"])
+    columns[2].metric("현재 수집기", summary["collector_now"])
+    if summary["producer_state"]:
+        st.caption(f"상태 파일의 과거 생산자 주장: {summary['producer_state']}")
+    renderer = {"error": st.error, "warning": st.warning, "info": st.info}[summary["tone"]]
+    renderer(f"{summary['headline']} — {summary['guidance']}")
+    with st.expander("처음이면 무엇부터 보면 되나요?"):
+        st.markdown(
+            """
+1. **상태 새로고침**으로 저장된 근거의 시각을 다시 읽습니다.
+2. 아래 **raw v2 수집 세션 / 세션 근거 / 오늘 수집**에서 오류·중단·오래된 기록을 확인합니다.
+3. 실제 수집을 시작하기 전에는 서버·시장 구간·기존 수집기 충돌 여부를 별도 확인합니다.
+4. 기존 성과 런은 왼쪽 **백테스트 분석**에서 봅니다. 현재 selected-v2 연구 경로와 같은 결과 형식은 아닙니다.
+            """
+        )
+        st.caption("이 요약은 원본 DB·PID·창·lease를 열지 않으며, 수집 시작 승인이나 데이터 품질 인증을 만들지 않습니다.")
+
+
 
 
 @st.fragment(run_every="5s")
