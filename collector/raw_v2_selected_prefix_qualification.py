@@ -64,6 +64,7 @@ def _code_provenance():
         "collector/selected_instrument_smoke_policy.py",
         "collector/zero_quote_policy_experiment.py",
         "strategies/nxt_breakout/direction_window.py",
+        "strategies/nxt_breakout/tick_research.py",
         "collector/raw_v2.py",
     )
     return {name: _sha256_file(root / name) for name in names}
