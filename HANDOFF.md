@@ -142,27 +142,33 @@ GitHub Actions와 실제 데이터 실행은 하지 않았다.
 - legacy top-level `realized_pnl/unrealized_pnl/equity`는 계속 null
 - accounting helper SHA와 subrecord는 reproducibility identity에 포함
 
-현재 작업 branch `feat/portfolio-final-bid-mark-provenance-20260925`는
-**portfolio final fresh-bid mark provenance** 후보를 추가한다.
+PR #48의 portfolio final fresh-bid mark provenance는 최신 Operator UX master를 포함한
+HEAD `3222537151240b3b4a9fcc0c4d55049e1ac47f92`에서 Python 3.10 grammar PASS,
+focused combined tests 179 passed / 0 failed / 0 skipped 후 master에 통합됐다.
+merge SHA는 `59f15c72e5034b8cff9dcf8f11625ea6a7c4838b`다.
+GitHub Actions와 실제 데이터 실행은 하지 않았다.
 
-candidate 경계:
+통합된 경계:
 - `PortfolioSimulator.bid_mark_observations()`는 read-only
-- open long position만 대상으로 현재/final simulator clock에서 mark 후보를 평가
-- 기존 `max_quote_age_ns`와 `positive_two_sided_top_v1` quote validation을 그대로 재사용
-- fresh + valid two-sided quote만 `status=priced`, bid를 mark로 사용
-- stale/missing/locked-crossed/invalid quote는 `status=unpriced`
-- 과거 valid quote, last trade, mid, ask를 fallback으로 사용하지 않음
-- quote seq / received_ns / age / policy / reason / bid / bid_size를 provenance로 보존
-- flat portfolio는 mark record가 필요 없어 빈 목록
-- generic `run_portfolio()`가 `portfolio_final_bid_mark_provenance_v1`을 result와 reproducibility identity에 기록
-- NXT accounting은 priced record만 pure accounting helper에 전달
-- open position 전부 priced면 `open_marked`; 하나라도 unpriced면 `open_unpriced`
-- failed run accounting status는 `diagnostics_only`
+- open long position만 현재/final simulator clock에서 평가
+- 기존 max quote age + `positive_two_sided_top_v1`을 통과한 fresh two-sided quote의 bid만 mark
+- stale/missing/locked-crossed/invalid quote는 unpriced
+- 과거 valid quote / last trade / ask / mid fallback 없음
+- quote seq·received_ns·age·policy·reason을 provenance로 보존
+- generic result에 `portfolio_final_bid_mark_provenance_v1`
+- NXT accounting은 priced mark만 사용
+- open all-priced=`open_marked`, any-unpriced=`open_unpriced`, flat=`flat_complete`,
+  failed=`diagnostics_only`
 - legacy top-level PnL/equity는 계속 null
 
-다음 단계는 simulator provenance + generic run + NXT accounting + 기존 strict/selected smoke의 focused local regression이다.
-통과 전에는 actual selected-v2 result를 다시 실행하거나 재작성하지 않는다.
-GitHub Actions도 실행하지 않는다.
+다음 한 단계는 **`005930 selected-v2 actual accounting regression`**이다.
+기존 frozen working DB와 selected-v2 report, 동일 smoke 설정으로 정확히 1회만 재실행한다.
+새 코드 때문에 code SHA/reproducibility key는 과거 run과 달라지는 것이 정상이며,
+비교 대상은 event SHA/count, signals, intents, fills, transitions, final account 등 execution trace의 동일성이다.
+새 `performance_accounting`은 이 실제 flat 왕복에서 realized/total `-2039.5`,
+unrealized 0, equity `997960.5`, cash/position/accounting reconciliation true가 예상된다.
+flat이므로 final bid-mark provenance records는 빈 목록이어야 한다.
+이 값은 accounting 기능 회귀이며 전략 수익성·performance-research 승격으로 해석하지 않는다.
 
 ## 유지하는 운영/실데이터 차단 조건
 

@@ -245,9 +245,11 @@ selected-v2 bounded input은 strategy-research fixture로 승인됐지만 perfor
 - [x] explicit fresh-valid-bid mark / unrealized PnL / equity contract focused regression — PR #46
 - [x] fill cashflow ↔ simulator cash reconciliation contract — PR #46
 - [x] NXT result finalization에 `performance_accounting` subrecord integration focused regression — PR #47, 119 passed
-- [ ] open-position final fresh-bid mark provenance integration focused regression
-- [ ] accounting subrecord 안정화 후에만 legacy top-level PnL/equity schema migration 검토
-- [ ] actual selected-v2 result는 integration 후 회귀 fixture로만 재검증하며 parameter tuning에 사용하지 않음
+- [x] open-position final fresh-bid mark provenance integration focused regression — PR #48, latest-master combined 179 passed
+- [ ] actual selected-v2 bounded smoke를 새 accounting/mark 코드로 정확히 1회 재실행해
+  execution trace 불변 + performance_accounting identity를 검증
+- [ ] accounting subrecord 실제 bounded 회귀까지 확인 후 legacy top-level PnL/equity schema migration 필요성 검토
+- [ ] actual selected-v2 result는 회귀 fixture로만 사용하며 parameter tuning에 사용하지 않음
 
 ## 5. 첫 시험 이후 — 전략 평가
 
