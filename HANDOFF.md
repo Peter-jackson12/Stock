@@ -99,8 +99,11 @@ reproducibility key는 `f3ad6b6095891460033f2e1c784d28e19ba0cf6e78055092b43eeab7
 `whole_stream_assessed=false`, `performance_research_assessed=false`; PnL/equity는 null이다.
 실행 전후 working DB sidecar는 없었다. GitHub Actions·자동 재시도는 실행하지 않았다.
 
-다음 한 단계는 **`selected-v2 research-input gate decision`**이다.
+다음 한 단계는 **`selected-v2 representative trade audit`**이다.
 이번 PASS는 bounded 입력·전략·simulator 연결 확인이며 성과·NXT venue·live 적격성 승격이 아니다.
+실제 smoke의 buy/sell signal·order intent·fill을 raw exact-seq evidence와 먼저 연결하고,
+그 다음 동일 input/settings/code의 명시적 재실행 1회로 reproducibility를 확인한 뒤
+`selected-v2 research-input gate decision`으로 넘어간다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
