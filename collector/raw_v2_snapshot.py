@@ -30,6 +30,7 @@ import platform
 import stat
 import uuid
 
+from collector.raw_archive import sealed_source
 from collector.raw_v2 import SUPPORTED_SCHEMAS, _identity, _load_json
 from collector.raw_v2_qualification import _require_local_ntfs
 
@@ -403,6 +404,7 @@ def acquire_frozen_snapshot(source, *, output_root, expected_session_id,
             "working_main": str(paths.working_main),
         },
         "copy_records": {},
+        "evidence_members_sealed_through_finalization": False,
         "working_cleanup": None,
         "error": None,
     }
@@ -445,6 +447,13 @@ def acquire_frozen_snapshot(source, *, output_root, expected_session_id,
                         name, members[name], streams[name], evidence_dir, working_dir
                     )
                 report["copy_records"] = records
+
+                # Evidence is immutable after copy without paying another 50 GiB
+                # main-file readback. Keep write/delete-denying read handles open
+                # until working cleanup, hashes, and the final success decision end.
+                for name in sorted(records):
+                    output_stack.enter_context(sealed_source(evidence_dir / name))
+                report["evidence_members_sealed_through_finalization"] = True
 
                 source_parent_check()
                 output_check()
