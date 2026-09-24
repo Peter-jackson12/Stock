@@ -47,7 +47,7 @@ def main(argv=None):
     print(result)
     if not report["prefix_structure_verified"]:
         return 3
-    return 0 if report["prefix_research_eligible"] else 2
+    return 0 if report["smoke_backtest_eligible"] else 2
 
 
 if __name__ == "__main__":
