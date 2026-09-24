@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-24 / 다종목 공유 계좌 합성 연구 v1
+# 현재 인계 — 2026-09-24 / NXT 단일전략 공유계좌 연결 후보
 
 [문서 인덱스](README.md) · [공유 계좌 연결/계약](docs/PIPELINE_MAP.md#portfolio-research) ·
 [첫 실제 연구 체크](BACKTEST_TODO.md) · [기존 틱 연구 런북](TICK_RESEARCH_RUNBOOK.md) ·
@@ -16,22 +16,19 @@
 FID hot path·admission/run-plan·OCX/QAx·queue/teardown/telemetry·실제 수집·PID/창/lease 관측·
 #327/#162 원인 실험·historical benchmark 재측정·역사 PR 정리를 진행하지 않는다.
 
-**현재 개발은 research/backtest/execution 트랙이다.** 작은 합성 다종목 tick stream에서
-공유 현금·종목별 보유량·예약·RiskLimits·명시적 주문 상태·순수 주문 의도 경계를 검증한다.
-실제 raw, 전략 수익률 최적화, 실주문은 이번 변경의 입력/목표가 아니다.
+**현재 개발은 research/backtest/execution 트랙이다.** 공유계좌·주문 생명주기·RiskLimits 기반은 PR #30으로 master에 통합됐다.
+이후 우선순위는 다중 전략 플랫폼이 아니라 **NXT 전략 하나를 새 실행 경계에 연결해 평가 가능한 연구 경로를 만드는 것**이다.
+같은 전략을 여러 종목에 적용할 수는 있지만 전략 간 arbitration/자본 배분은 나중 필요할 때 추가한다.
+실제 raw, 전략 파라미터 최적화, 실주문은 이번 변경의 입력/목표가 아니다.
 
 ## 원격 시작 기준과 현재 변경
 
-- master 시작 기준 `78e0e74679877ec7e36f22b126f2ba9da606a5ac`: PR #19 병합 commit.
-- 이 HEAD의 일반 CI #336(run `35946603390`, job `107465825995`)와
-  Session assessment #6(run `35946603430`)는 원격 completed/success다.
-  인계 수치는 전체 1,900 passed / 6 deselected, 표시 집중 127 passed다.
-  집중/전체를 합산하지 않으며 deselected는 통과가 아니다.
-- #20/#22/#23/#25/#26/#27/#28은 수집기 개발 이력이다. 임의 close/merge/retarget하지 않는다.
-- [PR #30](https://github.com/Peter-jackson12/Stock/pull/30), branch `feat/portfolio-engine-20260924`.
-  응답 중단 후 재확인한 HEAD는 `5513432c04bd8f466beb25d4ca99cd6818d2fd7c`였다.
-  이후 수정의 최종 HEAD·base·병합 SHA·완료 CI 근거는 PR과 checks에서 확인한다.
-  문서/코드의 존재를 master 병합·로컬 배포·운영 승인으로 대신 해석하지 않는다.
+- 현재 master: `9b62c9286f94844ddf435df54586443b59f3455f` — PR #30 일반 merge.
+- master push 일반 CI #340: `1,963 passed / 6 deselected`; Session assessment #10: `127 passed`. 둘 다 success.
+- PR #30 최종 HEAD `4032a491cdf6e8f9157989777fb27bde7f59400a`의 PR CI #339도 `1,963 passed / 6 deselected`.
+- #20/#22/#23/#25/#26/#27/#28은 수집기/FID 개발 이력이다. 임의 close/merge/retarget하지 않는다.
+- 현재 작업 branch: `feat/nxt-portfolio-adapter-20260924`.
+  신규 NXT adapter/runner/test가 이 branch에 있으며 최종 HEAD/base/CI/merge 근거는 해당 PR에서 확인한다.
 
 ## 실제 구현과 보존한 경계
 
@@ -62,17 +59,24 @@ context 모두에서 같은 정확한 금액·새 rounding 없음·부모 flag �
 **보존:** 기존 TickSimulator·NxtResearchStrategy·run_research/run_raw_v2·실제 CLI·입력 정책·
 collector·workflows·기존 테스트는 변경하지 않는다. 합성 상태 snapshot은 운영 계좌 조회가 아니다.
 
-**미연결/미완료:** NXT 다종목 전략 어댑터, 결과 영속 저장/조회 연결, 평균단가·원가·실현/미실현
-PnL·equity, 실제 raw 입력, Paper/Mock/Live 주문 어댑터, 대용량 성능. 새 결과의 PnL/equity는 null이다.
-현행 회계는 현금·보유수량·수수료·체결 원장까지다. gross_exposure_at_ask는 한도용 매수 대체 원가다.
+**현재 후보:** 기존 `NxtResearchStrategy`를 종목별 상태로 재사용하는 `NxtPortfolioStrategy`와
+`run_nxt_portfolio()`를 추가한다. 전략에는 mutable account를 주지 않고 symbol-scoped port가 순수 intent만 만든다.
+한 전략을 여러 종목에 적용해도 공유 cash/risk는 PortfolioSimulator가 소유한다. 결과는 새 UUID 디렉토리의
+`portfolio_research_result_v1` JSON으로 보존하고 전략 설정·코드 hash·signals를 reproducibility key에 포함한다.
+
+**미연결/미완료:** 평균단가·원가·실현/미실현 PnL·equity와 표준 Trade 변환, 실제 raw 입력,
+Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. 현행 회계는 현금·보유수량·수수료·체결 원장까지다.
+`gross_exposure_at_ask`는 한도용 매수 대체 원가이지 손익이 아니다.
 
 ## 다음 행동
 
-1. PR #30의 최종 diff/HEAD/base 및 완료 CI를 확인한다. 미병합이면 검토·검증 후 기존 자율권 범위에서
-   병합을 판단하고 master SHA와 push CI도 확인한다. 이미 완료됐으면 이번 기반을 다시 구현하지 않는다.
-2. 다음 개발은 기존 NXT 규칙의 종목별 상태를 순수 intent 경계에 연결하고 새 결과의 저장/조회 경로를
-   좁게 연결하는 순서가 후보이다. 원가/PnL 평가는 별도 계약을 정한 뒤 추가한다.
-3. 합성 엔진 성공만으로 실데이터 첫 연구를 열지 않는다. 역사 PR과 운영 PC는 그대로 둔다.
+1. 현재 NXT 단일전략 adapter 후보의 focused/전체 CI와 기존 단일종목 경제 결과 동치를 확인한다.
+   충분히 검증되면 기존 자율권 범위에서 merge하고 master push CI까지 확인한다.
+2. 다음 묶음은 **한 전략의 평가 가능성**을 우선한다. fill ledger에서 평균단가/실현손익을 정의하고,
+   open position의 mark/equity와 MDD를 어떤 가격·비용 계약으로 계산할지 먼저 고정한다.
+3. 검증된 실제 raw가 준비되기 전에는 수익률 파라미터 탐색/종목·시간 사후선택을 하지 않는다.
+   다중 전략 registry/arbitration은 첫 전략의 연구·안정화가 진행된 뒤 실제 필요가 생길 때 추가한다.
+4. 합성 엔진 성공만으로 FIRST_RESEARCH_CANDIDATE를 승격하거나 실주문 단계로 넘어가지 않는다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
