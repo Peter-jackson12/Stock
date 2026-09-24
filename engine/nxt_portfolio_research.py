@@ -92,11 +92,23 @@ def _performance_accounting(report: dict) -> dict:
         for item in account["fills"]
     )
     ledger = account_portfolio_fills(fills)
+    mark_provenance = report.get("final_bid_mark_provenance")
+    if (
+        not isinstance(mark_provenance, dict)
+        or mark_provenance.get("schema") != "portfolio_final_bid_mark_provenance_v1"
+        or not isinstance(mark_provenance.get("records"), list)
+    ):
+        raise ValueError("final bid mark provenance required")
+    bid_marks = {
+        item["code"]: item["bid"]
+        for item in mark_provenance["records"]
+        if item.get("status") == "priced"
+    }
     valuation = value_portfolio_at_bid_marks(
         ledger,
         initial_cash=settings["cash"],
         current_cash=account["cash"],
-        bid_marks={},
+        bid_marks=bid_marks,
     )
 
     actual_positions = dict(account["positions"])
@@ -118,12 +130,20 @@ def _performance_accounting(report: dict) -> dict:
         for item in ledger.positions
     ]
     flat = not any(actual_positions.values())
+    if report.get("diagnostics_only") is True:
+        accounting_status = "diagnostics_only"
+    elif flat:
+        accounting_status = "flat_complete"
+    elif valuation.unpriced_codes:
+        accounting_status = "open_unpriced"
+    else:
+        accounting_status = "open_marked"
     return {
         "schema": "portfolio_performance_accounting_v1",
-        "status": "flat_complete" if flat else "open_unpriced",
+        "status": accounting_status,
         "cost_basis_method": ledger.cost_basis_method,
         "marking_policy": valuation.marking_policy,
-        "mark_integration": "not_connected",
+        "mark_integration": "final_fresh_valid_bid_provenance_v1",
         "hypothetical_exit_fee_included": valuation.hypothetical_exit_fee_included,
         "legacy_top_level_pnl_fields_populated": False,
         "fill_count": ledger.fill_count,
@@ -139,6 +159,7 @@ def _performance_accounting(report: dict) -> dict:
         "position_reconciled": position_reconciled,
         "accounting_identity_reconciled": valuation.accounting_identity_reconciled,
         "unpriced_codes": list(valuation.unpriced_codes),
+        "bid_mark_provenance": deepcopy(mark_provenance),
         "bid_marks": {
             code: _fraction_record(value)
             for code, value in valuation.marks.items()
@@ -181,7 +202,7 @@ def _finalize_report(report: dict, *, dataset_label: str, strategy: NxtPortfolio
         "no_live_broker",
         "no_performance_certified_raw_adapter",
         "performance_accounting_subrecord_only_legacy_top_level_pnl_fields_unpopulated",
-        "open_position_final_bid_mark_integration_not_connected",
+        "open_position_mark_requires_fresh_valid_bid_and_may_be_unavailable",
         "no_forced_liquidation",
         "no_trade_store_conversion",
     ]
