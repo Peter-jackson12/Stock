@@ -67,7 +67,7 @@ collector·workflows·기존 테스트는 변경하지 않는다. 합성 상태 
 **현재 prefix 후보:** `raw_v2_prefix_qualification_v1`은 seq=1부터 사전에 정한 KST exclusive cutoff까지의
 구간만 검증한다. cutoff 시각 이상에서 구조적으로 유효한 다음 record를 sentinel로 요구해 실제 수집이 경계까지
 도달했음을 확인한다. tail은 의도적으로 읽지 않고 `whole_stream_assessed=false`를 기록한다. prefix 통과가 전체 raw의
-FIRST_RESEARCH_CANDIDATE 승격을 뜻하지 않는다. prefix 안의 parse/control/normalized issue는 기존 quality 계약으로 거부한다.
+FIRST_RESEARCH_CANDIDATE 승격을 뜻하지 않는다. prefix 안의 parse/control/normalized issue는 기존 quality 계약으로 거부한다. 이 단계의 합격 명칭은 `smoke_backtest_eligible`이며, producer whole-stream checksum이나 외부 immutable file-hash anchor를 확인하지 않았으므로 성과 연구 적격성은 별도 미평가다.
 
 **미연결/미완료:** 평균단가·원가·실현/미실현 PnL·equity와 표준 Trade 변환, 실제 raw 입력,
 Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. 현행 회계는 현금·보유수량·수수료·체결 원장까지다.
