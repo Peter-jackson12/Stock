@@ -57,7 +57,7 @@ def _strategy_code_identity() -> dict[str, str]:
 
 
 def _finalize_report(report: dict, *, dataset_label: str, strategy: NxtPortfolioStrategy,
-                     started_at: str) -> dict:
+                     started_at: str, input_provenance) -> dict:
     report = deepcopy(report)
     strategy_settings = strategy.settings()
     settings = deepcopy(report["settings"])
@@ -76,6 +76,7 @@ def _finalize_report(report: dict, *, dataset_label: str, strategy: NxtPortfolio
         strategy_signals=signals,
         started_at=started_at,
         finished_at=datetime.now(timezone.utc).isoformat(),
+        input_provenance=deepcopy(input_provenance),
     )
     report["limitations"] = [
         item for item in report["limitations"]
@@ -91,6 +92,7 @@ def _finalize_report(report: dict, *, dataset_label: str, strategy: NxtPortfolio
         "code": code_identity,
         "intents": report["order_intents"],
         "signals": signals,
+        "input_provenance": input_provenance,
     }
     report["reproducibility_key"] = hashlib.sha256(
         _json(identity).encode("utf-8")
@@ -100,7 +102,8 @@ def _finalize_report(report: dict, *, dataset_label: str, strategy: NxtPortfolio
 
 def run_nxt_portfolio(events, *, output_root, dataset_label, simulator_config,
                       close_ns, quantity, exit_rule="fixed",
-                      cooldown_ns=10_000_000_000, params=None):
+                      cooldown_ns=10_000_000_000, params=None,
+                      input_provenance=None):
     """Persist one NXT strategy run over a shared account.
 
     Invalid config fails before an output directory is created. Once event iteration
@@ -122,7 +125,9 @@ def run_nxt_portfolio(events, *, output_root, dataset_label, simulator_config,
         params=params,
     )
     strategy_settings = strategy.settings()
+    provenance = deepcopy(input_provenance)
     _json(strategy_settings)
+    _json(provenance)
     # Validate account/risk configuration before creating persistent output.
     PortfolioSimulator(**config)
 
@@ -137,6 +142,7 @@ def run_nxt_portfolio(events, *, output_root, dataset_label, simulator_config,
         "dataset_label": dataset_label,
         "raw_identity_verified": False,
         "settings": {"strategy": strategy_settings},
+        "input_provenance": provenance,
         "started_at": started_at,
     })
 
@@ -154,6 +160,7 @@ def run_nxt_portfolio(events, *, output_root, dataset_label, simulator_config,
             dataset_label=dataset_label,
             strategy=strategy,
             started_at=started_at,
+            input_provenance=provenance,
         )
         _write(path, report)
         cause = exc.__cause__ if isinstance(exc.__cause__, Exception) else exc
@@ -163,6 +170,7 @@ def run_nxt_portfolio(events, *, output_root, dataset_label, simulator_config,
         dataset_label=dataset_label,
         strategy=strategy,
         started_at=started_at,
+        input_provenance=provenance,
     )
     _write(path, report)
     return path
