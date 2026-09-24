@@ -89,7 +89,7 @@ GitHub-only 감사 중에는 아래 명령도 실행하지 않는다.
 
 ## 개발 검증과 GitHub Actions
 
-push/PR마다 Windows + 64비트 Python 3.14 + 고정 uv/lock으로 Git-only pytest를 실행한다.
+master push와 PR마다 Windows + 64비트 Python 3.14 + 고정 uv/lock으로 Git-only pytest를 실행한다.
 Windows 파일 잠금·프로세스·소켓 합성 회귀를 포함한다. 상세 범위는 [테스트 안내](docs/TESTING.md)를 따른다.
 아래 로컬 명령은 live 수집 중에 실행하지 않는다. GitHub-only 작업의 검증 위치는 GitHub-hosted Actions다.
 
@@ -104,4 +104,5 @@ CI는 실제 시장 데이터·OCX 로그인·실데이터 백테스트·수집 
 일반 Chat + GitHub 작업은 브랜치 → PR → 변경 검증/CI → 원격 재확인 순서다.
 수집 중에는 master 변경·병합을 보류하며 종료 후 별도 확인해야 한다.
 [작업 경계](docs/COLLECTION_RUNBOOK.md#collection-live-boundary)를 넘는 로컬 작업은 자동 승인하지 않는다.
-Windows·실데이터가 필요한 경우만 별도 승인 범위에서 로컬에 넘긴다.
+대규모 구현·다파일 통합·고위험 감사는 개발용 로컬 에이전트에 묶어서 맡길 수 있다([역할](AGENTS.md)).
+개발 위임은 운영 PC 관측·배포·로그인·실데이터 처리 승인이 아니며, 그런 운영 단계는 별도 승인 범위에서만 넘긴다.
