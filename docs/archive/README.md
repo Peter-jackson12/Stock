@@ -32,3 +32,11 @@
 
 새 인계를 작성할 때 지난 이력을 현재 HANDOFF 아래에 계속 붙이지 않는다.
 현재 결정·차단 조건·다음 행동·근거 위치만 갱신하고, 보존이 필요하면 날짜와 원본 revision을 함께 남긴다.
+
+
+## 2026-09-25 활성 HANDOFF 압축 전 원문
+
+Operator UX 통합과 selected-v2 accounting 단계까지 누적된 활성 HANDOFF 전체를
+[HANDOFF_20260925_PRE_COMPACT](HANDOFF_20260925_PRE_COMPACT.md)에 보존한다.
+기준 master는 `bbf53e6c9e21c0204c90a1d7492c830f8f904810`다. 이 보존본의 상세 수치·경로·당시 "다음 행동"은 기록 시점의 사실이며,
+현재 실행 지시는 루트 [HANDOFF](../../HANDOFF.md)를 따른다.
