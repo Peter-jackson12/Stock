@@ -85,6 +85,7 @@ def account_portfolio_fills(fills) -> PortfolioAccountingLedger:
     realized = Fraction(0)
     cash_delta = Fraction(0)
     positions: dict[str, tuple[int, Fraction]] = {}
+    venues: dict[str, str] = {}
     fill_count = 0
     last_time = -1
 
@@ -93,6 +94,12 @@ def account_portfolio_fills(fills) -> PortfolioAccountingLedger:
             raise ValueError("PortfolioFill ledger required")
         if not isinstance(fill.code, str) or not fill.code:
             raise ValueError("fill code required")
+        if not isinstance(fill.venue, str) or not fill.venue:
+            raise ValueError("fill venue required")
+        previous_venue = venues.get(fill.code)
+        if previous_venue is not None and previous_venue != fill.venue:
+            raise ValueError("one venue per code accounting contract required")
+        venues[fill.code] = fill.venue
         if fill.side not in ("buy", "sell"):
             raise ValueError("fill side must be buy or sell")
         if type(fill.quantity) is not int or fill.quantity <= 0:
@@ -129,6 +136,8 @@ def account_portfolio_fills(fills) -> PortfolioAccountingLedger:
             if quantity == 0:
                 cost_basis = Fraction(0)
 
+        if quantity < 0 or cost_basis < 0:
+            raise ArithmeticError("accounting state cannot become negative")
         positions[fill.code] = (quantity, cost_basis)
         fill_count += 1
         last_time = fill.time_ns
