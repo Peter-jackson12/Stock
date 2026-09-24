@@ -201,6 +201,8 @@ def test_selected_unsigned_direction_pair_is_quarantined_only_with_explicit_poli
     "signed_minus",
     "volume_mismatch",
     "wrong_direction_policy",
+    "wrong_price_policy",
+    "wrong_real_type",
     "wrong_normalization",
 ])
 def test_selected_direction_quarantine_rejects_unapproved_raw_shapes(mutation):
@@ -213,6 +215,10 @@ def test_selected_direction_quarantine_rejects_unapproved_raw_shapes(mutation):
         tick["raw_fields"]["fids"]["15"] = " 11"
     elif mutation == "wrong_direction_policy":
         tick["raw_fields"]["direction_policy"] = "other"
+    elif mutation == "wrong_price_policy":
+        tick["raw_fields"]["price_policy"] = "positive_only"
+    elif mutation == "wrong_real_type":
+        tick["raw_fields"]["real_type"] = "other"
     elif mutation == "wrong_normalization":
         tick["raw_fields"]["normalization"] = "other"
 
@@ -229,6 +235,41 @@ def test_selected_direction_quarantine_rejects_unapproved_raw_shapes(mutation):
         "trade_direction_unverified": 1
     }
 
+
+
+
+def test_actual_blocker_shape_is_quarantine_candidate_under_explicit_policy():
+    tick = trade(
+        1,
+        1,
+        is_buy=None,
+        issues=("trade_direction_unverified",),
+    )
+    tick["event"] = replace(
+        tick["event"],
+        price=264000,
+        volume=237016,
+        market_second=32451,
+    )
+    tick["raw_fields"]["fids"].update({
+        "10": "+264000",
+        "14": "62573",
+        "15": " 237016",
+        "20": "090025",
+        "27": "+264000",
+        "28": "+263500",
+    })
+    tick["exchange_ts_raw"] = "090025"
+
+    result = evaluate(
+        tick,
+        parse_error(tick),
+        unknown_direction_policy=QUARANTINE_UNKNOWN_DIRECTION_POLICY,
+    )
+
+    assert result["selected_smoke_quality_eligible"] is True
+    assert result["quarantine"]["selected_unknown_direction_pairs"] == 1
+    assert result["disqualifying"]["selected_issue_pairs"] == 0
 
 def test_unselected_trade_direction_pair_is_ignored_for_selected_smoke_only():
     other = trade(1, 1, code="111111", is_buy=None, issues=("trade_direction_unverified",))
