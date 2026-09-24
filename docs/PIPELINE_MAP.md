@@ -225,7 +225,8 @@ prefix를 부적격으로 만든다. 반대로 sentinel 뒤의 tail은 의도적
 결과에는 반드시 다음을 분리해 남긴다.
 
 - `prefix_structure_verified`
-- `prefix_research_eligible`
+- `smoke_backtest_eligible` — 실행 파이프라인 smoke용이며 전략 성과 적격성은 아님
+- `performance_research_eligibility.assessed=false`
 - `prefix_event_sha256` — 이번 실행이 읽은 prefix bytes의 식별자이며 producer-stored checksum이 아님
 - `scope.tail_scanned=false`
 - `scope.whole_stream_assessed=false`
@@ -240,6 +241,8 @@ frozen incomplete manifest도 외부 종료 근거와 boundary sentinel이 있�
 write/delete handle 배제, source stat 불변, **모든 SQLite sidecar 부재**가 필요하다.
 현재 보고된 운영 원본의 `-wal 0 / -shm 32768` 상태를 이 도구가 정리하거나 무시하지 않는다.
 실제 50GB 적용 전에는 원본 비변경의 별도 frozen snapshot 확보 절차가 필요하다.
+
+bounded scan은 producer의 whole-stream payload checksum을 검증하지 않으므로 성과 연구 적격성은 별도로 미평가다. 실제 성과 주장 전에는 전체 checksum 또는 사전에 기록된 immutable file-hash anchor 등 추가 provenance 계약이 필요하다.
 
 prefix 시간대는 성과를 본 뒤 고르는 파라미터가 아니다. 예를 들어 09:00~10:00 전략을 연구한다면
 10:00 cutoff를 성과 확인 전에 고정한다. 이후 tail 장애를 이유로 유리한 종료 시각을 사후 선택하지 않는다.
