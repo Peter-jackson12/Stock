@@ -12,7 +12,8 @@
 Stock에는 이미 [Streamlit 운영 화면](dashboard/app.py)이 있다. 이번 작업은 새 GUI를 만든 것이 아니다.
 새 [stock.cmd](stock.cmd)와 [stock.ps1](stock.ps1)은 긴 Python/Streamlit 명령을 기억하지 않게 하는
 얇은 진입점이다. [Python 도우미](scripts/stock_operator.py)는 기존
-[상태 판독기](control_tower/status.py)를 재사용한다.
+[상태 판독기](control_tower/status.py)와 운영 화면이 함께 쓰는
+[읽기 전용 환경 목록 점검](control_tower/operator_environment.py)을 재사용한다.
 
 | 목적 | 현재 경로 | 혼동하지 말 것 |
 |---|---|---|
@@ -51,6 +52,8 @@ PowerShell 스크립트를 선호하면 같은 기능을 쓸 수 있다.
 필수 파일 존재와 GUI 주요 패키지의 설치 metadata다. 실제 import, 패키지 버전 호환성,
 lock 일치, GUI 기동, 네트워크, OCX, 디스크 용량, 시장 일정은 인증하지 않는다.
 `.venv32`는 파일 존재만 확인하며 실행하지 않는다. 없어도 GUI용 목록 점검을 실패시키지 않는다.
+같은 목록은 운영 화면의 **Operator 요약 → 읽기 전용 환경 점검**에서도 확인할 수 있다.
+화면도 자동 설치·수정·`uv sync`·OCX 생성·로그인·수집 시작·시장 조회를 하지 않는다.
 
 `PASS`는 해당 작은 점검만 통과했다는 뜻이다. `FAIL`이면 자동 수정하지 말고 표시된 항목을 확인한다.
 Python 도우미의 종료 코드 `0`은 보고서 출력 성공, `1`은 환경 목록 미충족 또는 점검 오류,

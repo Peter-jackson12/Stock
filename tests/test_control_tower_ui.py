@@ -36,6 +36,28 @@ def test_initial_screen_never_starts_worker_or_creates_jobs(tmp_path, monkeypatc
     assert not ui.ManagedCaptures(tmp_path).path.exists()
 
 
+def test_environment_inventory_is_read_only_and_keeps_pass_narrow(tmp_path, monkeypatch):
+    calls = []
+
+    def inspect(root):
+        calls.append(root)
+        return {
+            "inventory_passed": True,
+            "checks": [
+                {"name": "windows", "status": "PASS", "detail": "win32"},
+                {"name": "collector_runtime_file", "status": "WARN", "detail": "파일 없음"},
+            ],
+        }
+
+    monkeypatch.setattr(ui, "inspect_operator_environment", inspect)
+    app = screen(tmp_path)
+    assert not app.exception and calls == [tmp_path]
+    assert any(item.label == "읽기 전용 환경 점검" for item in app.expander)
+    assert any("[PASS] windows: win32" in item.value for item in app.text)
+    assert any("GUI 정상 기동·수집 준비·OCX 준비" in item.value for item in app.caption)
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_capture_start_requires_click_and_stop_is_durable(tmp_path, monkeypatch):
     calls = []
     def start(root, codes, duration, server):
