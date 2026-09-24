@@ -51,6 +51,7 @@ def _strategy_code_identity() -> dict[str, str]:
         "engine/nxt_portfolio_research.py",
         "strategies/nxt_breakout/portfolio_adapter.py",
         "strategies/nxt_breakout/tick_research.py",
+        "strategies/nxt_breakout/direction_window.py",
         "engine/nxt_tick_engine.py",
     )
     return {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in names}
@@ -104,6 +105,7 @@ def _finalize_report(report: dict, *, dataset_label: str, strategy: NxtPortfolio
 def run_nxt_portfolio(events, *, output_root, dataset_label, simulator_config,
                       close_ns, quantity, exit_rule="fixed",
                       cooldown_ns=10_000_000_000, params=None,
+                      unknown_direction_policy="strict",
                       input_provenance=None):
     """Persist one NXT strategy run over a shared account.
 
@@ -124,6 +126,7 @@ def run_nxt_portfolio(events, *, output_root, dataset_label, simulator_config,
         exit_rule=exit_rule,
         cooldown_ns=cooldown_ns,
         params=params,
+        unknown_direction_policy=unknown_direction_policy,
     )
     strategy_settings = strategy.settings()
     provenance = deepcopy(input_provenance)
