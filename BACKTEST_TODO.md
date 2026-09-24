@@ -117,9 +117,9 @@ whole-file strict candidate와 구분하는 별도 bounded 경로다.
 이 PASS는 bounded selected input → strategy → portfolio simulator 연결 완료만 뜻한다.
 strategy performance, NXT venue, whole raw, live readiness를 승인하지 않는다.
 
-**다음 증거:** result의 실제 buy/sell/order/fill을 원본 exact seq lookup으로 대표 사례 대조한 뒤,
-같은 input/settings/code의 명시적 두 번째 smoke 1회로 reproducibility를 확인한다.
-그 전에는 이 경로를 performance-research input으로 승격하지 않는다.
+**완료된 후속 증거:** result의 실제 buy/sell/order/fill은 원본 exact seq lookup으로 대표 사례 대조를 마쳤고,
+같은 input/settings/code의 명시적 두 번째 smoke 1회로 reproducibility도 확인했다.
+이 완료는 bounded strategy-research input 승인 근거이며 performance-research 승격을 뜻하지 않는다.
 
 ### 기본 경로 A — 9월 21일 실행 결과
 
@@ -218,13 +218,14 @@ performance-research 미승격 이유:
 2. `venue=unknown`이며 NXT 원천 인증이 아니다.
 3. 실제 검증 입력이 한 날짜·한 종목·10:00 bounded prefix 하나다.
 4. 실제 왕복 사례는 1건뿐이며 성과 표본으로 해석할 수 없다.
-5. accounting pure contract와 NXT `performance_accounting` subrecord는 구현됐지만,
-   legacy top-level PnL/equity는 null이고 open-position final fresh-bid provenance 및
-   실제 bounded accounting regression은 아직 완료 전이다.
+5. accounting pure contract, NXT `performance_accounting` subrecord, final fresh-bid provenance와
+   실제 selected-v2 bounded accounting regression까지 PASS했다. 다만 이는 회계 구현 회귀 확인이며
+   단일 왕복을 performance 표본으로 승격하는 근거가 아니다. legacy top-level PnL/equity는 계속 null이다.
 6. 학습/조정 구간과 평가 구간 분리, 비용/지연 민감도, 여러 시장 상황 검증이 아직 없다.
 
-따라서 다음 개발은 이 데이터의 성과를 더 캐는 것이 아니라
-**평가 회계(PnL/equity/marking) 계약을 합성부터 구현하고, 실제 데이터는 회귀 fixture로만 사용**한다.
+따라서 이 데이터의 성과를 더 캐거나 parameter tuning으로 넘어가지 않는다.
+**평가 회계(PnL/equity/marking) 계약과 actual bounded 회귀는 완료됐으므로, 실제 result는 회귀 fixture로 보존하고
+다음 연구 단계는 여러 독립적인 품질확인 실제 입력을 확보하는 쪽으로 이동한다.**
 
 ## 4. 첫 시험 실행과 결과 대조
 
@@ -246,10 +247,36 @@ selected-v2 bounded input은 strategy-research fixture로 승인됐지만 perfor
 - [x] fill cashflow ↔ simulator cash reconciliation contract — PR #46
 - [x] NXT result finalization에 `performance_accounting` subrecord integration focused regression — PR #47, 119 passed
 - [x] open-position final fresh-bid mark provenance integration focused regression — PR #48, latest-master combined 179 passed
-- [ ] actual selected-v2 bounded smoke를 새 accounting/mark 코드로 정확히 1회 재실행해
-  execution trace 불변 + performance_accounting identity를 검증
-- [ ] accounting subrecord 실제 bounded 회귀까지 확인 후 legacy top-level PnL/equity schema migration 필요성 검토
-- [ ] actual selected-v2 result는 회귀 fixture로만 사용하며 parameter tuning에 사용하지 않음
+- [x] actual selected-v2 bounded smoke를 새 accounting/mark 코드로 정확히 1회 재실행해
+  execution trace 불변 + performance_accounting identity를 검증. `005930 selected-v2 actual accounting regression: PASS`
+- [ ] legacy top-level PnL/equity schema migration 필요성은 별도 검토한다. 현재 다음 실제 입력 확보의 blocker는 아니다.
+- [x] actual selected-v2 result는 회귀 fixture로만 사용하며 parameter tuning에 사용하지 않음
+
+### Independent actual input candidate 01 — 사전등록, 아직 미실행
+
+두 번째 날짜의 actual regression fixture를 결과 확인 전에 고정한다.
+
+- [ ] source/session: `2026-09-18 / 21f8c124e64e421893275ccdc83818ad`
+- [ ] historical raw path 존재/identity/종료 근거/프로세스 부재/sidecar 상태를 원본 비변경으로 재확인
+- [ ] 필요 시 기존 frozen snapshot acquisition으로 별도 working copy 생성
+- [ ] strict bounded prefix: **10:00:00 KST exclusive**, 정확히 1회
+- [ ] selected overlay: **`005930=unknown`**, `unknown_direction_recent_window_quarantine_v0`, 정확히 1회
+- [ ] selected gate PASS일 때만 2026-09-21과 동일 smoke/accounting 설정으로 replay 정확히 1회
+- [ ] execution/result/accounting/provenance와 한계를 기록하고 결과 파일은 Git에 추가하지 않음
+
+고정 smoke 설정: quantity 1 / cash 1,000,000 / fee 0.001 per-side /
+buy·sell·cancel latency 각 1초 / max quote age 2초 / cooldown 10초 / fixed exit.
+
+중단 규칙:
+
+- raw 부재, identity/closure 불일치, 보호 조건 불충족, snapshot 실패, prefix 구조 실패,
+  selected gate false면 **FAIL/INCONCLUSIVE로 중단**한다.
+- 결과를 보고 cutoff·종목·policy·parameter를 바꾸거나 다른 과거 raw로 자동 대체하지 않는다.
+- whole-file quality failure와 말미 방향 미확인 8건은 그대로 유지한다.
+- PASS여도 performance-research·수익성·robustness·NXT venue·whole raw·live 승격은 하지 않는다.
+
+비교 가능한 고정 cutoff를 우선하므로 2026-09-17 `cf18cb43…` 세션은 12:35경 시작한
+시간 범위 때문에 candidate 01에서 제외한다.
 
 ## 5. 첫 시험 이후 — 전략 평가
 
