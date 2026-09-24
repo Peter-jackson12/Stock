@@ -25,6 +25,8 @@ from collections import Counter
 
 from collector.raw_v2 import CaptureControl
 from collector.zero_quote_policy_experiment import (
+    ASK_ISSUE,
+    BID_ISSUE,
     classify_one_sided_zero_quote,
     classify_paired_zero_quote,
 )
@@ -33,6 +35,11 @@ from engine.tick_ordering import OrderedTick
 
 POLICY = "selected_instrument_smoke_quality_v0"
 SAFE_CONTROL_TYPES = {"session_start", "session_note"}
+IGNORABLE_UNSELECTED_ISSUES = {
+    ASK_ISSUE,
+    BID_ISSUE,
+    "trade_direction_unverified",
+}
 
 
 def _tick_issues(envelope):
@@ -188,9 +195,16 @@ class SelectedInstrumentSmokePolicy:
                 for issue in issues:
                     self.selected_disqualifying_issues[issue] += 1
         else:
-            self.unselected_issue_pairs_ignored += 1
-            for issue in issues:
-                self.unselected_ignored_issues[issue] += 1
+            if set(issues) <= IGNORABLE_UNSELECTED_ISSUES:
+                self.unselected_issue_pairs_ignored += 1
+                for issue in issues:
+                    self.unselected_ignored_issues[issue] += 1
+            else:
+                self.unsafe_controls += 1
+                for issue in issues:
+                    self.global_disqualifying_issues[
+                        "unselected_unapproved_issue:" + issue
+                    ] += 1
 
         self._pending = None
         return True
@@ -289,6 +303,7 @@ class SelectedInstrumentSmokePolicy:
                 "strict_prefix_qualification_unchanged": True,
                 "nxt_smoke_gate_unchanged": True,
                 "unselected_issues_require_exact_mirrored_pair": True,
+                "unselected_ignored_issues_are_whitelisted": True,
                 "selected_zero_quote_is_non_executable_quarantine_only": True,
                 "selected_trade_direction_unverified_is_disqualifying": True,
                 "unsafe_controls_are_global": True,
