@@ -33,8 +33,10 @@ from collector.zero_quote_policy_experiment import (
 from engine.tick_ordering import OrderedTick
 
 
-POLICY = "selected_instrument_smoke_quality_v0"
+POLICY = "selected_instrument_smoke_quality_v1"
 SAFE_CONTROL_TYPES = {"session_start", "session_note"}
+MAX_SELECTED_DISQUALIFYING_EXAMPLES = 10
+EXAMPLE_FIDS = ("10", "14", "15", "20", "21", "27", "28", "41", "51")
 IGNORABLE_UNSELECTED_ISSUES = {
     ASK_ISSUE,
     BID_ISSUE,
@@ -116,6 +118,7 @@ class SelectedInstrumentSmokePolicy:
 
         self.selected_disqualifying_pairs = 0
         self.selected_disqualifying_issues = Counter()
+        self.selected_disqualifying_examples = []
         self.unselected_unapproved_issue_pairs = 0
         self.unpaired_issue_ticks = 0
         self.unsafe_controls = 0
@@ -139,16 +142,54 @@ class SelectedInstrumentSmokePolicy:
         self.expected_seq += 1
         self.last_received_ns = event.received_ns
 
+    def _record_selected_disqualifying_example(self, envelope, issues, *, control=None, reason):
+        if len(self.selected_disqualifying_examples) >= MAX_SELECTED_DISQUALIFYING_EXAMPLES:
+            return
+        event = envelope["event"]
+        raw = envelope.get("raw_fields") if isinstance(envelope, dict) else None
+        fids = raw.get("fids") if isinstance(raw, dict) else None
+        raw_fids = (
+            {key: fids[key] for key in EXAMPLE_FIDS if key in fids}
+            if isinstance(fids, dict) else {}
+        )
+        normalized_names = (
+            ("price", "volume", "is_buy")
+            if event.kind == "trade"
+            else ("bid", "ask", "bid_size", "ask_size")
+        )
+        normalized = {
+            name: getattr(event, name)
+            for name in normalized_names
+        }
+        self.selected_disqualifying_examples.append({
+            "tick_seq": event.seq,
+            "control_seq": control.seq if isinstance(control, CaptureControl) else None,
+            "received_ns": event.received_ns,
+            "received_at_utc": envelope.get("received_at_utc"),
+            "exchange_ts_raw": envelope.get("exchange_ts_raw"),
+            "code": event.code,
+            "venue": event.venue,
+            "kind": event.kind,
+            "market_second": event.market_second,
+            "issues": list(issues),
+            "reason": reason,
+            "raw_fids": raw_fids,
+            "normalized": normalized,
+            "paired_parse_error": isinstance(control, CaptureControl),
+        })
+
     def _reject_pending(self, reason):
         if self._pending is None:
             return
         envelope, selected, issues = self._pending
-        event = envelope["event"]
         self.unpaired_issue_ticks += 1
         self.global_disqualifying_issues[reason] += 1
         for issue in issues:
             self.global_disqualifying_issues[issue] += 1
         if selected:
+            self._record_selected_disqualifying_example(
+                envelope, issues, reason=reason
+            )
             for issue in issues:
                 self.selected_disqualifying_issues[issue] += 1
         self._pending = None
@@ -193,6 +234,12 @@ class SelectedInstrumentSmokePolicy:
                 self.selected_zero_quote_by_side[zero.side] += 1
             else:
                 self.selected_disqualifying_pairs += 1
+                self._record_selected_disqualifying_example(
+                    envelope,
+                    issues,
+                    control=control,
+                    reason="selected_issue_pair_disqualifying",
+                )
                 for issue in issues:
                     self.selected_disqualifying_issues[issue] += 1
         else:
@@ -296,6 +343,8 @@ class SelectedInstrumentSmokePolicy:
             "disqualifying": {
                 "selected_issue_pairs": self.selected_disqualifying_pairs,
                 "selected_issue_counts": dict(sorted(self.selected_disqualifying_issues.items())),
+                "selected_issue_examples": list(self.selected_disqualifying_examples),
+                "selected_issue_example_limit": MAX_SELECTED_DISQUALIFYING_EXAMPLES,
                 "unselected_unapproved_issue_pairs": self.unselected_unapproved_issue_pairs,
                 "unpaired_issue_ticks": self.unpaired_issue_ticks,
                 "unsafe_controls": self.unsafe_controls,

@@ -480,3 +480,24 @@ selected overlay가 true여도 기존 `run_nxt_prefix_smoke.py`는 여전히 str
 `smoke_backtest_eligible=true` report만 받는다. selected overlay용 smoke runner는 아직 없다.
 
 실제 50GB에 적용하기 전 Windows synthetic focused regression을 먼저 통과해야 한다.
+
+
+<a id="selected-quality-bounded-examples"></a>
+## 15. selected disqualifying bounded examples candidate
+
+[SelectedInstrumentSmokePolicy](../collector/selected_instrument_smoke_policy.py)는 selected issue의 eligibility를
+바꾸지 않고, selected disqualifying record를 최대 10건까지 diagnostic example로 보존하는 후보 변경을 둔다.
+
+example에는 다음만 기록한다.
+
+- tick seq / paired control seq
+- received_ns / received_at_utc / exchange_ts_raw
+- code / venue / kind / market_second
+- issue list / 진단 reason
+- 관련 FID subset: 10, 14, 15, 20, 21, 27, 28, 41, 51
+- kind별 relevant normalized fields: trade는 price/volume/is_buy, quote는 bid/ask/bid_size/ask_size
+- paired_parse_error 여부
+
+이 필드는 selected smoke-quality 판정에 사용되지 않는다.
+`MAX_SELECTED_DISQUALIFYING_EXAMPLES=10`으로 bounded하며 raw 전체 FID dict나 payload를 복제하지 않는다.
+목적은 실제 selected-prefix overlay에서 소수 selected blocker를 다시 50GB 전체 검색 없이 식별하는 것이다.

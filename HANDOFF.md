@@ -96,8 +96,16 @@ selected issue pair 1건의 `trade_direction_unverified` 1건으로 `selected_sm
 whole-prefix 연구 품질·격리 quote 실행 권한·전략 성과는 승격되지 않았다.
 NXT smoke·GitHub Actions는 실행하지 않았다.
 
-다음 한 단계는 **`005930 selected quality bounded investigation`**이다. 선택 종목의 방향 미확인 1건을
-제한된 범위에서 조사하되 방향을 추론하거나 FID15를 보정하지 않는다.
+다음 한 단계는 **`005930 selected quality bounded investigation`**이다.
+
+현재 작업 branch `feat/selected-quality-examples-20260924`는 eligibility 로직을 바꾸지 않고,
+`SelectedInstrumentSmokePolicy`의 selected disqualifying issue에 최대 10개의 bounded example 진단만 추가한다.
+example에는 tick/control seq, received_ns/UTC, code/venue/kind, exchange_ts_raw, 관련 raw FID subset,
+normalized price/volume/is_buy와 exact parse_error pair 여부를 기록한다.
+
+목적은 실제 overlay를 딱 한 번 다시 실행했을 때 005930의 유일한 `trade_direction_unverified` 1건을
+정확히 특정하는 것이다. 방향 추론·FID15 보정·NXT smoke는 여전히 금지한다.
+merge 전 focused local test만 수행하며 GitHub Actions는 실행하지 않는다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
