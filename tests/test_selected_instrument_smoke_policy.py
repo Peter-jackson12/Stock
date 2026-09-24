@@ -150,6 +150,23 @@ def test_selected_trade_direction_pair_is_disqualifying():
     assert result["selected_smoke_quality_eligible"] is False
     assert result["disqualifying"]["selected_issue_pairs"] == 1
     assert result["disqualifying"]["selected_issue_counts"] == {"trade_direction_unverified": 1}
+    assert result["disqualifying"]["selected_issue_examples"] == [{
+        "tick_seq": 1,
+        "control_seq": 2,
+        "received_ns": 1,
+        "received_at_utc": UTC,
+        "exchange_ts_raw": "090001",
+        "code": "005930",
+        "venue": "unknown",
+        "kind": "trade",
+        "market_second": 32401,
+        "issues": ["trade_direction_unverified"],
+        "reason": "selected_issue_pair_disqualifying",
+        "raw_fids": {"10": "-10000", "15": " 10", "20": "090001"},
+        "normalized": {"price": 10000, "volume": 10, "is_buy": None},
+        "paired_parse_error": True,
+    }]
+    assert result["disqualifying"]["selected_issue_example_limit"] == 10
     assert result["contracts"]["selected_trade_direction_unverified_is_disqualifying"] is True
 
 
@@ -274,3 +291,28 @@ def test_source_session_change_is_rejected():
     changed["event"] = replace(changed["event"], session_id="other")
     with pytest.raises(ValueError, match="identity"):
         policy.accept(changed)
+
+
+
+def test_selected_disqualifying_examples_are_bounded_to_ten():
+    policy = SelectedInstrumentSmokePolicy(SELECTED)
+    for index in range(12):
+        seq = index * 2 + 1
+        tick = trade(
+            seq,
+            index + 1,
+            is_buy=None,
+            issues=("trade_direction_unverified",),
+        )
+        policy.accept(tick)
+        policy.accept(parse_error(tick))
+    result = policy.result()
+
+    assert result["disqualifying"]["selected_issue_pairs"] == 12
+    assert result["disqualifying"]["selected_issue_counts"] == {
+        "trade_direction_unverified": 12
+    }
+    examples = result["disqualifying"]["selected_issue_examples"]
+    assert len(examples) == 10
+    assert [item["tick_seq"] for item in examples] == list(range(1, 20, 2))
+    assert all(item["paired_parse_error"] is True for item in examples)
