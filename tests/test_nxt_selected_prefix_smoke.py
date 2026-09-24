@@ -147,7 +147,7 @@ def build_raw(path, *, scenario="direction"):
         append(
             writer,
             CaptureControl("fixture", "s", 1, 0, "session_start", {}),
-            "2026-09-20T23:59:58Z",
+            "2026-09-20T23:49:58Z",
             raw_fields={},
             exchange_ts_raw=None,
         )
@@ -342,6 +342,9 @@ def test_selected_zero_quote_pair_is_withheld_from_strategy_input(tmp_path):
     selected = selected_report(raw, strict, tmp_path)
     selected_data = json.loads(selected.read_text(encoding="utf-8"))
 
+    assert selected_data["status"] == "completed"
+    assert selected_data["selected_prefix_structure_verified"] is True
+    assert selected_data["selected_smoke_quality_eligible"] is True
     assert selected_data["selected_policy_result"]["quarantine"]["selected_zero_quote_pairs"] == 1
     result = run_nxt_selected_prefix_smoke(
         raw,
