@@ -427,3 +427,56 @@ zero-quote quarantine은 execution 허가가 아니다. 기존 quote validation�
 
 실데이터에 연결하기 전 focused local regression을 먼저 통과해야 하며,
 이 단계에서는 실제 50GB prefix 재스캔이나 selected instrument 결과를 생성하지 않는다.
+
+
+<a id="selected-prefix-overlay"></a>
+## 14. strict prefix 위 selected-instrument quality overlay candidate
+
+[selected prefix overlay](../collector/raw_v2_selected_prefix_qualification.py)와
+[CLI](../scripts/qualify_raw_v2_selected_prefix.py)는 기존
+`raw_v2_prefix_qualification_v1` 결과를 수정하거나 대체하지 않는다.
+
+입력은 다음 세 가지다.
+
+- strict prefix report
+- 그 report가 가리키는 정확히 같은 raw path
+- 명시적 `CODE=VENUE` selected instrument mapping
+
+overlay는 strict report가 이미 `prefix_structure_verified=true`인 경우에만 시작한다.
+strict report의 `smoke_backtest_eligible`은 true일 필요가 없다. 즉 whole-prefix quality가
+엄격 정책에서 실패했더라도 구조적으로 검증된 prefix라면 selected-policy를 별도로 평가할 수 있다.
+
+overlay는 같은 raw를 Windows local NTFS + no-sidecar + write/delete exclusion 상태로 다시 읽고
+prefix 전체에 대해 기존 strict diagnostics를 재계산한다. 다음 값이 strict report와 모두 같아야 한다.
+
+- manifest
+- prefix_event_sha256
+- records_consumed_through_sentinel
+- boundary sentinel
+- counts
+- quality_diagnostics
+
+하나라도 다르면 selected overlay 자체가 실패한다.
+
+그 동일 ordered prefix에 §13의 `SelectedInstrumentSmokePolicy`를 병렬 적용한다.
+따라서 비선택 종목의 whitelisted exact pair를 selected-strategy 관점에서 분리하더라도
+strict report의 원래 quality failure는 그대로 보존된다.
+
+새 report는 다음을 명시한다.
+
+- schema = `raw_v2_selected_prefix_qualification_v1`
+- `selected_prefix_structure_verified`
+- `selected_smoke_quality_eligible`
+- selected policy result
+- strict report path / SHA-256 / run id
+- strict revalidation 결과
+- `whole_prefix_research_quality_upgraded=false`
+- `strict_prefix_qualification_unchanged=true`
+- `nxt_smoke_gate_unchanged=true`
+- `performance_research_eligibility.assessed=false`
+
+strict report SHA-256은 content backreference이지 외부 서명이나 파일 immutability 증명은 아니다.
+selected overlay가 true여도 기존 `run_nxt_prefix_smoke.py`는 여전히 strict
+`smoke_backtest_eligible=true` report만 받는다. selected overlay용 smoke runner는 아직 없다.
+
+실제 50GB에 적용하기 전 Windows synthetic focused regression을 먼저 통과해야 한다.
