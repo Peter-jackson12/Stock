@@ -89,6 +89,10 @@ def test_open_position_result_has_accounting_but_no_fabricated_mark_valuation(tm
     assert saved["unrealized_pnl"] is None
     assert saved["equity"] is None
     assert "execution/portfolio_accounting.py" in saved["code_sha256"]
+    assert "no_pnl_valuation_no_forced_liquidation" not in saved["limitations"]
+    assert "performance_accounting_subrecord_only_legacy_top_level_pnl_fields_unpopulated" in saved["limitations"]
+    assert "open_position_final_bid_mark_integration_not_connected" in saved["limitations"]
+    assert "no_forced_liquidation" in saved["limitations"]
 
 
 def test_flat_result_has_exact_realized_accounting_and_equity(tmp_path):
