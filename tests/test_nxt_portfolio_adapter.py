@@ -9,7 +9,7 @@ from engine.nxt_portfolio_research import NxtPortfolioRunFailed, run_nxt_portfol
 from engine.portfolio_session import replay_portfolio_chunk
 from engine.tick_ordering import OrderedTick
 from engine.tick_session import replay_chunk
-from execution.portfolio_simulator import PortfolioSimulator
+from execution.portfolio_simulator import PortfolioSimulator, RiskLimits
 from execution.tick_simulator import TickSimulator
 from strategies.nxt_breakout.portfolio_adapter import NxtPortfolioStrategy
 from strategies.nxt_breakout.tick_research import NxtResearchStrategy
@@ -274,3 +274,23 @@ def test_runner_output_cash_matches_fill_ledger(tmp_path):
     fill = saved["account"]["fills"][0]
     expected = Decimal("100000") - Decimal(fill["price"]) * fill["quantity"] - Decimal(fill["fee"])
     assert Decimal(saved["account"]["cash"]) == expected
+
+
+def test_runner_accepts_explicit_risk_limits_object(tmp_path):
+    config = portfolio_config()
+    config["risk"] = RiskLimits(
+        max_position_per_symbol={"A": 2},
+        max_gross_exposure="50000",
+        max_open_orders=1,
+    )
+    path = run_nxt_portfolio(
+        [quote()],
+        output_root=tmp_path,
+        dataset_label="risk-config",
+        simulator_config=config,
+        close_ns=20,
+        quantity=1,
+    )
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["settings"]["risk"]["max_open_orders"] == 1
+    assert saved["settings"]["risk"]["max_position_per_symbol"] == {"A": 2}
