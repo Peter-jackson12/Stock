@@ -345,7 +345,7 @@ def qualify_selected_prefix(raw_path, strict_prefix_report, *, output_root, inst
             "reason": "selected-instrument pipeline-smoke quality does not certify whole-prefix or strategy performance research",
         },
         "contracts": {
-            "strict_prefix_report_immutable_backreference": True,
+            "strict_prefix_report_sha256_backreference_recorded": True,
             "strict_prefix_qualification_unchanged": True,
             "whole_prefix_research_quality_upgraded": False,
             "nxt_smoke_gate_unchanged": True,
