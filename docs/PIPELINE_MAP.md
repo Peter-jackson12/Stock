@@ -2,7 +2,8 @@
 
 [문서 인덱스](../README.md) · [현재 인계](../HANDOFF.md) · [첫 시험 체크리스트](../BACKTEST_TODO.md)
 
-점검 기준: `1ca29221598830d521530a0b2f9bb64961c2086d`, 2026-09-20.
+기존 §1–5 점검 기준: `1ca29221598830d521530a0b2f9bb64961c2086d`, 2026-09-20.
+§6은 2026-09-24 공유 계좌 연구 경로의 추가다. 기존 raw/수집 경로를 대체하지 않는다.
 이 문서는 **코드 연결·진입점 차이·구조 개선의 우선순위**를 담당한다. 실행 옵션의 상세 계약은 각 런북을 따른다.
 원격 코드/관련 회귀를 대조한 구조 감사이며 모든 모듈의 전수 실행·실피드·로컬 데이터 검증은 아니다.
 
@@ -119,4 +120,57 @@ ARCHITECTURE_V2와 REFACTORING_PLAN에는 아직 참조되는 계약·스키마�
 새 상태 머신·자동 재로그인·대형 범용 오케스트레이터를 먼저 만들지 않는다.
 현재 없는 통합 명령을 사용 안내에 실행 가능한 것으로 싣지 않는다.
 
-이번 변경은 문서와 문서 회귀에 한정한다. 큐/정규화/저장/수집 종료/연구 실행의 런타임 코드는 유지한다.
+위 §1–5의 2026-09-20 변경은 문서와 문서 회귀에 한정했다. 이후 추가는 아래에서 구분한다.
+
+
+<a id="portfolio-research"></a>
+## 6. 다종목 공유 계좌 — 별도 opt-in 합성 연구 경로
+
+```text
+OrderedTick (단일 source/session의 공통 seq)
+  → PortfolioSimulator.on_event: 이전 호가 타이머 → 새 이벤트 → 기존 주문 매칭
+  → strategy(TickView, 불변 PortfolioSnapshot)
+  → 순서가 명시된 OrderIntent / CancelIntent list 또는 tuple
+  → 공유 현금·종목별 수량·예약·RiskLimits·주문 상태 전이
+  → 메모리 내 portfolio_research_result_v1 dict
+```
+
+구현은 [공유 계좌 엔진](../execution/portfolio_simulator.py),
+[주문 의도 드라이버](../engine/portfolio_session.py),
+[합성 회귀](../tests/test_portfolio_simulator.py)다.
+`ReceiveOrderReplay`, top-of-book 검증, 기존 정확한 현금 산술을 재사용한다.
+`execution/account.py`와 `execution/broker.py`의 Phase E stub을 구현 완료로 해석하지 않는다.
+
+**기존 경로와의 차이:** `TickSimulator`의 자원 부족 시 대기/재시도 계약을 바꾸지 않는다.
+새 경로는 `portfolio_reservation_v1`로 주문 접수 때 미체결 전량의 ask+fee 또는 매도 수량을
+예약한다. 접수 순번으로 자본을 배분하며 종목 사전 순서나 주문 ID 정렬로 우선순위를 바꾸지 않는다.
+접수 시 호가가 없거나 유효하지 않으면 명시적 거절이다. 접수 후 호가가 stale/invalid이면 체결을 보류한다.
+매칭 직전 새 ask로 잔여 전량의 비용·한도를 재검사하고, 부족하면 잔량만 rejected로 끝낸다.
+이미 발생한 체결은 되돌리지 않으며 부분 접수/자금 부족 무기한 재시도 정책과 구분한다.
+
+주문 상태는 created/pending/active/partially_filled/filled/cancel_pending/cancelled/expired/rejected다.
+취소 확인 전에는 체결과 예약이 유지된다. 같은 시각의 취소 확인은 모든 종목의 체결보다 먼저다.
+종료는 exclusive이며 잔량 만료/예약 해제만 한다. 보유 주식을 마지막 가격으로 가짜 청산하지 않는다.
+새 호가 seq는 해당 종목의 표시 잔량을 재설정하지만 체결 tick/타이머는 보충하지 않는다.
+chunk는 같은 엔진·전략 상태를 보존하며 경계에 advance/close를 추가하지 않는다.
+임의의 advance 세분화 불변성은 주장하지 않는다. 모든 공개 호출 순서도 실험 입력이다.
+
+RiskLimits는 종목별 수량·총 노출·open order 상한과 중복/상충 주문 가드를 제공한다.
+총 노출은 fresh ask × (보유량 + 미체결 매수량)의 합이며 수수료를 제외한 매수 대체 원가다.
+`gross_exposure_at_ask`는 equity나 실현/미실현 손익이 아니다. 가격이 오래되면 null/unpriced다.
+총 노출 제한이 활성일 때 관련 보유/매수 종목의 호가가 평가 불가이면 매수를 거절한다.
+매도는 이 노출 한도로 막지 않는다. 미체결 매도는 보유량 한도에서 미리 차감하지 않는다.
+한도 수치는 호출자가 지정하며 실전 투자금/손절률/검증된 증권사 비용을 기본값으로 넣지 않는다.
+
+`run_portfolio(..., simulator_config=..., close_ns=..., strategy=..., strategy_id=...)`는
+입력/설정/코드 5파일/주문 의도와 결과를 기록한 JSON-native dict를 반환한다.
+파일을 쓰거나 DB를 열지 않는다. 실패는 `PortfolioRunFailed.report`에 부분 체결과 시도한 의도를
+`failed/diagnostics_only`로 보존한다. 실제 raw identity/품질 합격은 인증하지 않는다.
+`strategy_id`는 호출자 라벨이며 전략 소스 해시가 아니다. 같은 초기 전략 상태와 결정적인 callback을
+사용해야 반복 재현된다. `realized_pnl`, `unrealized_pnl`, `equity`는 아직 null이다.
+
+**아직 연결하지 않은 것:** NXT 다종목 상태 어댑터, 실제 raw/기존 CLI/화면 입력,
+결과 영속 저장·조회 어댑터, 원가/PnL/equity 평가, Paper/Mock/Live 주문.
+현재 구현은 작은 합성 trace용이며 주문/체결 이력과 snapshot 비용이 커지는 대용량 성능은 검증하지 않았다.
+기존 `run_research`/`run_raw_v2`의 입력 정책과 결과 형식은 그대로다. 합성 성공을
+FIRST_RESEARCH_CANDIDATE 승격이나 실제 데이터 실행 승인으로 해석하지 않는다.
