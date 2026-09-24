@@ -103,24 +103,28 @@ Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. �
 
 ## 다음 행동
 
-PR #37의 zero-quote opt-in evaluator는 focused local test 75 passed 후 master에 통합됐다.
+PR #38의 selected-instrument pure evaluator는 focused local test 97 passed 후 master에 통합됐다.
 
-PR #38로 **selected-instrument smoke-quality pure evaluator**가 master에 통합됐다. 아직 raw reader/prefix report/NXT smoke에는 연결하지 않는다.
+현재 작업 branch `feat/selected-prefix-overlay-20260924`는 기존 strict
+`raw_v2_prefix_qualification_v1` 결과 위에 얹는 **opt-in selected-prefix overlay** 후보를 추가한다.
 
-v0 계약:
-- 전체 stream의 contiguous seq / monotonic received_ns / source-session identity는 유지
-- 선택 종목 clean tick은 허용
-- 선택 종목의 exact one-sided zero-quote + mirrored parse_error pair만 quarantine
-- 선택 종목의 `trade_direction_unverified`와 기타 normalized issue는 disqualifying
-- 비선택 종목 issue는 실제 오전 prefix에서 관측된
-  `out_of_range_fid_41`, `out_of_range_fid_51`, `trade_direction_unverified`에 한해
-  exact mirrored parse_error pair일 때만 selected-smoke 관점에서 비영향으로 분리
-- 비선택 종목의 unknown issue, unpaired/mismatched parse_error, callback/disconnect 등 unsafe control은 전체 차단
-- whole-prefix research quality를 승격하지 않고 execution permission도 바꾸지 않음
+새 overlay는 strict report를 바꾸지 않는다. 같은 sidecar-free raw를 다시 sealed read하여:
+- manifest
+- prefix digest
+- consumed record count
+- boundary sentinel
+- strict counts
+- strict quality diagnostics
+를 기존 strict report와 모두 대조한 뒤, 같은 ordered prefix에
+`SelectedInstrumentSmokePolicy`만 병렬 적용한다.
 
-PR #38 HEAD `3e69f9b297a1f7949e5118f32aed830f900300b5`를 detached worktree에서 Python 3.14.7 / pytest 9.1.1로 focused 검증했고, Python 3.10 grammar PASS, 지정 테스트 97 passed / 0 failed / 0 skipped를 확인했다. GitHub Actions는 실행하지 않았다.
+새 schema는 `raw_v2_selected_prefix_qualification_v1`이다.
+`selected_smoke_quality_eligible`는 future selected-instrument pipeline smoke용 후보 값이며
+whole-prefix research quality·전략 성과·execution permission을 승격하지 않는다.
 
-다음 단계는 기존 strict `raw_v2_prefix_qualification_v1`을 건드리지 않는 **별도 selected-instrument prefix qualification schema/CLI**다. whole-prefix strict 결과와 selected-strategy smoke-quality 결과를 병렬 보존하며, 실제 50GB 재실행 전 합성 fixture로 먼저 검증한다.
+다음 단계는 이 overlay와 기존 strict qualifier/policy evaluator를 detached Windows worktree에서 focused local test로 검증하는 것이다.
+통과 전에는 PR merge, 실제 50GB overlay 실행, selected NXT smoke 연결을 하지 않는다.
+GitHub Actions도 실행하지 않는다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
