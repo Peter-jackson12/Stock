@@ -100,32 +100,35 @@ unknown-direction quarantine pair 1 / zero-quote 0 / selected disqualifying 0,
 새 report에는 policy ID, strict report SHA, direction-window·tick-research SHA가 있다.
 NXT smoke·GitHub Actions·추가 DB 조회는 실행하지 않았다.
 
-현재 작업 branch `feat/selected-prefix-v2-smoke-runner-20260924`는
-**selected-prefix v2 전용 NXT smoke runner** 후보를 추가한다.
-기존 strict `run_nxt_prefix_smoke()`는 수정하지 않는다.
+PR #44의 selected-prefix v2 전용 NXT smoke runner는 최종 HEAD
+`acf7545474ca595cee506def4b50de5032b138e1`에서 Python 3.10 grammar PASS,
+zero-quote targeted retest 1 passed 및 전체 focused tests 126 passed / 0 failed / 0 skipped 후 master에 통합됐다.
+초기 focused run의 1개 실패는 zero-quote synthetic fixture의 receipt clock 역행이었고,
+fixture 시간만 수정한 뒤 재검증했다. production/runner 정책 코드는 그 수정에서 변경하지 않았다.
+GitHub Actions는 실행하지 않았다.
 
-새 candidate `run_nxt_selected_prefix_smoke()`는:
-- schema `raw_v2_selected_prefix_qualification_v2` + selected quality true만 받음
-- explicit policy `unknown_direction_recent_window_quarantine_v0`를 강제
-- selected report가 가리키는 strict report SHA/run id/scope/digest를 다시 확인
-- selected report의 policy/strategy code provenance가 현재 코드와 정확히 같은지 확인
-- 같은 sidecar-free raw prefix를 sealed/immutable로 **한 번만 다시 읽음**
-- strict digest/count/sentinel/diagnostics를 다시 계산
-- selected policy result도 같은 stream에서 다시 계산해 v2 report와 완전 일치 요구
-- selected clean tick은 전략에 전달
-- selected unsigned-direction exact pair는 parse_error pair 확인 후 원 trade를 `is_buy=None` 그대로 전략에 전달
-- selected one-sided zero-quote exact pair는 전략 입력에서 제외
-- 그 외 selected/global issue는 fail-closed
-- 현재는 selected instrument 정확히 1개만 허용
+통합된 `run_nxt_selected_prefix_smoke()`는 기존 strict `run_nxt_prefix_smoke()`와 별도 경로다.
+- eligible `raw_v2_selected_prefix_qualification_v2` + explicit quarantine policy만 수용
+- selected/strict report SHA·run id·scope·digest와 current policy/strategy provenance 확인
+- 같은 sidecar-free raw prefix를 sealed/immutable로 한 번 다시 읽어 strict evidence와 selected policy를 재검증
+- selected clean tick 전달
+- selected unsigned-direction exact pair는 parse_error 확인 후 원 `is_buy=None` trade 전달
+- selected zero-quote pair는 strategy input에서 제외
+- 다른 selected/global issue는 fail-closed
+- 현재 selected instrument 정확히 1개만 지원
 
-runner provenance에는 selected/strict report SHA와 run id, policy ID,
-expected forwarded event count, zero-quote withheld count, unknown-direction forwarded count,
-adapter code SHA를 기록한다.
-전략에는 동일 quarantine policy를 강제로 전달한다.
+다음 단계는 실제 v2 overlay
+`C:\StockSnapshots\raw_v2_snapshot_24f657163264432da7af3ed533656eac\selected_prefix_overlay\a59dbf1f37b64648bf791258ea0f5783\result.json`
+을 입력으로 **005930 selected-v2 pipeline smoke를 정확히 1회 실행**하는 것이다.
 
-이번 candidate가 통과해도 전략 성과·whole raw·NXT venue·live 적격성을 인증하지 않는다.
-다음 단계는 새 runner + 기존 strict smoke + PR #42 strategy path의 focused local regression이다.
-통과 전에는 merge, 실제 8.4M selected smoke 실행, GitHub Actions를 하지 않는다.
+pipeline-smoke 고정 설정은 기존 TICK_RESEARCH_RUNBOOK의 명령 예시를 기준으로 하되 성과/운영 검증값으로 해석하지 않는다.
+수량 1, 현금 1,000,000원, fee-rate 0.001 per-side, buy/sell/cancel latency 각 1초,
+max quote age 2초, cooldown 10초, exit-rule fixed를 사용한다.
+실행 성공 여부와 provenance/재검증/strategy path만 본다.
+fills/signals/order 수치는 사실로 보고할 수 있지만 수익성·전략 적격성 결론을 내리지 않는다.
+
+실제 smoke 전에는 working DB sidecar 부재와 exact report path를 확인하고 자동 재시도하지 않는다.
+GitHub Actions도 실행하지 않는다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
