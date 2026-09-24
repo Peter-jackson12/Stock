@@ -305,8 +305,9 @@ source file-set/stat을 다시 확인한다.
 
 source SQLite는 열지 않는다. 각 held source member를 한 번 읽으며 SHA-256을 계산하고 같은 block을
 fresh `evidence/`와 `working/` 두 파일에 동시에 쓴 뒤 fsync한다.
-source handles가 모두 해제된 뒤에만 working main을 SQLite로 열어 metadata 한 페이지를 읽고 명시적으로 닫는다.
-이는 copied WAL/SHM의 managed cleanup 후보이며 source에는 적용되지 않는다.
+source main/WAL/SHM의 exclusive handle은 working cleanup·hash·최종 source 재검증이 끝날 때까지 유지한다.
+그 상태에서 별도 working main만 SQLite로 열어 metadata 한 페이지를 읽고 명시적으로 닫는다.
+이는 copied WAL/SHM의 managed cleanup 후보이며 source SQLite에는 적용되지 않는다.
 
 snapshot ready 조건:
 
