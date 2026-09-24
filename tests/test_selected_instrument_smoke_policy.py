@@ -316,3 +316,14 @@ def test_selected_disqualifying_examples_are_bounded_to_ten():
     assert len(examples) == 10
     assert [item["tick_seq"] for item in examples] == list(range(1, 20, 2))
     assert all(item["paired_parse_error"] is True for item in examples)
+
+
+def test_selected_zero_quote_example_uses_quote_normalized_fields_only():
+    tick = zero_quote(1, 1, side="ask")
+    policy = SelectedInstrumentSmokePolicy(SELECTED)
+    policy.accept(tick)
+    policy.accept(parse_error(tick))
+    result = policy.result()
+
+    assert result["selected_smoke_quality_eligible"] is True
+    assert result["disqualifying"]["selected_issue_examples"] == []
