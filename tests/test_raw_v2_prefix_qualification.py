@@ -173,10 +173,16 @@ def test_gap_before_cutoff_fails_structure(tmp_path):
     build(path)
     # Test-only corruption fixture: switch the disposable DB away from WAL first
     # so the sidecar guard does not mask the intended sequence-gap assertion.
-    with sqlite3.connect(path) as conn:
+    conn = sqlite3.connect(path)
+    try:
         mode = conn.execute("PRAGMA journal_mode=DELETE").fetchone()[0]
         assert mode.lower() == "delete"
         conn.execute("DELETE FROM events WHERE seq=2")
+        conn.commit()
+    finally:
+        # sqlite3.Connection's context manager does not close the handle.
+        # Explicit close is required before the sealed-source assertion.
+        conn.close()
     assert not Path(str(path) + "-wal").exists()
     assert not Path(str(path) + "-shm").exists()
     _, data = run(path, tmp_path)
