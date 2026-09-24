@@ -495,7 +495,7 @@ example에는 다음만 기록한다.
 - code / venue / kind / market_second
 - issue list / 진단 reason
 - 관련 FID subset: 10, 14, 15, 20, 21, 27, 28, 41, 51
-- normalized price / volume / is_buy / bid / ask / bid_size / ask_size
+- kind별 relevant normalized fields: trade는 price/volume/is_buy, quote는 bid/ask/bid_size/ask_size
 - paired_parse_error 여부
 
 이 필드는 selected smoke-quality 판정에 사용되지 않는다.
