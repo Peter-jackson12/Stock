@@ -77,8 +77,17 @@ def _load_strict_report(path):
     report = _json_loads(data)
     if not isinstance(report, dict) or report.get("schema") != STRICT_PREFIX_SCHEMA:
         raise ValueError("raw_v2_prefix_qualification_v1 report required")
+    if report.get("status") != "completed" or report.get("stream_error") is not None:
+        raise ValueError("strict prefix report must be a completed structure scan")
     if report.get("prefix_structure_verified") is not True:
         raise ValueError("strict prefix structure must already be verified")
+    performance = report.get("performance_research_eligibility")
+    if (
+        not isinstance(performance, dict)
+        or performance.get("assessed") is not False
+        or performance.get("eligible") is not None
+    ):
+        raise ValueError("strict prefix performance research must remain unassessed")
     scope = report.get("scope")
     if (
         not isinstance(scope, dict)
