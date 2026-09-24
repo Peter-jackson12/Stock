@@ -104,26 +104,22 @@ Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. �
 ## 다음 행동
 
 PR #38의 selected-instrument pure evaluator는 focused local test 97 passed 후 master에 통합됐다.
+PR #39의 selected-prefix overlay는 HEAD `4db1cf5dafed037593593c7efa0646bba21d9fdc`를 detached Windows worktree에서
+Python 3.14.7 / pytest 9.1.1로 focused 검증했고, Python 3.10 grammar PASS,
+지정 테스트 101 passed / 0 failed / 0 skipped를 확인한 뒤 master에 통합됐다. GitHub Actions는 실행하지 않았다.
 
-현재 작업 branch `feat/selected-prefix-overlay-20260924`는 기존 strict
-`raw_v2_prefix_qualification_v1` 결과 위에 얹는 **opt-in selected-prefix overlay** 후보를 추가한다.
+통합된 overlay schema는 `raw_v2_selected_prefix_qualification_v1`이다.
+기존 strict report를 바꾸지 않고 동일 raw를 다시 sealed read하여 manifest·digest·consumed count·sentinel·strict counts·strict diagnostics를
+모두 대조한 뒤 같은 ordered prefix에 `SelectedInstrumentSmokePolicy`만 병렬 적용한다.
 
-새 overlay는 strict report를 바꾸지 않는다. 같은 sidecar-free raw를 다시 sealed read하여:
-- manifest
-- prefix digest
-- consumed record count
-- boundary sentinel
-- strict counts
-- strict quality diagnostics
-를 기존 strict report와 모두 대조한 뒤, 같은 ordered prefix에
-`SelectedInstrumentSmokePolicy`만 병렬 적용한다.
+다음 단계는 실제 working snapshot + 기존 strict 10:00 prefix report를 대상으로
+`005930=unknown` selected-prefix overlay를 **1회만 실행**하는 것이다.
+목적은 005930 자체에 `trade_direction_unverified` 또는 기타 selected disqualifying issue가 있는지 확인하는 것이며,
+아직 NXT smoke를 실행하지 않는다.
 
-새 schema는 `raw_v2_selected_prefix_qualification_v1`이다.
-`selected_smoke_quality_eligible`는 future selected-instrument pipeline smoke용 후보 값이며
-whole-prefix research quality·전략 성과·execution permission을 승격하지 않는다.
-
-다음 단계는 이 overlay와 기존 strict qualifier/policy evaluator를 detached Windows worktree에서 focused local test로 검증하는 것이다.
-통과 전에는 PR merge, 실제 50GB overlay 실행, selected NXT smoke 연결을 하지 않는다.
+실행 결과가 `selected_smoke_quality_eligible=true`여도 whole-prefix strict 결과는 false인 채 유지하고,
+성과 연구·whole-stream quality·execution permission은 미승격이다.
+실제 overlay 결과 확인 전에는 selected NXT smoke runner를 연결하지 않는다.
 GitHub Actions도 실행하지 않는다.
 
 ## 유지하는 운영/실데이터 차단 조건
