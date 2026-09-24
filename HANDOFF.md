@@ -103,7 +103,7 @@ Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. �
 
 ## 다음 행동
 
-현재 후보 `collector/zero_quote_policy_experiment.py`는 실제 prefix에서 관측한 **한쪽 top3 가격 모두 `-0` + 같은 쪽 top3 잔량 0 + 반대편 top1 양수** 패턴만
+PR #36으로 통합된 `collector/zero_quote_policy_experiment.py`는 실제 prefix에서 관측한 **한쪽 top3 가격 모두 `-0` + 같은 쪽 top3 잔량 0 + 반대편 top1 양수** 패턴만
 `missing_non_executable_quote_candidate`로 분류하는 synthetic-only 실험이다.
 기존 normalizer/qualification/smoke eligibility는 변경하지 않는다.
 
@@ -115,8 +115,8 @@ Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. �
 - 정확한 mirrored parse_error pair만 candidate로 묶음
 - `trade_direction_unverified`는 절대 완화하지 않음
 
-다음 실제 단계는 이 합성 실험을 focused local test로 확인한 뒤, 통과하면 **zero-quote pair만 smoke-quality quarantine 후보로 취급하는 별도 opt-in prefix policy**를 설계할지 결정하는 것이다.
-실제 50GB prefix 재실행·smoke·정책 변경은 아직 하지 않는다.
+다음 실제 단계는 이 합성 실험을 **focused local test**로 확인하는 것이다. 통과하면 그 다음에야 **zero-quote pair만 smoke-quality quarantine 후보로 취급하는 별도 opt-in prefix policy**를 설계할지 결정한다.
+실제 50GB prefix 재실행·smoke·정책 변경은 아직 하지 않는다. GitHub Actions도 이 작은 단계에서는 실행하지 않는다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
