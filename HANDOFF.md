@@ -127,25 +127,25 @@ focused tests 97 passed / 0 failed / 0 skipped 후 master에 통합됐다.
 explicit fresh-valid-bid valuation, cash/accounting reconciliation이다.
 기존 PortfolioSimulator와 result schema는 PR #46에서 변경하지 않았다.
 
-현재 작업 branch `feat/portfolio-accounting-result-integration-20260924`는
-**portfolio performance-accounting result integration** 후보를 추가한다.
+PR #47의 NXT result performance-accounting subrecord integration은 HEAD
+`ac8197bfb5536cf7d5080ab0c08cc4596f11eac7`에서 Python 3.10 grammar PASS,
+focused tests 119 passed / 0 failed / 0 skipped 후 master에 통합됐다.
+GitHub Actions와 실제 데이터 실행은 하지 않았다.
 
-integration 경계:
+통합된 경계:
 - `PortfolioSimulator` execution semantics는 변경하지 않음
-- `run_nxt_portfolio()` finalization에서 기존 fill/account snapshot을 pure accounting helper에 전달
-- 새 `performance_accounting` subrecord를 report에 추가
-- accounting helper SHA와 subrecord를 reproducibility identity에 포함
-- fill cashflow로 expected cash를 독립 계산하고 snapshot cash와 reconciliation
-- fill ledger position과 snapshot position도 reconciliation
-- flat run은 mark 없이 `flat_complete`: realized/total/equity accounting 확정 가능
-- open position은 final fresh bid mark integration이 아직 없으므로 `open_unpriced`,
-  unrealized/total/equity는 null
-- failure diagnostics도 partial fill ledger accounting을 보존하되 run failure를 가리지 않음
+- NXT finalization이 fill ledger를 pure accounting helper로 독립 재계산
+- `performance_accounting_v1` subrecord에 realized/cash/position reconciliation 기록
+- flat result는 `flat_complete`로 realized/total/equity accounting 가능
+- open position은 final fresh bid provenance 미연결로 `open_unpriced`
+- failure diagnostics는 failed 의미 유지
 - legacy top-level `realized_pnl/unrealized_pnl/equity`는 계속 null
+- accounting helper SHA와 subrecord는 reproducibility identity에 포함
 
-다음 단계는 새 integration + 기존 portfolio/NXT/selected-smoke regressions의 focused local test다.
-통과 전에는 actual selected-v2 smoke를 다시 실행하거나 과거 result를 재작성하지 않는다.
-GitHub Actions도 실행하지 않는다.
+다음 한 단계는 **`portfolio final fresh-bid mark provenance`**다.
+simulator execution을 바꾸지 않고 read-only marking snapshot을 추가해,
+open position의 종료/실패 시점에서 fresh + valid two-sided quote의 bid만 mark로 인정한다.
+quote seq/received_ns/age/policy/reason을 provenance로 보존하고 stale/missing/invalid는 unpriced로 남긴다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
