@@ -59,43 +59,11 @@ journal 부재, main 단일 링크. 원본 SQLite 접속·sidecar 정리는 하�
 
 ## 실제 구현과 보존한 경계
 
-`ReceiveOrderReplay`는 이미 종목별 호가와 공통 seq를 지원한다. 기존 `TickSimulator`는
-단일 종목의 cash/position을 소유하고, cash/holdings 부족 시 명시적 reject가 아니라 대기한다.
-`StrategyAccount`/`BacktestBroker`의 핵심 Phase E 메서드는 stub이다. 새 경로를 그 완료로 오인하지 않는다.
-
-[PortfolioSimulator](execution/portfolio_simulator.py)는 기존 재생·호가 검증·정확한 금액 산술을
-재사용하며 공유 계좌/예약/상태 전이를 추가한다. 종목당 venue 하나, source/session 하나다.
-[portfolio_session](engine/portfolio_session.py)은 전략에 불변 snapshot만 주고 ordered intent를 실행한다.
-`portfolio_research_result_v1`은 메모리 내 JSON-native dict이고 기존 `tick_research_result_v1`과 다르다.
-새 정책의 정의·순서·기존 경로와의 차이는 [파이프라인 지도 §6](docs/PIPELINE_MAP.md#portfolio-research)에 둔다.
-
-[합성 회귀](tests/test_portfolio_simulator.py)는 현금/보유량 경쟁, 부분체결·취소·만료·거절,
-노출/수량/open-order 한도, 동일 시각, 미래 suffix/chunk/반복, 실패 진단, 독립 Fraction 원장과
-기존 단일 종목의 충분한 자금 사례를 대조한다. 비직렬화 주문 의도가 실패 보고서까지 숨기던 경계는
-`5513432`에서 보강했다. 최초 59 / 보강 후 62 집중 통과는 이전 작업의 격리 Python 3.13 보고이며,
-원격 전체 통과와 혼동하지 않는다.
-
-**보존된 CI 이력:** [#338](https://github.com/Peter-jackson12/Stock/actions/runs/35953047208)의
-Decimal sticky flag 테스트 실패는 테스트 수정 후 해결했다. 기존 실패 run은 유지한다.
-
-**보존:** 기존 TickSimulator·NxtResearchStrategy·run_research/run_raw_v2·실제 CLI·입력 정책·
-collector·workflows·기존 테스트는 변경하지 않는다. 합성 상태 snapshot은 운영 계좌 조회가 아니다.
-
-**PR #31 통합:** 기존 `NxtResearchStrategy`를 종목별 상태로 재사용하는 `NxtPortfolioStrategy`와
-`run_nxt_portfolio()`가 master에 들어갔다. 전략에는 mutable account를 주지 않고 symbol-scoped port가 순수 intent만 만든다.
-한 전략을 여러 종목에 적용해도 공유 cash/risk는 PortfolioSimulator가 소유한다. 결과는 새 UUID 디렉토리의
-`portfolio_research_result_v1` JSON으로 보존하고 전략 설정·코드 hash·signals를 reproducibility key에 포함한다.
-
-**PR #32 통합:** `raw_v2_prefix_qualification_v1`은 seq=1부터 사전에 정한 KST exclusive cutoff까지의
-구간만 검증한다. cutoff 시각 이상에서 구조적으로 유효한 다음 record를 sentinel로 요구해 실제 수집이 경계까지
-도달했음을 확인한다. tail은 의도적으로 읽지 않고 `whole_stream_assessed=false`를 기록한다. 합격 명칭은
-`smoke_backtest_eligible`이며 전체 raw 승격·전략 성과 연구 적격성과 분리된다.
-
-**통합된 smoke 경로:** `run_nxt_prefix_smoke()`는 합격한 prefix report와 정확히 같은 raw 경로만 받는다.
-실행 직전에 sealed/no-sidecar 상태에서 prefix를 다시 읽어 manifest·digest·record count·quality diagnostics·sentinel을
-qualification report와 대조하고, 모두 같을 때만 명시한 종목 tick을 `run_nxt_portfolio()`로 스트리밍한다.
-결과 provenance는 `purpose=smoke_backtest_only`, `whole_stream_assessed=false`, `performance_research_assessed=false`,
-`raw_identity_verified=false`를 보존한다. qualifier 이후 prefix bytes가 달라지면 정상 성과가 아니라 failed diagnostics로 끝낸다.
+[파이프라인 지도 §6](docs/PIPELINE_MAP.md#portfolio-research)에 공유 계좌·NXT 포트폴리오 전략·
+bounded prefix·smoke 경로의 코드 연결과 계약을 둔다. `StrategyAccount`/`BacktestBroker`의
+Phase E 핵심은 stub이며 기존 `TickSimulator` 경로와 구분한다. `run_nxt_prefix_smoke()`는
+strict prefix report의 `smoke_backtest_eligible=true`와 동일 raw의 sealed 재검증을 요구한다.
+합성 테스트 통과·prefix 품질·전략 성과·운영 계좌 상태는 각각 별개의 근거다.
 
 **미연결/미완료:** 평균단가·원가·실현/미실현 PnL·equity와 표준 Trade 변환,
 Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. 현행 회계는 현금·보유수량·수수료·체결 원장까지다.
@@ -112,15 +80,24 @@ Python 3.14.7 / pytest 9.1.1로 focused 검증했고, Python 3.10 grammar PASS,
 기존 strict report를 바꾸지 않고 동일 raw를 다시 sealed read하여 manifest·digest·consumed count·sentinel·strict counts·strict diagnostics를
 모두 대조한 뒤 같은 ordered prefix에 `SelectedInstrumentSmokePolicy`만 병렬 적용한다.
 
-다음 단계는 실제 working snapshot + 기존 strict 10:00 prefix report를 대상으로
-`005930=unknown` selected-prefix overlay를 **1회만 실행**하는 것이다.
-목적은 005930 자체에 `trade_direction_unverified` 또는 기타 selected disqualifying issue가 있는지 확인하는 것이며,
-아직 NXT smoke를 실행하지 않는다.
+2026-09-24 실제 `005930=unknown` selected-prefix overlay를 지정된 working snapshot과 기존 strict 10:00 KST
+report에 대해 **1회** 실행했다. 결과는 `C:\StockSnapshots\raw_v2_snapshot_24f657163264432da7af3ed533656eac\selected_prefix_overlay\b73870c2703b425c9c9ee09c945ce93e\result.json`.
+`raw_v2_selected_prefix_qualification_v1`, `status=completed`, 소요 383.705083초,
+`selected_prefix_structure_verified=true`; strict digest·소비 건수·boundary sentinel·counts·quality diagnostics
+재검증 5항목 모두 true다. manifest와 raw 경로가 strict report와 일치하고 strict report SHA-256
+`6953ec151aff0590a4fcd7ccdd7b1b343da18a541a936a4927d10f4a9dd540dd`를 기록했다.
+working DB의 WAL/SHM/journal은 실행 전후 부재했고 source stat은 불변이었다.
 
-실행 결과가 `selected_smoke_quality_eligible=true`여도 whole-prefix strict 결과는 false인 채 유지하고,
-성과 연구·whole-stream quality·execution permission은 미승격이다.
-실제 overlay 결과 확인 전에는 selected NXT smoke runner를 연결하지 않는다.
-GitHub Actions도 실행하지 않는다.
+**판정: `005930 selected-prefix quality: FAIL`.** 선택 tick 77,558건 중 clean 77,557건,
+selected issue pair 1건의 `trade_direction_unverified` 1건으로 `selected_smoke_quality_eligible=false`다.
+선택 zero-quote pair는 0건이다. 비선택 exact issue pair 13,901건은 정책상 분리됐고
+(FID41 6,819·FID51 3,868·방향 미확인 3,232), unapproved pair·unpaired issue·unsafe control은 0건이다.
+기존 strict `smoke_backtest_eligible=false`와 `whole_stream_assessed=false`는 그대로이며
+whole-prefix 연구 품질·격리 quote 실행 권한·전략 성과는 승격되지 않았다.
+NXT smoke·GitHub Actions는 실행하지 않았다.
+
+다음 한 단계는 **`005930 selected quality bounded investigation`**이다. 선택 종목의 방향 미확인 1건을
+제한된 범위에서 조사하되 방향을 추론하거나 FID15를 보정하지 않는다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
