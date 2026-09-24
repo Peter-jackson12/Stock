@@ -171,8 +171,14 @@ def test_capture_that_never_reached_cutoff_is_not_a_verified_prefix(tmp_path):
 def test_gap_before_cutoff_fails_structure(tmp_path):
     path = tmp_path / "source" / "raw.db"
     build(path)
+    # Test-only corruption fixture: switch the disposable DB away from WAL first
+    # so the sidecar guard does not mask the intended sequence-gap assertion.
     with sqlite3.connect(path) as conn:
+        mode = conn.execute("PRAGMA journal_mode=DELETE").fetchone()[0]
+        assert mode.lower() == "delete"
         conn.execute("DELETE FROM events WHERE seq=2")
+    assert not Path(str(path) + "-wal").exists()
+    assert not Path(str(path) + "-shm").exists()
     _, data = run(path, tmp_path)
 
     assert data["prefix_structure_verified"] is False
