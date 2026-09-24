@@ -77,6 +77,37 @@ zero-quote 0건 격리와 `raw_identity_verified=false`, `whole_stream_assessed=
 전략 수익성·performance-research·여러 날짜 일반화·NXT venue·whole raw·live 적격성을 뜻하지 않는다.
 다음 단계는 자동 재실행이 아니라 현재 result를 보존하고, 별도 근거와 승인 아래 미완료 gate를 다루는 것이다.
 
+## 다음 research 단계 — Independent input candidate 01 사전등록
+
+성과를 본 뒤 날짜·종목·cutoff를 고르는 것을 막기 위해 다음 후보를 **실행 전에 고정**한다.
+
+- source date/session: `2026-09-18 / 21f8c124e64e421893275ccdc83818ad`
+- historical raw path: `sampledata/raw_ticks_v2/20260918/21f8c124e64e421893275ccdc83818ad.db`
+- historical state: 07:55경 시작, 정상 종료 근거 보존. 말미에는 방향 미확인 8 trade + 대응 parse_error 8건이 있어 whole-file 연구 적격성은 계속 차단한다.
+- bounded cutoff: **10:00:00 KST exclusive**
+- selected instrument: **`005930=unknown`**
+- selected policy: **`unknown_direction_recent_window_quarantine_v0`**
+- smoke settings: 2026-09-21 selected-v2 PASS와 동일한 quantity 1 / cash 1,000,000 / fee 0.001 per-side / buy·sell·cancel latency 각 1초 / max quote age 2초 / cooldown 10초 / fixed exit
+
+2026-09-17 정상 종료 세션 `cf18cb437b9a4f6ba2abf0fdadbbfe57`은 12:35경 시작했으므로
+같은 10:00 bounded comparison의 후보에서 제외한다. 이는 결과를 본 뒤의 성과 선택이 아니라
+고정 cutoff를 만족하지 못하는 시간 범위 제외다.
+
+실행 순서는 고정한다.
+
+1. 원본 존재·identity·종료 근거·프로세스 부재·sidecar 상태를 먼저 메타데이터/운영 근거로 확인한다.
+   원본을 writable SQLite로 열거나 sidecar를 삭제하지 않는다.
+2. 필요 시 기존 raw-v2 frozen snapshot acquisition 경로로 원본을 보존한 별도 working copy를 만든다.
+   보호 조건을 만족하지 못하면 **INCONCLUSIVE로 중단**하고 다른 날짜/종목으로 자동 대체하지 않는다.
+3. working copy에서 strict 10:00 prefix qualification을 정확히 1회 수행한다.
+4. strict 구조 재검증이 가능할 때만 `005930=unknown` selected-v2 overlay를 동일 policy로 정확히 1회 수행한다.
+5. selected gate가 true일 때만 위 고정 설정으로 selected-v2 smoke/accounting replay를 정확히 1회 수행한다.
+6. FAIL/INCONCLUSIVE에서 cutoff·instrument·policy·parameter를 바꿔 재시도하지 않는다.
+   PASS에서도 parameter tuning이나 performance-research 승격을 하지 않는다.
+
+이 후보의 목적은 **두 번째 날짜의 독립 actual regression fixture 확보**다.
+전략 수익성 비교, NXT venue 인증, whole raw 승인, live trading readiness가 아니다.
+
 ## 유지하는 차단 조건
 
 2026-09-21 원본은 약 50.6 GB이며 당시 보고된 0-byte WAL + 32 KiB SHM residue를 보존한다.
