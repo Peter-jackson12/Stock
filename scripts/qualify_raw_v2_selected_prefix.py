@@ -11,6 +11,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from collector.raw_v2_selected_prefix_qualification import qualify_selected_prefix
+from collector.selected_instrument_smoke_policy import STRICT_UNKNOWN_DIRECTION_POLICY
+from strategies.nxt_breakout.direction_window import (
+    POLICY as QUARANTINE_UNKNOWN_DIRECTION_POLICY,
+)
 
 
 def instrument(text):
@@ -26,6 +30,11 @@ def main(argv=None):
     parser.add_argument("--strict-prefix-report", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--instrument", action="append", type=instrument, required=True)
+    parser.add_argument(
+        "--unknown-direction-policy",
+        choices=(STRICT_UNKNOWN_DIRECTION_POLICY, QUARANTINE_UNKNOWN_DIRECTION_POLICY),
+        default=STRICT_UNKNOWN_DIRECTION_POLICY,
+    )
     args = parser.parse_args(argv)
 
     instruments = {}
@@ -40,6 +49,7 @@ def main(argv=None):
             args.strict_prefix_report,
             output_root=args.output_root,
             instruments=instruments,
+            unknown_direction_policy=args.unknown_direction_policy,
         )
         report = json.loads(result.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError) as exc:
