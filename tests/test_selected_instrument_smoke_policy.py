@@ -318,12 +318,22 @@ def test_selected_disqualifying_examples_are_bounded_to_ten():
     assert all(item["paired_parse_error"] is True for item in examples)
 
 
-def test_selected_zero_quote_example_uses_quote_normalized_fields_only():
-    tick = zero_quote(1, 1, side="ask")
+def test_selected_disqualifying_quote_example_uses_quote_fields_only():
+    tick = issue_quote(1, 1, code="005930")
     policy = SelectedInstrumentSmokePolicy(SELECTED)
     policy.accept(tick)
     policy.accept(parse_error(tick))
     result = policy.result()
 
-    assert result["selected_smoke_quality_eligible"] is True
-    assert result["disqualifying"]["selected_issue_examples"] == []
+    assert result["selected_smoke_quality_eligible"] is False
+    example = result["disqualifying"]["selected_issue_examples"][0]
+    assert example["issues"] == ["invalid_or_missing_fid_21"]
+    assert example["normalized"] == {
+        "bid": 100,
+        "ask": 101,
+        "bid_size": 1,
+        "ask_size": 1,
+    }
+    assert "price" not in example["normalized"]
+    assert "volume" not in example["normalized"]
+    assert "is_buy" not in example["normalized"]
