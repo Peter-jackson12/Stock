@@ -55,6 +55,18 @@ lock 일치, GUI 기동, 네트워크, OCX, 디스크 용량, 시장 일정은 �
 같은 목록은 운영 화면의 **Operator 요약 → 읽기 전용 환경 점검**에서도 확인할 수 있다.
 화면도 자동 설치·수정·`uv sync`·OCX 생성·로그인·수집 시작·시장 조회를 하지 않는다.
 
+환경 목록 바로 아래의 **수집 전 읽기 전용 preflight**는 환경 목록과 다른, 실제 시작 판단용 로컬 축을
+분리해 보여 준다. `.venv32` collector runtime, 기존의 로그인 없는 32-bit/OCX preflight,
+코드 admission 저장공간 하한, 기존 collector process, Runtime/OpenAPI 창, collector lease를 읽는다.
+기존 admission checker의 읽기 전용 reader를 재사용하지만 그 특정 시점의 관측을 실행 승인으로
+승격하지 않는다. `PASS/WARN/BLOCKED/UNVERIFIED`와 각 항목의 **다음 확인**을 함께 표시한다.
+특정 실행 명령·Git revision·clean tree도 이 일반 화면에서는 고정하지 않으므로 `UNVERIFIED`이며,
+실행 직전의 실행별 admission을 대신하지 않는다.
+
+실제 거래일·장 구간은 외부 공식 출처를 조회하지 않으므로 항상 `UNVERIFIED`이고, 실행 승인도
+`UNVERIFIED`다. GitHub 코드/PR만으로 운영 PC 상태를 추정하지 않으며, 이 섹션은 시작 버튼의 상태를
+바꾸지 않는다. process/window를 종료하거나 lease를 만들고 지우지 않고, raw DB도 열지 않는다.
+
 `PASS`는 해당 작은 점검만 통과했다는 뜻이다. `FAIL`이면 자동 수정하지 말고 표시된 항목을 확인한다.
 Python 도우미의 종료 코드 `0`은 보고서 출력 성공, `1`은 환경 목록 미충족 또는 점검 오류,
 `2`는 잘못된 명령이다. wrapper의 `.venv` 누락도 `2`다.
@@ -140,12 +152,13 @@ wrapper를 우회한 읽기 전용 점검은 다음처럼 직접 호출할 수 �
 
 ## 6. 아직 연결하지 않은 명령과 병렬 개발 경계
 
-`collector start/stop/canary/preflight`, `backtest baseline`, 실제 주문 실행은 아직 wrapper에 연결하지 않았다.
+`collector start/stop/canary`, 실행 admission, `backtest baseline`, 실제 주문 실행은 아직 wrapper에 연결하지 않았다.
 앞선 설계 대화에 나온 명령 예시는 구현됐다는 뜻이 아니다. 알 수 없는 명령은 실행 전에 거부한다.
 현재 수집기 보류 조건과 연구의 다음 단계는 [HANDOFF](HANDOFF.md)를 따른다.
 
 Operator 트랙은 wrapper, `scripts/stock_operator.py`, 전용 테스트와 이 안내를 담당한다.
-collector/native, engine/execution/strategies, raw/qualification와 백테스트 결과 계약은 변경하지 않는다.
+운영 화면의 읽기 전용 collector preflight는 기존 공식 preflight/admission reader를 좁게 재사용한다.
+collector 실행/native 계약, engine/execution/strategies, raw/qualification와 백테스트 결과 계약은 변경하지 않는다.
 
 다음 확인은 **이 문서만 보고 `help → doctor → status → ui`까지 실행되는지** 보는 것이다.
 그 후에야 자주 쓰는 승인된 작업을 하나씩 연결한다. UI용 `doctor`를 collector의 공식 preflight 또는

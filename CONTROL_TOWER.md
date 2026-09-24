@@ -46,6 +46,9 @@ flowchart TD
 
 - `dashboard/app.py`: 기존에는 저장된 런 비교가 중심이었다. 지금은 운영 관리/백테스트 분석을 선택한다.
 - `dashboard/operations.py`: 수집 로그, 결과 조회 요청, 장외 재생 계획, 최근 작업 30건을 표시한다.
+- `control_tower/collector_preflight.py`: 기존 collector admission의 process/window·lease·disk reader와
+  로그인 없는 공식 32-bit/OCX preflight를 재사용해 시작 판단 축을 표시한다. 시장 날짜·장 구간과
+  실행 승인은 `UNVERIFIED`로 남기며 버튼이나 실행 경로에 연결하지 않는다.
 - `control_tower/status.py`: 오늘 KST 로그의 끝부분만 읽는다. 최근/오래됨/미확인/시각 이상을 구분한다.
   프로세스 생존, DB 커밋, 무누락, 실제 venue/매수 방향을 인증하지 않는다.
 - `control_tower/jobs.py`: `operations_state/jobs.sqlite3`에 작업을 보존한다. 수집 DB와 분리했다.
@@ -79,6 +82,8 @@ flowchart TD
 덮어쓰지 말고 먼저 해당 서버를 확인한다. 이번 코드 작업에서 서버를 상시 실행해 두지는 않았다.
 
 1. **운영 관리:** 최근 하트비트의 적재 수와 큐를 확인한다. 새로고침은 수동이다.
+   **Operator 요약 → 읽기 전용 환경 점검 → 수집 전 읽기 전용 preflight** 순서로 펼치면
+   로컬 수집 준비 축과 다음 확인을 볼 수 있다. preflight 표시는 실행 승인이나 버튼 활성화가 아니다.
 2. **결과 조회:** 저장된 `research_runs/<run-id>/result.json` 경로를 입력한다. 요청은 DB에 먼저
    저장하고 워커를 띄운다. 잠시 후 상태 새로고침 → 작업 이력에서 요약을 확인한다.
 3. **장외 재생 계획:** `sampledata/raw_ticks_v2/` 아래 파일과 종목·venue·비용·지연 가정을 입력한다.

@@ -14,6 +14,7 @@ from control_tower.offline_worker import start_replay_worker, retry_replay_worke
 from control_tower.capture_health import CaptureHealth
 from control_tower.operator_summary import summarize_operator_state
 from control_tower.operator_environment import inspect_operator_environment
+from control_tower.collector_preflight import inspect_collector_preflight
 from control_tower.replay_schedule import schedule_replay, schedules, expire_missed
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +32,7 @@ def render_control_tower(root=None):
     raw = observe_raw_capture(root)
     render_operator_overview(observation, raw)
     render_operator_environment(root)
+    render_collector_preflight(root)
     if "payload" in raw:
         payload = raw["payload"]
         snapshot = payload["snapshot"]
@@ -238,6 +240,37 @@ def render_operator_environment(root):
         else:
             st.warning("환경 목록 점검: 미충족 — 자동 설치하거나 수정하지 않았습니다.")
         st.caption("PASS는 위 작은 목록 점검만 뜻합니다. GUI 정상 기동·수집 준비·OCX 준비 또는 실행 승인이 아닙니다.")
+
+
+def render_collector_preflight(root):
+    """Show local start-decision facts without authorizing or starting collection."""
+    with st.expander("수집 전 읽기 전용 preflight"):
+        st.caption(
+            "로컬 Windows에서 collector runtime · 32-bit/OCX 공식 preflight · 저장 여유 · "
+            "process/window · lease를 읽습니다. 시장 조회나 수집 동작은 하지 않습니다."
+        )
+        try:
+            report = inspect_collector_preflight(Path(root))
+        except (OSError, RuntimeError, ValueError) as exc:
+            st.warning(f"수집 전 점검을 읽지 못했습니다: {exc}. 자동 수정하거나 실행하지 않았습니다.")
+            return
+        renderer = {
+            "PASS": st.info,
+            "WARN": st.warning,
+            "BLOCKED": st.error,
+            "UNVERIFIED": st.warning,
+        }.get(report["status"], st.warning)
+        renderer(
+            f"현재 표시: {report['status']} · 로컬 관측 {report['local_status']} — "
+            "시장 일정과 실행 승인은 별도 확인이 필요합니다."
+        )
+        for check in report["checks"]:
+            st.text(f"[{check['status']}] {check['label']}: {check['detail']}")
+            st.caption(f"다음 확인: {check['next_check']}")
+        st.caption(
+            "이 결과는 GitHub/원격 상태로 운영 PC를 추정하지 않으며, 기존 수집 시작 버튼을 "
+            "활성화하거나 collector admission/실행 승인으로 승격하지 않습니다."
+        )
 
 
 
