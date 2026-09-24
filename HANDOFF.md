@@ -105,8 +105,7 @@ Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. �
 
 PR #37의 zero-quote opt-in evaluator는 focused local test 75 passed 후 master에 통합됐다.
 
-현재 작업 branch `feat/selected-instrument-smoke-policy-20260924`는 그 다음 단계인
-**selected-instrument smoke-quality pure evaluator** 후보를 추가한다. 아직 raw reader/prefix report/NXT smoke에는 연결하지 않는다.
+PR #38로 **selected-instrument smoke-quality pure evaluator**가 master에 통합됐다. 아직 raw reader/prefix report/NXT smoke에는 연결하지 않는다.
 
 v0 계약:
 - 전체 stream의 contiguous seq / monotonic received_ns / source-session identity는 유지
@@ -119,9 +118,9 @@ v0 계약:
 - 비선택 종목의 unknown issue, unpaired/mismatched parse_error, callback/disconnect 등 unsafe control은 전체 차단
 - whole-prefix research quality를 승격하지 않고 execution permission도 바꾸지 않음
 
-다음 단계는 이 evaluator와 기존 zero-quote classifier/quote validation의 focused local test다.
-통과 전에는 PR을 merge하지 않고, 실제 50GB prefix 재실행·NXT smoke·production gate 연결도 하지 않는다.
-GitHub Actions도 실행하지 않는다.
+PR #38 HEAD `3e69f9b297a1f7949e5118f32aed830f900300b5`를 detached worktree에서 Python 3.14.7 / pytest 9.1.1로 focused 검증했고, Python 3.10 grammar PASS, 지정 테스트 97 passed / 0 failed / 0 skipped를 확인했다. GitHub Actions는 실행하지 않았다.
+
+다음 단계는 기존 strict `raw_v2_prefix_qualification_v1`을 건드리지 않는 **별도 selected-instrument prefix qualification schema/CLI**다. whole-prefix strict 결과와 selected-strategy smoke-quality 결과를 병렬 보존하며, 실제 50GB 재실행 전 합성 fixture로 먼저 검증한다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
