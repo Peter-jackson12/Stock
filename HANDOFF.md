@@ -103,27 +103,25 @@ Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. �
 
 ## 다음 행동
 
-PR #36으로 통합된 `collector/zero_quote_policy_experiment.py`는 실제 prefix에서 관측한 **한쪽 top3 가격 모두 `-0` + 같은 쪽 top3 잔량 0 + 반대편 top1 양수** 패턴만
-`missing_non_executable_quote_candidate`로 분류하는 synthetic-only 실험이다.
-기존 normalizer/qualification/smoke eligibility는 변경하지 않는다.
+PR #37의 zero-quote opt-in evaluator는 focused local test 75 passed 후 master에 통합됐다.
 
-실험의 핵심 안전 조건:
-- 정확히 하나의 `out_of_range_fid_41` 또는 `out_of_range_fid_51`만 허용
-- signed_magnitude + Kiwoom prototype normalization만 허용
-- 양쪽 zero, 추가 issue, 같은 쪽 양수 잔량, 반대편 비정상은 계속 disqualifying
-- 후보 quote도 `check_ordered_quote`에서 계속 invalid_bid/invalid_ask로 실행 불가
-- 정확한 mirrored parse_error pair만 candidate로 묶음
-- `trade_direction_unverified`는 절대 완화하지 않음
+현재 작업 branch `feat/selected-instrument-smoke-policy-20260924`는 그 다음 단계인
+**selected-instrument smoke-quality pure evaluator** 후보를 추가한다. 아직 raw reader/prefix report/NXT smoke에는 연결하지 않는다.
 
-기존 zero-quote classifier focused test는 Python 3.14.7에서 65 passed로 확인됐다.
+v0 계약:
+- 전체 stream의 contiguous seq / monotonic received_ns / source-session identity는 유지
+- 선택 종목 clean tick은 허용
+- 선택 종목의 exact one-sided zero-quote + mirrored parse_error pair만 quarantine
+- 선택 종목의 `trade_direction_unverified`와 기타 normalized issue는 disqualifying
+- 비선택 종목 issue는 실제 오전 prefix에서 관측된
+  `out_of_range_fid_41`, `out_of_range_fid_51`, `trade_direction_unverified`에 한해
+  exact mirrored parse_error pair일 때만 selected-smoke 관점에서 비영향으로 분리
+- 비선택 종목의 unknown issue, unpaired/mismatched parse_error, callback/disconnect 등 unsafe control은 전체 차단
+- whole-prefix research quality를 승격하지 않고 execution permission도 바꾸지 않음
 
-PR #37로 **순수 opt-in smoke-quality evaluator**가 master에 통합됐다.
-`collector/zero_quote_smoke_policy.py`는 ordered envelope stream에서 정확히 짝지어진 one-sided zero-quote tick + mirrored parse_error만 quarantine한다.
-`trade_direction_unverified`, pairing mismatch, extra issue, callback/disconnect 등 다른 control은 계속 fail-closed다.
-
-실제 prefix reader나 NXT smoke에는 아직 연결하지 않았다. PR #37 HEAD `3da0207746747dfb4c1ab500bbb59cbdfd1e30a7`를 detached worktree에서 Python 3.14.7 / pytest 9.1.1로 focused 검증했고, Python 3.10 grammar PASS, 지정 테스트 75 passed / 0 failed / 0 skipped를 확인했다. GitHub Actions는 실행하지 않았다.
-
-다음 blocker는 zero quote 자체가 아니다. 그 pair는 opt-in quarantine 후보로 안전하게 분리 가능함을 합성으로 확인했다. 실제 오전 prefix에는 `trade_direction_unverified` 3,233건이 남아 있으므로, 다음 단계는 **전략 선택 종목 관점에서 unsigned FID15가 실제로 얼마나 영향을 주는지 bounded/selected-instrument quality 계약을 설계하는 것**이다. 실제 50GB prefix 재실행·smoke·production eligibility 변경은 아직 하지 않는다.
+다음 단계는 이 evaluator와 기존 zero-quote classifier/quote validation의 focused local test다.
+통과 전에는 PR을 merge하지 않고, 실제 50GB prefix 재실행·NXT smoke·production gate 연결도 하지 않는다.
+GitHub Actions도 실행하지 않는다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
