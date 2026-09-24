@@ -17,9 +17,9 @@
 OCX/QAx·queue/teardown/telemetry·실제 수집·PID/창/lease 관측·#327/#162 원인 실험을 늘리지 않는다.
 자동 kill/restart/relogin, Runtime 창 닫기, lock 삭제, LAA 변경, queue 확대, 기본 FID 축소도 하지 않는다.
 
-**research/backtest/execution 트랙의 다음 한 단계는
-`005930 selected-v2 actual accounting regression` 1회다.**
-다중 전략 플랫폼, parameter tuning, 실주문은 현재 목표가 아니다.
+**research/backtest/execution 트랙의
+`005930 selected-v2 actual accounting regression` 1회는 PASS로 완료했다.**
+추가 rerun·parameter tuning·실주문은 현재 목표가 아니다.
 
 Operator UX는 PR #45/#49/#50까지 master에 통합됐다.
 `stock.cmd/stock.ps1`의 help/doctor/status/ui와 운영 화면의 상태·환경 요약은 사용 편의 계층이며,
@@ -49,7 +49,7 @@ GitHub/PR 사실을 운영 PC의 현재 process/window/lease 상태로 승격하
 `performance_research`, whole-file FIRST_RESEARCH_CANDIDATE, NXT venue, whole raw, live 적격성은 미승격이다.
 한 왕복 결과를 보고 threshold/exit/parameter를 조정하지 않는다.
 
-## accounting 현재 상태와 다음 실행
+## actual accounting regression 결과
 
 PR #46~#48로 다음이 master에 들어왔다.
 - fee-inclusive weighted-average cost와 exact realized accounting
@@ -58,19 +58,31 @@ PR #46~#48로 다음이 master에 들어왔다.
 - final fresh-valid-bid mark provenance
 - stale/missing/locked-crossed/invalid quote의 fail-closed unpriced 처리
 
-다음 실행은 기존 frozen working DB + selected-v2 report + 기존 smoke 설정으로 **정확히 1회**만 한다.
-새 accounting/mark 코드 때문에 code SHA와 reproducibility key가 과거 run과 달라지는 것은 정상이다.
-비교 대상은 event SHA/count, signals, intents, fills, transitions, final account 등 execution trace다.
+2026-09-25 지정 commit `6d878d93329c136157fbaaed61c4f950dddaea10` detached clean worktree에서
+기존 frozen working DB + selected-v2 report + 고정 smoke 설정으로 정확히 1회 실행했다.
+새 결과는
+`C:\StockSnapshots\raw_v2_snapshot_24f657163264432da7af3ed533656eac\selected_prefix_smoke\ed5e78db61da4646ad186ac943c1c5f4\result.json`이다.
+실행 전후 working DB의 WAL/SHM/journal은 모두 부재했고 추가 rerun·GitHub Actions는 실행하지 않았다.
 
-flat 왕복의 기대 accounting:
-- realized/total: `-2039.5`
-- unrealized: `0`
-- equity: `997960.5`
-- cash/position/accounting reconciliation: true
-- flat이므로 final bid-mark provenance records: 빈 목록
+과거 비교 기준 `f37533fb67884b3f9033894befaed153`과 event SHA/count, settings,
+signals, intents, fills, transitions, final cash/positions/orders, rejects, execution status가 JSON/value 기준
+모두 동일하다. 77,558건을 모두 처리했고 final cash `997960.500`, position/open order/reject는 모두 0이다.
+새 reproducibility key는 `677bac5071d2ce07468ad909e6d6760764bf1f9a6e454ba30bc12f65a471780a`다.
 
-이 실행은 accounting 기능 회귀다. 전략 수익성이나 performance-research 승격이 아니다.
-자동 재시도·추가 성과 탐색·사후 cutoff 변경은 하지 않는다.
+`performance_accounting`은 `flat_complete`, fill 2건, realized/total `-4079/2`,
+unrealized `0/1`, equity/current/expected cash `1995921/2`이며 cash/position/accounting reconciliation은
+모두 true다. `final_bid_mark_provenance`와 내부 provenance는 같은
+`portfolio_final_bid_mark_provenance_v1`, valuation time `10877071329700`, records 빈 목록이다.
+legacy top-level realized/unrealized/equity는 계속 null이다.
+
+selected/strict report SHA, unknown-direction policy, expected 77,558건, unknown 1건 전달,
+zero-quote 0건 격리와 `raw_identity_verified=false`, `whole_stream_assessed=false`,
+`performance_research_assessed=false`를 유지했다.
+**`005930 selected-v2 actual accounting regression: PASS`**.
+
+이 PASS는 bounded replay의 execution 불변성과 accounting/marking subrecord만 확인한다.
+전략 수익성·performance-research·여러 날짜 일반화·NXT venue·whole raw·live 적격성을 뜻하지 않는다.
+다음 단계는 자동 재실행이 아니라 현재 result를 보존하고, 별도 근거와 승인 아래 미완료 gate를 다루는 것이다.
 
 ## 유지하는 차단 조건
 
