@@ -235,6 +235,17 @@ performance-research 미승격 이유:
   실행 ID/생성 시각은 분리하며 재실행도 장외 I/O 계획에 포함한다.
 - [ ] **종료 기록:** 확인 범위·성공/실패 이유·한계를 HANDOFF에 기록한다. 전략 수익성으로 확대하지 않는다.
 
+### Performance-accounting 구현 단계
+
+selected-v2 bounded input은 strategy-research fixture로 승인됐지만 performance-research는 아직 미승격이다.
+그 다음 선행 구현은 fill ledger 기반 performance accounting contract다.
+
+- [ ] pure weighted-average cost / realized PnL contract focused regression
+- [ ] explicit fresh-valid-bid mark / unrealized PnL / equity contract focused regression
+- [ ] fill cashflow ↔ simulator cash reconciliation contract
+- [ ] pure contract 통과 후에만 PortfolioSimulator/result JSON integration 설계
+- [ ] actual selected-v2 result는 integration 후 회귀 fixture로만 재검증하며 parameter tuning에 사용하지 않음
+
 ## 5. 첫 시험 이후 — 전략 평가
 
 - [ ] 여러 날짜·시장 상황·종목에서 품질 확인된 입력과 진입 사례를 축적한다.

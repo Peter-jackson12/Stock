@@ -747,3 +747,64 @@ whole stream 미평가, venue unknown, 단일 날짜/종목/왕복 사례,
 
 따라서 다음 구현 단계는 actual result의 현금 차이를 성과로 해석하는 것이 아니라,
 **실현 PnL·미실현 PnL·equity와 marking 규칙을 합성 trace에서 먼저 고정하는 performance-accounting contract**다.
+
+
+<a id="portfolio-performance-accounting"></a>
+## 21. portfolio performance-accounting pure contract candidate
+
+[accounting helper](../execution/portfolio_accounting.py)는
+기존 `PortfolioSimulator`의 현금·수량·fill 원장을 바꾸지 않고,
+`PortfolioFill` 시퀀스에서 performance accounting을 **순수 계산**하는 후보 계층이다.
+
+### Cost basis / realized PnL
+
+v0 cost-basis method는
+`weighted_average_fee_inclusive_v0`다.
+
+- long-only만 허용
+- buy gross + 실제 buy fee를 position cost basis에 포함
+- sell 때 기존 cost basis를 보유수량 비율로 정확히 배분
+- realized PnL = sell gross − 실제 sell fee − released cost basis
+- sell quantity > held quantity는 fail-closed
+- fill cash delta도 독립적으로 재계산
+
+평균원가는 수량 가중 계산 중 비종결소수가 나올 수 있으므로
+내부 산술은 binary float/ambient Decimal rounding이 아니라 `fractions.Fraction`으로 exact하게 유지한다.
+
+### Marking / unrealized / equity
+
+v0 marking policy는
+`explicit_fresh_valid_bid_gross_of_hypothetical_exit_fee_v0`다.
+
+helper가 market data freshness를 스스로 추론하지 않는다.
+상위 integration이 fresh + valid quote임을 확인한 **explicit bid mark**만 전달해야 한다.
+
+- open position market value = bid mark × quantity
+- unrealized PnL = market value − remaining fee-inclusive cost basis
+- equity = current cash + marked open-position value
+- total PnL = realized + unrealized
+- mark에는 hypothetical future sell fee를 빼지 않음
+- 실제 sell fee는 실제 sell fill에만 반영
+
+open position 중 하나라도 mark가 missing/None이면:
+- `unrealized_pnl=None`
+- `total_pnl=None`
+- `equity=None`
+- unpriced code를 명시
+
+last trade, stale quote, zero, fabricated close를 fallback으로 쓰지 않는다.
+
+### Reconciliation
+
+helper는 fill cashflow로
+`expected_cash_from_fills = initial_cash + cash_delta`를 계산한다.
+
+caller가 준 current cash와 다르면 수정하지 않고
+`cash_reconciled=false`로 남긴다.
+
+모든 mark가 있을 때는
+`realized + unrealized == equity - initial_cash`도 별도 accounting identity로 확인한다.
+
+이번 단계는 pure contract + synthetic regression만 추가한다.
+`PortfolioSimulator.snapshot()`, portfolio result schema, selected-v2 actual result의
+`realized_pnl/unrealized_pnl/equity`는 아직 변경하지 않는다.
