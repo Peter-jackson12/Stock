@@ -172,13 +172,17 @@ def _finalize_report(report: dict, *, dataset_label: str, strategy: NxtPortfolio
     )
     report["limitations"] = [
         item for item in report["limitations"]
-        if item != "no_live_broker_no_nxt_multi_asset_adapter"
+        if item not in (
+            "no_live_broker_no_nxt_multi_asset_adapter",
+            "no_pnl_valuation_no_forced_liquidation",
+        )
     ] + [
         "nxt_breakout_strategy_only_no_multi_strategy_arbitration",
         "no_live_broker",
         "no_performance_certified_raw_adapter",
         "performance_accounting_subrecord_only_legacy_top_level_pnl_fields_unpopulated",
         "open_position_final_bid_mark_integration_not_connected",
+        "no_forced_liquidation",
         "no_trade_store_conversion",
     ]
     identity = {
