@@ -4,6 +4,9 @@
 운영 화면은 수집·조회·연구 작업을 관리하며, 화면·수집기·작업 워커는 별도 프로세스로 둔다.
 실제 주문 연결과 전략 수익성 입증은 별도 단계다. 합성/CI 성공을 실데이터 검증 완료로 해석하지 않는다.
 
+[처음 실행하는 사람](START_HERE.md)은 `stock.ps1 help → doctor → status`부터 시작한다.
+수집·GUI·백테스트를 자동 실행하지 않는 읽기 전용 안내다.
+
 처음에는 이 문서에서 필요한 경로만 고른다. AI 작업자는 [AGENTS](AGENTS.md) →
 [현재 HANDOFF](HANDOFF.md)부터 읽고, 상세 계약은 해당 작업에 필요한 것만 연다.
 전체 과거 인계를 매 작업마다 읽지 않는다.
@@ -91,7 +94,8 @@ GitHub-only 감사 중에는 아래 명령도 실행하지 않는다.
 
 ## 개발 검증과 GitHub Actions
 
-master push와 PR마다 Windows + 64비트 Python 3.14 + 고정 uv/lock으로 Git-only pytest를 실행한다.
+일반 CI는 매주 일요일 09:00 KST 정기 실행과 필요 시 수동 실행만 한다. master push/PR마다 자동 실행하지 않는다.
+Windows + 64비트 Python 3.14 + 고정 uv/lock으로 Git-only pytest를 실행한다.
 Windows 파일 잠금·프로세스·소켓 합성 회귀를 포함한다. 상세 범위는 [테스트 안내](docs/TESTING.md)를 따른다.
 아래 로컬 명령은 live 수집 중에 실행하지 않는다. GitHub-only 작업의 검증 위치는 GitHub-hosted Actions다.
 
