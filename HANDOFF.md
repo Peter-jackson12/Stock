@@ -1,134 +1,101 @@
-# 현재 인계 — 2026-09-23 / PR #21 재검토와 독립 진단 트랙
+# 현재 인계 — 2026-09-24 / PR #21 세션 근거 표시의 최신 master 통합 후보
 
 [문서 인덱스](README.md) · [세션 근거 표시 계약](docs/SESSION_ASSESSMENT.md) ·
-[운영 제어](CONTROL_TOWER.md) · [수집 런북](docs/COLLECTION_RUNBOOK.md) ·
-[파이프라인 지도](docs/PIPELINE_MAP.md) · [첫 시험 체크리스트](BACKTEST_TODO.md) ·
-[보존본 안내](docs/archive/README.md)
+[수집 의사결정 계약](docs/COLLECTION_RUNBOOK.md#collection-decision) · [첫 시험 체크리스트](BACKTEST_TODO.md) ·
+[파이프라인 지도](docs/PIPELINE_MAP.md) · [보존본 안내](docs/archive/README.md)
 
-## 시작 규칙과 작업 분리
+매 작업 시작 시 원격 master/열린 PR/최신 CI를 직접 확인한다. 아래 값은 이 통합 시작 기준이지 영구 최신값이 아니다.
+이전 상세 인계 원문은 고정 SHA로 보존한다:
+[#21 원래 인계(2026-09-23 장애 상세 포함)](https://github.com/Peter-jackson12/Stock/blob/4ce504dabca9baf37fd5c0a8dc062f484511c7ad/HANDOFF.md),
+[#18 병합 시점 인계](https://github.com/Peter-jackson12/Stock/blob/9dba95378f40481339eb05fd161b1e2743d99ee9/HANDOFF.md),
+[#29 병합 시점 인계](https://github.com/Peter-jackson12/Stock/blob/8d84c9be728be25a707063559459324a61557585/HANDOFF.md),
+[#15 병합 시점 인계](https://github.com/Peter-jackson12/Stock/blob/5b5156f810b7852c6b5fa4b5c42b77ddfbca0a70/HANDOFF.md).
 
-매 작업 시작 시 원격 master/열린 PR/최신 CI를 다시 확인하고 AGENTS → HANDOFF를 읽는다.
-기준 master: `5b5156f810b7852c6b5fa4b5c42b77ddfbca0a70`, master CI #195 success.
-GitHub만 사용하는 대화는 사용자 Windows/로컬 git/pytest/OCX/raw/evidence에 접근하지 않는다.
-로컬 working tree나 현재 PID 상태를 원격에서 확인했다고 쓰지 않는다.
+## 원격 기준과 PR 상태
 
-| PR | 담당 범위 | 기준 HEAD / 상태 |
-|---|---|---|
-| #18 | 이 대화 초반의 **일반 ChatGPT 컨트롤타워 운영 판단 계약**: 읽기 순서, 장전/KRX/NXT 구분 | `65a2feb333d81f3666ce41ee58d23e15199e0b69`, draft/unmerged |
-| #19 | 과거 revision 고정 합성 입력 비교 | `32e6285e2bd5a224a63152c2ed1f492b57afd841`, draft/unmerged |
-| #20 | Mock 전용 FID A-B-A 실험 준비 | `c263003da6be82cefe740d6b22896babfcc89cbc`, draft/unmerged |
-| #21 | **운영 UI의 근거 표시**와 회귀 보강. 전면 아키텍처 재구축이 아님 | `refactor/control-tower-evidence-model-20260923`, 최종 HEAD/CI는 PR에서 재확인 |
+- master `9dba95378f40481339eb05fd161b1e2743d99ee9`: PR #18(HEAD `bac3251d349c09dae322712767f0e3c7a9f89e9e`) 병합 commit.
+  병합 후 master CI #332(run 35941127415, job 107449006148)는 completed/success다. 전체 1,843 passed /
+  6 deselected, 수집 계약 78, FID 집중 259 / 8 subtests, 시작·종료 71 passed는 컨트롤타워의 로그 확인 보고다.
+  집중·전체·subtest를 합산하지 않고 deselected는 통과가 아니다.
+- PR #29(FID 누적 후보)는 `8d84c9be728be25a707063559459324a61557585`로 병합됐다. PR #24는 간접 병합으로 처리됐다.
+  #20·#22·#23·#25~#28은 개발 이력 보존용으로 열려 있다.
+- PR #19(역사적 revision 비교, `9421afdccf9cfd1797cd7b5ac4e1f5d67ebe1127`)는 draft/open/unmerged다.
+  PR CI #330은 이전 master `8d84c9b`와의 검증이며 현재 master 결합 검증이 아니다.
+- **PR #21(이 branch)**: 원래 HEAD `4ce504dabca9baf37fd5c0a8dc062f484511c7ad`(세션 근거 표시)에 최신 master를
+  정상 merge한 병합 직전 후보다. 과거 CI #228·Session assessment #2는 당시 HEAD 검증이다.
+  실제 master 병합은 컨트롤타워 검토 단계로 남긴다. 최종 HEAD/run/job은 PR #21 checks와 완료 보고에서 확인한다.
 
-#18의 운영 계약과 #21의 UI를 같은 작업으로 부르지 않는다. ARCHITECTURE_V2는 레거시 배경이며
-raw→LOB/feature가 현 raw-v2 틱 연구의 필수 선행 단계가 된 것은 아니다.
-PR #18/#19/#20은 이번 재검토에서 수정하지 않는다. #21도 자동 merge하지 않는다.
-CI 성공과 native 오류 해결, 실행 승인, 실제 원본 검증은 서로 다르다.
+## 세 계약의 역할
 
-## PR #21 재검토 결과와 다음 행동
+- **#18 (병합)**: 일반 ChatGPT의 수집 시각·범위·운영 판단.
+  [수집 의사결정 계약](docs/COLLECTION_RUNBOOK.md#collection-decision)·[구간별 coverage](docs/COLLECTION_RUNBOOK.md#collection-coverage)·
+  [live 작업 경계](docs/COLLECTION_RUNBOOK.md#collection-live-boundary). 특정 진단 실험은
+  [Mock FID A-B-A 실행 계약](docs/COLLECTION_RUNBOOK.md#fid-aba-contract)이 따로 다루며 09:15<=KST<15:15는 그 실험 창일 뿐이다.
+- **#21 (이 후보)**: UI의 [세션 근거 표시](docs/SESSION_ASSESSMENT.md). 최근 일일 로그를 세션 콜백 진행·source freshness로
+  승격하지 않고, stale/future/타 세션 관측으로 생존·종료를 인증하지 않는다. full identity와 관측 시각을 대조하며,
+  process alive + 일반 OCX 창을 종료 장애로 보지 않는다. 저장 closed·process/native 관측·lease를 구분하고
+  `exit_observed`는 표시 결과이지 실행 허가가 아니다. 새 컴포넌트는 버튼·권한을 늘리지 않는다.
+- **#29 (병합)**: 알려진 진단 raw의 실제 연구 진입점 배제.
+  [연구 입력 정책](collector/research_input_policy.py)이 raw manifest `feed_scope`로 판정하고 틱 연구 실행과
+  오프라인 재생 작업이 거부하며 qualification은 배제 사유를 기록한다. UI의 diagnostic 표시는 이를 구현·대체하지 않는다.
+  다른 scope의 연구 적격성은 미확인이다.
 
-초기 HEAD `db5c24b97a13d010e760694c9910de6bdbf9343a`의 PR CI #226은
-1,578 passed / 6 deselected였다. 성공했지만 다음 의미적 오판은 테스트가 놓쳤다.
+실제 native 관측기(프로세스·창·lease adapter), source-clock/freshness 정책, 운영 적용·현장 검증은 완료되지 않았다.
+코드 시간표·`--preflight`·admission READY는 실제 거래일·수신·저장·native 안정성을 인증하지 않는다.
+종료 요청 / 저장 closed / PID·창 부재 / lease free는 서로 다른 사실이다.
 
-- 일일 로그 recent는 계수 재출력일 수 있고 session_id도 없다. 세션 콜백 진행으로 승격하지 않는다.
-- stale active 보고는 현재 활성으로 표시하지 않는다. 시각/마지막 보고 상태는 보존한다.
-- 정상 실행 중 OCX 창 존재는 native 잔류가 아니다. 저장 닫힘 뒤 잔존과 active Runtime 오류를 분리한다.
-- runtime 관측은 full identity와 UTC 시각/TTL을 확인한다. lease free는 종료 증거가 아니다.
-- 알려진 diagnostic feed_scope는 표시에서 연구 입력 제외로 남기며 임의 eligible 승격은 받지 않는다.
-- reader/reducer의 status 검증을 공유하고, 표시 컴포넌트 UI 회귀를 추가한다.
+## FID 체인의 남는 한계와 CI 실패 기록
 
-상세 구현·한계는 [전용 계약](docs/SESSION_ASSESSMENT.md)에만 둔다.
-프로세스/창/lease 관측 연결, source-clock 정책, 연구 실행 진입점의 diagnostic 강제 배제는 아직 별도다.
-새 상태 표시를 기존 시작/재시작 권한에 연결하지 않는다. collector/queue/OCX 기본 동작은 변경하지 않는다.
-수정 후 최종 HEAD·집중/전체 CI 로그는 PR #21에서 확인한다. 중복 검사는 합산하지 않고 deselected는 통과가 아니다.
+#29의 fail-closed 보강에도 verify 뒤 사람이 실행하기까지는 검사하지 못하고(race-free 아님), admission digest는
+서명이 아니며 `--execution-approved`는 사용자 인증이 아니다. collector 이름이 든 명령줄·kiwoom/키움/OpenAPI 제목 창은
+보수적으로 BLOCKED, 권한 밖 Python은 UNCERTAIN이다. 사전등록 규칙과 진단 raw의 연구 배제는 그대로다.
 
-다음 독립 작업은 PR #20의 코드/실험 설계 리뷰다. 아직 시장에서 실행하지 않았다.
-None으로 생략한 FID는 COM 호출 수뿐 아니라 문자열/JSON/저장 비용도 바꾸므로 완전한 단일 비용 실험이라고
-과장하지 않는다. 30초 phase의 carry-over, 표본 종목 차이, source clock 해석, 진단 데이터 연구 제외 가드를
-실행 전에 대조한다. 이 인계만으로 새 collector를 실행하지 않는다.
+보존하는 실패와 해석:
+- #29 감사 CI #321: 원래 production에서 23 failed / 3 passed(parameter case 수, 독립 원인 수 아님).
+- #324: 감사 PowerShell AST parser subprocess 10초 `TimeoutExpired`(감사 테스트 timeout만 30초로 조정).
+- #327(run 35934021661, job 107426874350): live 침묵 종료 테스트가 `raw v2 시작 실패` 뒤 `len(calls)==0`으로 실패.
+  **최초 startup 원인은 미확정**이다. 운영 timeout은 바꾸지 않았고 시작 성공 전제·원문 보존 메시지만 추가했다.
+- #328~#332 성공은 위 실패의 원인 해결이나 재발 불가 근거가 아니다.
+- CI #156 flush 예외 close 누락, #162 일회성 raw startup 실패(근본 원인 미확정), PR #19 #205/#206,
+  PR #22 초기 harness 실패, PR #26 CI #280 HANDOFF 초과 실패, PR #21 초기 HEAD CI #226의 성공 뒤 발견된
+  의미적 오판 이력을 보존한다.
 
-## 2026-09-23 장애 — 사용자 전달 로컬 보고
+## live·과거 장애 근거 — 현재 상태로 쓰지 않음
 
-아래 native/운영 수치는 사용자가 전달한 로컬 에이전트 보고다. 이 GitHub 작업이 원본을 직접 재검증한 것은 아니다.
-절대 시각은 KST이며 보고 시점 이후 현재 프로세스 상태를 인증하지 않는다.
+2026-09-23 세션 `7a35b11eddff4dcea88c98acdc8b37df`(revision `5b5156f`, telemetry ON / explicit teardown OFF)의
+native·메모리·stall·저장/Qt finally/lease 해제 뒤 PID·창 잔류 수치는 사용자 전달 로컬 보고다(상세는 #21 원래 인계).
+현재 생존·종료를 이 문서로 확정하지 않는다. popup 최초 표시, VA exhaustion/fragmentation, 최초 장애 인과는 미확정이다.
+FID clock difference는 network latency가 아니며 source progression과 lag slope는 독립 증거가 아니다.
+완료된 작은 canary·96,000 callback x86 offline 시험과 historical benchmark는 반복하지 않는다.
 
-session `7a35b11eddff4dcea88c98acdc8b37df`, collection revision `5b5156f...`,
-PID 13572, CPython 3.10.11 x86, live, telemetry ON / explicit teardown OFF.
-accepted=committed=12,416,350, final_seq=12,428,917 보고. raw 전체 품질은 미검증이다.
+2026-09-22 session `39b5af8b45024458be9a3ae2a2259685`(revision `6a6d6076649befc767e5d8d59151cbcfb2f27c34`):
+마지막 콜백 10:23:47, 보호 종료 요청 10:33:47, 저장 마무리 보고 10:33:48, accepted=committed=11,198,913,
+writer_closed=true, data_quality=unverified(과거 사본). Runtime Error 창과 수신 중단의 동일 원인은 미확정이다.
+화면 대기큐는 Python 저장 큐이지 OCX/Qt 앞단 대기량이 아니다.
 
-09:00 이후 FID20/FID21 차이가 증가해 약 1,700초에 도달했다.
-memory recorded peak 10:08:19.624(commit 1,767.7 MiB/WS 1,747.7 MiB), 하락 첫 관측 10:11:22.124.
-마지막 저빈도 표본 10:36:18~19, status last_commit 10:36:21.189, stall 10:38:21.937,
-silence shutdown 10:46:21대. last_commit/표본을 전수 마지막 callback 시각과 동일시하지 않는다.
-source progression과 lag slope는 같은 source/receive 시계에서 계산하므로 독립 증거가 아니다.
-종목 교차 표본의 비율 중앙값도 전체 이벤트 service rate가 아니다.
-작은 sampled processing_ns, poll 왕복, empty Python queue로 callback/Qt/GIL 전체 병목을 배제하지 않는다.
+## 2026-09-21 원본과 승인 경계
 
-popup 최초 시각은 미확정. 디스크 직접 관측은 10:46:36.764~10:47:08.204 창 안에 있으며
-first appearance ≤ 10:47:08.204라는 상한만 있다. last-absent 없음.
-과거 대화의 10:36:33 존재 주장은 이 보존 파일 감사로 재입증되지 않았다.
-WER 14:08:01.477은 늦은 APPCRASH 기록이며 popup 최초 시각이 아니다.
-저장·Qt finally·lease 해제 뒤에도 PID/Runtime 창이 남았다는 사전점검 보고가 있다.
-이후 canary들 전에는 부재를 다시 확인했다는 보고다. lease alone으로 재시작을 승인하지 않는다.
+session `6f39117671c048f6b60477ceafbf40b6`, revision `4821762fd93230b658339fee084d6c08e3e53ce9`,
+raw 50,635,071,488 bytes, 실제 -wal 0 / -shm 32,768 bytes는 보존한다. 사용자 파일 SHA-256 주장
+`E4304FE3C1CAD8A85EC6C297CEB9CFDADCA2D20001E93756303D567EC5077569`와 payload SHA-256 주장
+`a988d3bf86e36f44a209480658f537088a8910768c68c9fec83349f3de7f1755`는 대상이 다르며 재검증하지 않았다.
+callbacks=42,796,226 / final_seq=42,836,791의 차 40,564는 parse_error 예상 단서일 뿐이다. unsigned FID15는
+품질 문제이며 임의 방향 보정은 없다. sidecar 출처, whole-file stream integrity, 품질 이유·분포, 첫 실제 연구는
+미완료이고 FIRST_RESEARCH_CANDIDATE 미승격이다. writable 재연결 in-place cleanup은 채택하지 않는다.
+운영 파일 집합 복제·qualification에는 대상 identity·sidecar 출처·외부 reader/writer 차단·namespace 격리·
+장외 시각·collector 부재·free space·I/O/time 예산·실패 보존 설계와 별도 사용자 승인이 필요하다.
 
-### 보존 dump 재감사 — 로컬 보고와 해석
+closed != data quality pass; sample clean != whole-file clean; stream integrity != research eligibility;
+parse_error != file corruption; qualification != strategy validation; backtest != live trading approval.
+`Daily_baseline`·`old_data`·운영 raw·dump·operations_state·사용자 변경·오류 근거를 보존한다.
+자동 kill/restart/relogin, lock 삭제, Runtime 창 닫기, LAA 변경, queue 확대, 기본 FID 축소는 금지한다.
+raw→LOB/feature 변환을 현 raw-v2 틱 연구의 필수 선행 단계로 바꾸지 않는다.
 
-11:30:43경 사후 dump, 4,538,551 bytes, SHA-256
-`5BCA2EFC651DBCEB5CE1C09642FF0CE5E729890069A099EFA662BDEE78B50C68`.
-exception stream은 없지만 stack의 저장 context와 로컬 image 대조로
-`OPComms → operator new → malloc NULL → AfxNewHandler → AfxThrowMemoryException`,
-요청 `0x3e14=15,892 bytes`를 복원했다는 보고다. 실제 python.exe LAA OFF.
-dump-time VA: commit 199.59 MiB, reserve 1,757.36 MiB, free 90.98 MiB, 최대 free 60.31 MiB.
-full-memory는 아니나 memory-region metadata 7,358개가 있고 heap header는 부족했다.
-allocation failure는 지지되지만 failure-time VA exhaustion/fragmentation/최초 callback stop 인과는 미확정이다.
-dump-time free를 10:08이나 최초 실패 순간으로 소급하지 않는다.
+## 다음 행동
 
-### 규모별 분리 시험 — 재실행하지 말고 보고를 재사용
-
-1종목 60초 mock/live 및 10종목 60초 ABBA: FID 차이 약 1~3초, 저장 닫힘/PID·창 부재 보고.
-3,757 후보 전종목 60초: Mock 약 1,602/s, Live 약 1,533/s; 차이는 약 2→16~20초,
-메모리 약 +20~31 MiB, 저장 queue reported peak 71~82, accepted=committed/drop 0.
-별도 진단 launcher 사용, 등록 중 callback 포함 약 63초 평균이며 CLI full-universe 제한과 구분한다.
-실수집 순차 입력은 같지 않고 mock 외부 sampler는 wrapper PID를 측정해 비교에서 제외됐다.
-
-x86 offline raw-v2: 96,000 callback/60초/1,600/s, capacity8192/batch512,
-계획 유지·queue sampled peak32·drain0.016초·메모리 약+3 MiB 보고.
-이는 그 고정 입력의 저장 경로 근거일 뿐 실제 burst/Qt/COM/GIL 병목 배제나 native 해결이 아니다.
-
-로컬 근거 위치는 사용자 보고된 repository-relative 경로다. 원격에서 존재/해시 확인한 것이 아니다.
-- `operations_state/offline_queue_replay/20260923T154733KST/`
-- `operations_state/forensics/20260923_session_7a35_timeline_20260923T161353/`
-- `operations_state/forensics/20260923_runtime_timing_20260923T162202/`
-- `operations_state/forensics/20260923_dump_va_audit_20260923T163251/`
-
-## 계속 유효한 과거 차단 조건 — 삭제하거나 완료로 바꾸지 않기
-
-직전 원문: [master 기준 HANDOFF](https://github.com/Peter-jackson12/Stock/blob/5b5156f810b7852c6b5fa4b5c42b77ddfbca0a70/HANDOFF.md).
-CI #156 flush 예외 close 누락 / #162 일회성 raw startup 실패 이력을 유지한다.
-보강 후 통과와 별개로 #162 근본 원인은 미확정이다. PR #19 중간 실패 #205/#206도 최종 성공으로 지우지 않는다.
-
-9월 21일 session `6f39117671c048f6b60477ceafbf40b6`, revision `4821762fd93230b658339fee084d6c08e3e53ce9`:
-raw 50,635,071,488 bytes; callbacks42,796,226/final_seq42,836,791.
-파일 SHA 주장 `E4304FE3C1CAD8A85EC6C297CEB9CFDADCA2D20001E93756303D567EC5077569`,
-payload SHA 주장 `a988d3bf86e36f44a209480658f537088a8910768c68c9fec83349f3de7f1755`는 대상이 다르고 재검증 안 됐다.
-계수 차이 40,564는 parse_error 예상 단서이지 SQL 집계/무부호 체결 수가 아니다.
-말미 unsigned FID15 5건 및 대응 parse_error로 FIRST_RESEARCH_CANDIDATE 미승격.
--wal 0 bytes / -shm 32,768 bytes는 보존. 원본 in-place writable 재연결/cleanup 미채택.
-whole-file 무결성·품질/시간/종목 분포와 첫 실제 연구는 미완료다.
-복제·sidecar 작업은 identity/namespace/외부 접근 배제/free space/I/O·시간 예산/실패 보존 설계와 별도 승인 필요.
-합성 clone lab 성공으로 실제 50.6GB 처리나 삭제가 승인되지 않는다.
-
-9월 22일 session `39b5af8b45024458be9a3ae2a2259685`, revision `6a6d6076649befc767e5d8d59151cbcfb2f27c34`:
-마지막 callback10:23:47, 종료10:33:48, accepted=committed11,198,913/final_seq11,212,670 보고.
-raw12,940,107,776 bytes와 21일50.6GB를 혼동하지 않는다. 17:07 WER는 최초 popup 시각이 아니다.
-
-`Daily_baseline`, `old_data`, 운영 raw/dump/기존 operations_state를 보존한다.
-closed != process exited != research eligible; stream integrity != strategy validation.
-원본 폐기·시간 절단·방향/venue 보정·LAA·queue 확대·자동 kill/restart/relogin은 승인하지 않는다.
-
-## 일반 ChatGPT / 로컬 에이전트 인계
-
-GitHub에서 가능한 읽기·수정·PR·Actions는 일반 채팅에서 직접 처리한다. Work 자동 위임 금지.
-Windows/OCX/실제 raw가 필요한 일만 완성형 복사 프롬프트로 넘긴다.
-모델·추론·상향 조건·새 스레드 권장은 **프롬프트 코드블록 밖**에 둔다.
-목표·금지선·예산 안의 방법/순서는 자율적으로 맡기되 권한 확대는 금지한다.
-이미 시킨 작업에 중복 실행 프롬프트를 주지 않는다. 결과 검토 후 필요한 보충만 분리한다.
+1. PR #21 최종 HEAD의 일반 CI와 Session assessment workflow의 PR 실행 결과를 확인한다.
+   실패하면 최초 원문을 보존하고 필요한 부분만 고친다.
+2. 컨트롤타워가 #21 diff·CI를 검토한 뒤 master 병합 여부를 정한다. #19는 별도 작업이다.
+3. native 관측기·source freshness 정책·운영 검증은 별도 설계·승인 대상이다.
+4. 실제 Mock A-B-A·수집은 별도 승인 후 당일 공식 거래일/시장 구간·사용자가 승인한 exact SHA·현재 CLI를
+   다시 대조하고 RUNBOOK 절차를 따른다. 문서/CI 성공은 로그인·배포·재시작 승인이 아니다.

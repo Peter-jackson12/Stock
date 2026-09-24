@@ -34,7 +34,8 @@ def test_save_open_position_fills_and_explicit_cost_settings(tmp_path):
     assert saved["fills"][0]["fee"] == "20.002"
     assert saved["settings"]["simulator"]["fee_rate"] == "0.001"
     assert saved["raw_identity_verified"] is False
-    assert len(saved["code_sha256"]) == 7
+    assert len(saved["code_sha256"]) == 8
+    assert len(saved["code_sha256"]["collector/research_input_policy.py"]) == 64
     assert saved["processed_event_counts"] == {"quote": 1, "trade": 1}
     assert saved["quote_checks"] == {"eligible": 2}
     assert inspect(path)["diagnostics_only"] is False

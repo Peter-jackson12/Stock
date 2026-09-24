@@ -1,7 +1,9 @@
 name: CI
 
 on:
+  # feature branch는 pull_request로 검사한다. push 검사는 master만 실행해 중복 전체 실행을 줄인다.
   push:
+    branches: [master]
   pull_request:
 
 permissions:
@@ -29,6 +31,12 @@ jobs:
           enable-cache: false
       - name: Install locked dependencies
         run: uv sync --locked --group dev --python 3.14
+      - name: Audit collection decision and session boundaries
+        timeout-minutes: 2
+        run: >-
+          uv run --locked --offline python -m pytest -q -ra
+          tests/test_documentation.py tests/test_collection_session_contract.py
+          tests/test_market_sessions.py tests/test_subscription_plan.py
       - name: Audit protected synthetic clone and failure preservation
         timeout-minutes: 2
         run: |
@@ -61,10 +69,23 @@ jobs:
           uv run --locked --offline python -m pytest -q -ra
           tests/test_ocx_teardown.py tests/test_capture_diagnostics.py
           tests/test_tick_collector_shutdown.py tests/test_live_collector.py
+      - name: Audit FID read diagnostic boundaries
+        timeout-minutes: 2
+        run: >-
+          uv run --locked --offline python -m pytest -q -ra
+          tests/test_fid_read_ab_diagnostic.py
+          tests/test_fid_read_ab_safety.py
+          tests/test_fid_read_ab_logger_safety.py
+          tests/test_fid_read_ab_analysis.py
+          tests/test_fid_read_ab_assessment.py
+          tests/test_fid_read_ab_admission.py
+          tests/test_fid_read_ab_run_plan.py
+          tests/test_fid_chain_fail_closed_audit.py
+          tests/test_fid_chain_fail_closed_fix.py
       - name: Check collector syntax for Python 3.10
         run: >-
           uv run --locked --offline python -c
-          "import ast,pathlib,tokenize; [ast.parse(tokenize.open(p).read(), filename=str(p), feature_version=(3,10)) for p in pathlib.Path('collector/kiwoom').glob('*.py')]; print('Python 3.10 grammar: OK (not a 32-bit/native runtime test)')"
+          "import ast,pathlib,tokenize; [ast.parse(tokenize.open(p).read(), filename=str(p), feature_version=(3,10)) for p in [*pathlib.Path('collector/kiwoom').glob('*.py'), *pathlib.Path('scripts').glob('*fid_read_ab*.py')]]; print('Python 3.10 grammar: OK (not a 32-bit/native runtime test)')"
       - name: Focus numerical and provenance failure boundaries
         timeout-minutes: 2
         run: >-

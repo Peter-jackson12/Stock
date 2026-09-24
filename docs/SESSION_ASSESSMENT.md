@@ -4,7 +4,12 @@
 
 이 문서는 [세션 reducer](../control_tower/session_assessment.py)와
 [읽기 전용 표시 컴포넌트](../dashboard/session_assessment_view.py)의 계약이다.
-PR #18의 일반 ChatGPT 운영 판단/시장 세션 계약과 별개인 PR #21의 표시 개선이다.
+역할을 다음처럼 구분한다. 이 문서(PR #21)는 **UI의 세션 근거 표시**만 다룬다.
+일반 ChatGPT의 수집 시각·범위·운영 판단은 병합된 PR #18의
+[수집 의사결정 계약](COLLECTION_RUNBOOK.md#collection-decision)과
+[live 작업 경계](COLLECTION_RUNBOOK.md#collection-live-boundary)가 담당한다.
+알려진 진단 데이터의 실제 연구 진입점 배제는 병합된 PR #29의
+[연구 입력 정책](../collector/research_input_policy.py)이 담당한다.
 전체 컨트롤타워 재설계나 새 제어 권한을 구현한 것이 아니다.
 기존 운영 화면에도 경고와 별도 상태가 있었으므로, 종전에 모든 상태를 healthy 하나로
 판정했다고 주장하지 않는다. 이번 변경은 그 구분을 명시적 데이터 모델로 보강한다.
@@ -60,10 +65,17 @@ active 상태의 Runtime 창은 native_error이며 종료 장애로 단정하지
 유효한 identity의 `feed_scope=kiwoom_universe_fid_read_diagnostic`는
 `diagnostic_only`와 연구 입력 제외 경고로 표시한다. 시간 경과나 저장 종료로 해제되지 않는다.
 기타 scope의 연구 적격성은 미확인이다. 임의 `research="eligible"` 승격 입력은 없다.
-sidecar/실제 raw는 이 표시에서 열지 않는다. 별도 qualification과 연구 입력 가드는 여전히 필요하다.
+sidecar/실제 raw는 이 표시에서 열지 않는다.
+
+실제 연구 진입점의 배제는 이 표시와 별개로 master에 병합돼 있다. [연구 입력 정책](../collector/research_input_policy.py)은
+raw manifest의 `feed_scope`로 판정하며, [틱 연구 실행](../engine/tick_research_run.py)과
+[오프라인 재생 작업](../control_tower/offline_worker.py)이 진단 raw를 거부하고
+[qualification](../collector/raw_v2_qualification.py)은 배제 사유를 기록한다.
+이 UI 표시는 그 배제를 구현·대체하지 않고, 다른 scope의 연구 적격성이나 실행을 승인하지도 않는다.
+일반 scope에는 여전히 별도 qualification이 필요하다.
 
 새 컴포넌트는 버튼·작업 DB·subprocess를 사용하지 않으며 기존 수집/연구 버튼 조건을 바꾸지 않는다.
-따라서 진단 표시 자체가 모든 실행 진입점의 연구 제외를 강제한다고 주장하지 않는다.
+따라서 진단 표시 자체가 연구 제외를 강제한다고 주장하지 않는다.
 기존 관리 세션 heartbeat/조회/시작 제어는 그대로 남아 있으므로 전체 운영 화면을
 아무 부작용 없는 순수 viewer라고 부르지도 않는다.
 
@@ -75,5 +87,6 @@ diagnostic 배제와 입력 비변경을 검사한다.
 [컴포넌트 UI 회귀](../tests/test_session_assessment_ui.py)는 실제 표시값/경고를 대조한다.
 기존 control-tower UI 회귀는 초기 표시가 워커/작업을 만들지 않는 경계 등을 계속 검사한다.
 
-실제 native adapter, source-clock 분류 정책, 연구 진입점의 diagnostic 강제 거부,
-PR #18/#20과의 통합, 운영 적용은 별도 작업이다. 합성 성공은 현장 검증이나 병합 승인이 아니다.
+실제 native adapter(프로세스·창·lease 관측기), source-clock 분류/freshness 정책, 운영 적용과
+현장 검증은 완료되지 않은 별도 작업이다. PR #18 계약·PR #29 연구 배제와의 문서 연결은 최신 master 통합에서
+정리했다. PR #20은 별도 이력이다. 합성 성공은 현장 검증이나 병합 승인이 아니다.

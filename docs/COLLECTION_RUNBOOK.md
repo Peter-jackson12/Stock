@@ -2,9 +2,336 @@
 
 [시작점](../README.md) · [운영 상태와 남은 작업](../HANDOFF.md) · [틱 설계](../ARCHITECTURE_TICK.md)
 
-기존 README의 현재 수집·메타데이터 절차를 분리한 문서다. 아래 모든 명령은 저장소 루트에서 실행한다.
-수집 중에는 재시작·추가 OCX 로그인·전체 DB 조회·변환·실제 재생을 하지 않는다.
-실행 중인 코드 버전과 현재 상태를 먼저 확인한다. 기록된 관측값은 현재 상태가 아니다.
+기존 README의 수집·메타데이터 절차를 분리한 문서다. 운영 판단은 아래 현재 계약부터 읽는다.
+명령 예시는 별도 승인된 로컬 작업용이며 GitHub-only 감사에서는 실행하지 않는다.
+기록된 과거 관측값은 현재 상태가 아니다. 실제 실행 revision과 검토 중인 PR revision을 구분한다.
+
+<a id="collection-decision"></a>
+## 수집 시각·범위 의사결정 계약
+
+일반 ChatGPT 컨트롤타워도 이 계약을 따른다. [CONTROL_TOWER](../CONTROL_TOWER.md)는 운영 UI/작업 제어의
+기준이며 시장 구간이나 실제 live 상태의 대체 근거가 아니다. 시간표는 이 문서에만 모으고 다른 문서는 연결한다.
+아래는 `5b5156f`의 코드 대조에 근거한 운영 계약이다. `8d84c9b`(PR #29 병합)에서도 시장 프로필·침묵 감시·
+구독 계획 모듈과 기본 종료 시각/등록 경로는 바뀌지 않았고, logger에는 명시적 `--fid-read-ab-test` 진단 옵션만 추가됐다.
+현재 날짜의 휴장/특별 개장이나 실제 수신을 인증하지 않는다.
+
+| 판단할 질문 | 반드시 대조할 근거 | 답변 전에 분리할 최소 사실 |
+|---|---|---|
+| 언제 켜고 끄는가, 장전도 필요한가 | 이 절의 보존 목표, [진입점](PIPELINE_MAP.md#entrypoints), [logger](../collector/kiwoom/kiwoom_universe_logger.py)의 `parse_collector_args`/`_stats_worker` | 목표 구간, 로그인·구독 완료 시점, 기본/제한/전환 모드, 종료 요청과 실제 종료 |
+| 장전/정규장/애프터 침묵을 어떻게 읽는가 | [시장 프로필](../collector/kiwoom/market_sessions.py), [실제 감시기](../collector/kiwoom/session_monitor.py), logger의 `SessionMonitor` 생성 | 판정 창과 수집 창, 기본 `sessions=None`과 명시적 프로필, 체결/호가별 기대 |
+| KRX/NXT를 얼마나 수집하는가 | [구독 계획](../collector/kiwoom/subscription_plan.py), logger의 `_register_all_universe`/`_register_plan`, [저장 연결](../collector/kiwoom/live_capture.py) | 코드 형식·목록 출처·서버, 실제 콜백, 개별 venue, 시간/종목별 coverage 인증 |
+| 현재 collector의 명령/진단 옵션은 무엇인가 | 해당 실행 revision의 `parse_collector_args`, 사용자가 제공한 실제 실행 명령, [telemetry](COLLECTOR_TELEMETRY.md), [teardown](COLLECTOR_TEARDOWN.md) | 코드 기본값과 실제 옵션, 조합 제한, 불명확한 인자는 미확인 |
+| 지금 live가 살아 있는가, 무엇을 바꿔도 되는가 | [HANDOFF](../HANDOFF.md)의 관측 출처·시각·session/revision, 아래 작업 경계 | 원격 사실 / 사용자 보고 / 별도 승인된 직접 관측; GitHub만으로 현재 생존·closed를 확정하지 않음 |
+| 실제 raw 검사·연구를 해도 되는가 | [틱 연구 런북](../TICK_RESEARCH_RUNBOOK.md), HANDOFF의 승인/차단 조건 | 대상 identity, 종료 근거, sidecar/동시 접근, 검사 범위·예산·별도 승인 |
+
+필수 사실이 없거나 서로 충돌하면 그 항목을 **미확인**으로 표시하고 운영 시각·coverage 확정을 보류한다.
+일반적인 “정규장은 09시”나 과거 대화로 빈칸을 채우지 않는다. GitHub-only 작업에서 부족한 사실을 채우려고
+운영 프로세스·raw/evidence·operations_state를 조회하지 않는다. 코드/문서/합성 검증은 계속 진행할 수 있다.
+답변에는 목표 구간과 구독 모드, 근거 revision/파일, 실제 상태의 출처·시각, 미확인 항목, 실행 승인 경계를 남긴다.
+
+### 보존 목표에서 시작 시각을 결정한다
+
+현재 수집 목표에는 **09:00 이전 이벤트 보존**도 포함한다. 기본 6자리 KRX 경로의 장전 동시호가 수신과
+명시적 `_NX` NXT 프리마켓은 다른 입력이다. 전 거래일 애프터마켓과 당일 프리마켓을 아침 전략의 비교 기준으로
+쓰려는 구상도 있지만, 효용·coverage·연구 적격성 검증이나 장시간 운영 rollout이 끝났다는 뜻은 아니다.
+
+장전 보존을 목표로 정했다면 해당 구간 시작 **전에 로그인과 구독 등록을 완료**하도록 준비해야 한다.
+09:00에 켜는 계획은 그 이전 구간을 보존할 수 없다. 프로세스 기동과 구독 완료도 같지 않으므로 필요한 준비 여유를
+별도로 잡되 임의의 고정 시각을 보편 정답으로 쓰지 않는다. canary 때문에 목표 구간의 본 수집을 늦추거나
+실행 중인 collector 옆에 추가 로그인하지 않는다. 이것은 오늘 collector 재시작 지시가 아니다.
+기본 수집기를 일찍 켠다고 NXT 구독·coverage가 생기지 않으며, 보존했다는 이유로 연구 입력을 자동 승인하지 않는다.
+
+### 서로 대체할 수 없는 상태
+
+| 구분 | 의미와 잘못된 승격 금지 |
+|---|---|
+| subscribed | 등록한 코드/모드와 반환 결과. 등록 성공은 실제 콜백 수신 성공이 아니다. |
+| actually received | 특정 세션·시각에 실제 콜백이 도착한 근거. 전체 시간/종목 무누락은 아니다. |
+| expected-for-silence-judgement | 해당 감시 정책이 경고하는 구간/종류. 판정 밖은 데이터 부재가 아니다. `NOT_EXPECTED`와 근거 부족 `UNJUDGED`도 다르다. |
+| stored | 수락된 입력이 실제 커밋·마감된 범위. accepted, committed, writer_closed를 구분한다. 큐 수락이나 최근 heartbeat만으로 저장 완료를 선언하지 않는다. |
+| venue certified | 개별 이벤트의 거래소가 검증됨. 코드 접미사는 라우팅 근거일 뿐이며 현재 raw-v2 venue는 `unknown`이다. |
+| coverage certified | 지정 서버·종목 목록·시간 구간의 수신 완전성을 별도 검증함. 기본 `nxt_coverage=unconfirmed`; 목록 입력/한 종목 모의 실측은 인증이 아니다. |
+| research eligible | 해당 입력의 품질/연구 계약을 통과함. 저장·checksum·venue·coverage 중 어느 한 가지 성공으로 대신하지 않는다. |
+
+<a id="collection-coverage"></a>
+## 구간별 수집 가능성과 판정 범위
+
+아래는 코드가 전제하는 KST 구간이다. “가능”은 구독·콜백·저장 경로가 있다는 뜻이며 특정 종목의 당일 수신을
+보장하지 않는다. 기본 경로의 장전 수신 근거는 시장 모듈의 KRX 장전 주석과 시각으로 입력을 막지 않는
+`_on_receive_real_data`/`LiveRawCapture.on_tick`이다. 실제 수신/저장 사실은 별도 세션 근거로만 말한다.
+
+| 구간 | 기본 6자리 경로: 수집 가능성 / 침묵 판정 | 명시적 `_NX` 경로: 해당 프로필의 판정 | coverage 상태 |
+|---|---|---|---|
+| 08:00~08:30 | 이 구간의 기본 KRX coverage 근거 없음; 판정 밖을 무수신으로 단정하지 않음 | 프리마켓: 체결 임시 임계, 호가 `UNJUDGED` | 기본 수신을 NXT라고 부르지 않음; NXT 미인증 |
+| 08:30~08:50 | KRX 장전 동시호가 수신·보존 가능 / 기본 침묵 판정 밖 | NXT 프리마켓과 시간은 겹쳐도 구독·입력은 별개 | 양 경로의 전체 시간/종목 coverage 미인증 |
+| 08:50~09:00 | KRX 장전 동시호가 수신·보존 가능 / 기본 침묵 판정 밖 | NXT 프로필의 활성 구간 없음; 수신 차단을 뜻하지 않음 | 무경고를 무거래·완전성으로 해석하지 않음 |
+| 09:00~09:00:30 | 정규장 기본 any-event 침묵 감시 | NXT 메인 시작 전, 프로필 판정 밖 | 정규장 시작과 NXT 메인 시작을 같게 쓰지 않음 |
+| 09:00:30~15:20 | 정규장 수집 / 기본 any-event 침묵 감시 | 메인: 체결 임계, 호가 `UNJUDGED` | 기본 6자리 전체 수집도 NXT 전체 지원 증거 아님 |
+| 15:20~15:30 | KRX 정규장 수집 / 기본 any-event 침묵 감시 | NXT 전환: 체결 `NOT_EXPECTED`, 호가 `UNJUDGED` | NXT 전환과 KRX 종료를 혼동하지 않음 |
+| 15:30~15:40 | 기본은 15:35 종료 요청 전까지 수신 경로 유지; 요청 뒤 drain/closed 별도 확인 | NXT 전환: 체결 `NOT_EXPECTED`, 호가 `UNJUDGED` | 기본 종료 시각을 애프터 coverage로 확장하지 않음 |
+| 15:40~20:00 | 기본 수집의 애프터 coverage로 주장하지 않음 | 애프터: 체결 임시 임계, 호가 `UNJUDGED`; 현재 명시적 실행은 1~300초 제한 | 장시간/전종목 NXT 운영 미인증 |
+
+**프로필과 실제 기본 감시는 같은 구현이 아니다.** `market_sessions.py`의 구간은 시작 포함/끝 제외이며
+체결 기본 임계 120초, 프리/애프터 임시 임계 600초, 호가 `UNJUDGED`다. 이 모듈은 수신·저장을 차단하지 않는다.
+기본 logger는 `SessionMonitor(sessions=None)`을 사용하며 체결/호가의 공통 `last_event_ts`로 감시한다.
+이 legacy 경로의 종료점 비교는 15:30 시각을 포함한다. 반면 명시적 프로필 감시는 종류별 시계를 사용한다.
+따라서 프로필의 호가 정책을 그대로 기본 collector에 적용해 설명하지 않는다. 임계값의 실측 타당성은 별도다.
+
+기본 종료 요청은 `_stats_worker`의 로컬 OS 시각을 쓴다. KST 시간대·시계·당일 휴장/특별 운영 조건은 승인된
+실행 준비에서 따로 확인해야 한다. 코드 시간표나 `--preflight`가 시장 캘린더 검증을 대신하지 않는다.
+종료 시각 도달은 정상 종료·저장 완료·OS 프로세스 부재의 증거가 아니다.
+
+### 구독/CLI를 함께 읽는다
+
+기본 전체 유니버스 및 `--codes`는 6자리 경로다. `--nxt-codes`는 별도 명시적 `_NX` 경로이며
+최대 10종목, 목록 출처/확인 시각, 독립 raw-v2, 1~300초 제한 시간이 필요하다. `_AL`은 운영 계획에서 거부한다.
+`nxt_eligibility_confirmed` 선언도 개별 venue나 전체 coverage를 인증하지 않는다.
+
+독립 NXT의 `--market-profile` 생략 기본값은 **`nxt_aftermarket`**이다. 현재 시각에서 자동 추론하지 않는다.
+프리마켓 판단에서는 실제 계획의 프로필을 반드시 대조한다. 프로필 변경은 구독 종목/수신 필터/coverage 승인이 아니다.
+명시적 `--aftermarket-*` 계획에는 시각 또는 경과 시간 트리거가 구현돼 있지만 기본 실행은 전환하지 않는다.
+전환 후에도 별도 1~300초 상한을 적용하며 20시까지 전종목 수집으로 일반화하지 않는다.
+`--capture-telemetry`와 `--explicit-ocx-teardown`은 서로 독립이고 기본 OFF이며 전환 모드와의 조합은 제한된다.
+`--fid-read-ab-test`는 기본 OFF인 mock 전용 90초 전종목 진단이며 연구 비적격이다. 이 옵션의 조건과
+09:15~15:15 목표 창은 [FID A-B-A 실행 계약](#fid-aba-contract)에만 적용하고 일반 수집 시각·coverage 판단에 쓰지 않는다.
+아래 날짜별 기록의 과거 “미연결” 표현보다 현재 CLI와 해당 테스트를 우선 대조한다.
+
+<a id="collection-live-boundary"></a>
+## live 수집과 개발 작업의 경계
+
+| 작업 | live 중 계약 |
+|---|---|
+| GitHub 원격 문서/코드/PR/CI 읽기, 별도 branch/commit/PR | 허용. 운영 PC/체크아웃과 연결된 배포·동기화는 실행하지 않음 |
+| GitHub-hosted Actions의 작은 합성/문서 pytest | 허용. 운영 PC의 self-hosted runner나 실제 데이터/native 실행으로 바꾸지 않음 |
+| master 갱신·PR merge·자동 병합 | 보류. 해당 live 종료 후 별도 확인; CI 성공만으로 해제하지 않음 |
+| 운영 로컬 코드/환경 변경, git fetch/pull/switch/reset, 로컬 pytest/preflight/추가 probe | 금지. 읽기 전용 또는 합성이라는 이유로 GitHub-only 범위를 넓히지 않음 |
+| collector 재시작/중단/교체·추가 OCX 로그인·모니터 창 조작 | 금지. 코드/문서 변경의 적용은 별도 승인된 다음 실행 문제 |
+| 실제 raw/evidence/operations_state/DB/프로세스 관측 | GitHub-only에서는 가벼운 읽기도 금지. 다른 작업의 별도 명시적 관측 승인과 혼동하지 않음 |
+| qualification·백테스트·복사·전체 COUNT/해시/변환·sidecar 처리 | 금지. 종료 확인만으로 자동 승인되지 않는 별도 장외 작업 |
+
+현재 세션 정보는 HANDOFF와 사용자가 제공한 관측 시각/출처로 구분한다. 원격 SHA와 로컬 실행 revision은
+다를 수 있다. 불확실한 생존 상태를 “종료”로 간주해 위 제한을 해제하지 않는다.
+이하의 “가벼운 확인”과 모든 실행 예시에도 이 경계가 우선한다. 실행 중인 세션 ID·옵션은 HANDOFF에만 두며
+영구 시간표와 섞지 않는다. 합성 회귀는 에이전트의 실제 읽기나 native live 결과까지 인증하지 않는다.
+
+<a id="fid-aba-contract"></a>
+## Mock 전종목 FID A-B-A — 실행 전 사전점검과 1회 실행 계약
+
+이 절은 특정 진단 실험의 계약이다. 일반 수집의 시작·종료 시각, 장전 보존, KRX/NXT 범위는 위
+[수집 의사결정 계약](#collection-decision)과 [live 작업 경계](#collection-live-boundary)를 따르며,
+아래의 09:15<=KST<15:15 실험 목표 창을 프로젝트 전체 수집 시간으로 쓰지 않는다.
+
+상세 실험 의미·연구 배제·A2/POST 해석은
+[Mock 전종목 FID 읽기 A-B-A 계약](../tests/FID_READ_AB_DIAGNOSTIC.md)을 따른다.
+이 절은 **Windows/OCX에서 실제로 실행하기 직전의 운영 절차**만 정한다.
+GitHub CI 통과나 이 문서 자체는 로그인·실행 승인이 아니다.
+
+### 1. 실행 시점
+
+- 실제 피드 의미를 보려는 1차 실험은 **공식 거래일의 KRX 정규장 09:00~15:30 KST 안**에서 한다.
+- 개장/마감 burst를 별도 변수로 만들지 않기 위해 최초 1회는 가능하면 09:15 이후~15:15 이전에 한다.
+- 특별 개장·임시 휴장·공휴일은 실행 당일 공식 KRX 정보를 다시 확인한다. 휴장일·장외의 0건 실행으로 대신하지 않는다.
+- 동일 PC의 다른 collector/OCX 세션이나 Runtime 오류 창/PID 잔류 여부가 미확인이면 새 로그인을 시작하지 않는다.
+
+### 2. 로그인 없는 사전점검
+
+전용 clean checkout/worktree가 사용자가 선택·승인한 최종 실행 revision의 exact SHA인지 먼저 확인한다.
+특정 PR 번호를 영구 최신 기준으로 쓰지 않는다.
+사용자 변경이 있는 checkout을 reset/stash/clean하지 않는다. 필요하면 새 worktree를 사용한다.
+실제 실행과 같은 인자에 `--preflight`만 추가한다.
+
+```powershell
+git fetch origin
+git rev-parse HEAD
+git status --short
+
+.\.venv32\Scripts\python.exe collector\kiwoom\kiwoom_universe_logger.py `
+  --storage raw-v2 `
+  --capture-telemetry `
+  --fid-read-ab-test `
+  --duration-seconds 90 `
+  --preflight
+```
+
+정상 JSON은 최소한 `python_bits=32`, `login_attempted=false`, `ocx_instantiated=false`,
+`ocx_registered=true`, `ocx_file_exists=true`, `ready=true`를 만족해야 한다.
+`ready=true`는 로그인 성공·Mock 서버 가용성·실시간 수신·저장 여유를 인증하지 않는다.
+실행 직전 프로젝트 볼륨의 free bytes도 기록한다. 코드 admission 하한은 256 MiB지만
+그 하한 통과만으로 90초 전종목 raw에 충분한 공간이라고 일반화하지 않는다.
+
+### 3. 실행 직전 차단 조건
+
+아래 하나라도 충족하면 **로그인하지 않고 중단**한다.
+
+- checkout HEAD가 사용자가 선택·승인한 최종 실행 revision의 exact SHA와 다르거나 working tree가 깨끗하지 않다.
+- 32비트 Python/OCX preflight가 실패한다.
+- 다른 `kiwoom_universe_logger.py` collector가 살아 있거나 기존 OCX/Runtime 오류 상태 종료가 미확인이다.
+- collector lease를 안전하게 획득할 조건이 불명확하다. lock 파일 존재만으로 생존/종료를 단정하지 않는다.
+- 공식 거래일/시장 구간이 확인되지 않았거나 목표 정규장 구간 밖이다.
+- 저장 볼륨 여유가 코드 admission 하한보다 작다.
+- 기존 운영 raw/dump/operations_state를 삭제·덮어써야만 실행할 수 있다.
+
+차단을 없애려고 자동 kill/restart/relogin, lock 삭제, Runtime 창 강제 종료, LAA 변경, queue 확대, 기본 FID 축소를 하지 않는다.
+
+### 3-1. 당일 admission checker
+
+위 수동 차단 조건을 한 번에 정리하기 위해 `scripts/check_fid_read_ab_admission.py`를 사용한다.
+이 도구는 OCX를 만들거나 로그인하지 않고, raw DB도 열지 않는다. Git fetch도 수행하지 않으므로
+컨트롤타워/운영자가 **직전에 원격을 확인해 전달한 exact SHA**를 `--expected-revision`으로 넣는다.
+
+공식 거래일 여부는 이 로컬 도구가 인터넷 없이 추정하지 않는다. 컨트롤타워가 당일 공식 KRX 근거를
+확인한 뒤 그 날짜와 근거 메모를 명시적으로 전달한다. `--execution-approved`는 사용자가 그 1회 실행을
+명시적으로 승인한 뒤에만 붙인다.
+
+```powershell
+C:\Projects\Stock\.venv32\Scripts\python.exe scripts\check_fid_read_ab_admission.py `
+  --repo-root <승인된 exact SHA의 clean 실행 worktree> `
+  --expected-revision <컨트롤타워가 방금 확인한 정확한 SHA> `
+  --official-market-date YYYY-MM-DD `
+  --official-market-source-note "<확인한 공식 KRX 근거와 시각>" `
+  --execution-approved
+```
+
+checker는 **검사 대상 worktree 루트에서** 그 worktree의 `scripts\...`로 실행하고 `--repo-root`도 같은
+worktree를 준다. 실제로 import된 checker 코드의 checkout, `git rev-parse --show-toplevel`, `--repo-root`가
+하나라도 다르면 BLOCKED다. Python 실행 파일은 `C:\Projects\Stock\.venv32`처럼 다른 경로여도 된다
+(정상 sibling worktree). ignored 하위 폴더가 부모 저장소의 HEAD/clean을 빌리지 못한다.
+
+판정:
+
+- `RUN_READY` — 관측 **시작과 완료** 두 시점 모두에서 로그인 전 계약이 충족됨. 실제 수집 성공 인증은 아님.
+- `RUN_BLOCKED` — wrong HEAD/dirty tree/실행 root·checker 출처 불일치/collector entrypoint가 HEAD의 tracked
+  blob과 다름/skip-worktree·assume-unchanged 항목/preflight 실패/저장공간 하한/collector 또는 Runtime 창/
+  lease 미확인/시장 날짜·09:15~15:15 구간/승인 중 하나라도 차단.
+- `RUN_UNCERTAIN` — process probe 실패·누락·잘림, 명령줄/실행 경로를 읽을 수 없는 Python, 같은 `.venv32`
+  Python의 다른 프로세스, 벽시계 역행·단조 시계와 2초 초과 불일치처럼 정체나 시각을 확정하지 못한 상태.
+  실제 로그인 금지.
+
+READY 판정은 `RUN_READY` 문자열이나 `valid`/`meets_code_minimum` 플래그가 아니라 기록된 근거를 같은
+엄격한 pure evaluator로 다시 계산한 결과다. 필수 필드 누락·타입 오류(bool을 숫자로 보지 않음)·내부 모순은
+READY가 아니다. prepare와 verify도 같은 evaluator로 재검증한다.
+
+프로세스 탐색은 checker 자신, 조회용 PowerShell, 그리고 checker를 띄운 venv launcher를 제외한다.
+launcher 제외는 직계 부모가 같은 venv `python.exe` 경로이고, 부모와 checker의 명령줄을 모두 읽을 수 있으며
+실행 파일 뒤 인자가 정확히 같을 때(launcher가 같은 인자로 자식을 띄운 근거)만 한다. 명령줄 누락·빈 값은
+UNCERTAIN, 무관한 부모 스크립트는 일반 같은-runtime 프로세스(UNCERTAIN), collector 부모는 BLOCKED다. 조회 결과는 목록과 개수가 함께 있어야
+하며, 명시적 빈 목록만 "없음"이다. 명령줄에 `kiwoom_universe_logger`가 있는 프로세스는 interpreter와
+script/`-m` module 형식에 관계없이 BLOCKED다(편집기 등도 보수적으로 차단). 임의 CommandLine 원문은
+출력하지 않고 일치 여부만 남긴다. 프로세스·창 조작은 하지 않는다. 기존 lease 파일은 새로 만들거나 삭제하지 않고
+존재할 때만 잠금 가능 여부를 순간 확인한다. 파일이 없으면 실제 collector가 실행 시 다시 lease를 획득한다.
+
+`RUN_READY`라도 서버 가용성·실시간 수신·native 안정성·실험 성공은 미인증이다.
+
+### 3-2. short-lived run plan 생성과 fresh verify
+
+`RUN_READY` admission을 그대로 오래 들고 있다가 실행하지 않는다. 시간 경계는 모두 반개구간이다.
+
+- admission 근거: 관측 **시작** 기준 `0 <= age < 60초`. 완료 시각이 판단 시각보다 늦으면 거부.
+- plan: `created <= t < expires`(TTL 300초). 정확히 `expires`인 순간은 이미 만료.
+- verify: 시작 시각과, fresh admission·명령 재계산 뒤의 **완료 시각** 모두에서 TTL·09:15~15:15 구간·
+  fresh admission 신선도를 검사한다. 단조 시계 경과로도 만료를 재확인하고 벽시계 역행/불일치면 명령을 숨긴다.
+- prepare/verify CLI는 시작 시각을 고정하지 않는다. plan 생성 시각은 admission 완료 뒤에 읽는다.
+
+plan은 admission 사본과 canonical SHA-256을 보존한다. digest는 서명이 아니며 사용자 승인을 인증하지 않으므로,
+verify는 embedded admission이 **plan 생성 시각에도** READY·60초 이내였는지 재검증하고(created/expires만
+옮긴 plan 거부), 실제 명령을 보여주기 전에 trusted SHA와 실행 승인을 다시 받는다.
+
+plan 생성:
+
+```powershell
+C:\Projects\Stock\.venv32\Scripts\python.exe scripts\prepare_fid_read_ab_run.py `
+  --repo-root <clean execution worktree> `
+  --expected-revision <컨트롤타워가 방금 확인한 정확한 SHA> `
+  --official-market-date YYYY-MM-DD `
+  --official-market-source-note "<공식 KRX 근거와 확인 시각>" `
+  --execution-approved `
+  --output <repo-root>\operations_state\fid_read_ab_run_plans\<새 plan 이름>.json
+```
+
+prepare는 fresh admission을 직접 다시 수행한다. READY가 아니면 plan을 만들지 않는다.
+output은 gitignored `operations_state/fid_read_ab_run_plans/` 아래 새 파일만 허용하며 기존 plan을
+덮어쓰지 않는다. plan 생성 자체가 다음 fresh `git status`를 dirty로 만들지 않게 하는 계약이다.
+collector는 실행하지 않는다.
+
+실제 명령을 보기 직전 fresh verify:
+
+```powershell
+C:\Projects\Stock\.venv32\Scripts\python.exe scripts\verify_fid_read_ab_run_plan.py `
+  --plan <방금 만든 plan JSON> `
+  --expected-revision <컨트롤타워가 다시 확인한 정확한 SHA> `
+  --execution-approved
+```
+
+verify는 plan 만료·embedded admission digest·trusted revision을 확인한 뒤 admission checker를 또 실행한다.
+HEAD/clean tree/preflight/process/window/lease/시간 중 하나라도 달라지면 명령을 숨기고 NOT_READY로 끝난다.
+READY여도 plan에 저장된 명령을 그대로 믿지 않고 fresh admission의 Python executable과 현재 worktree의
+`kiwoom_universe_logger.py` 경로로 exact command를 다시 계산해 plan과 일치할 때만 출력한다.
+PowerShell 표시는 `& '<exe>' '<arg>' ...` 형식이며 작은따옴표류는 이중화하고 큰따옴표·제어문자 token은 거부한다.
+plan reader는 실제로 읽은 byte에도 1 MiB 상한을 두고 NaN/Infinity/중복 key JSON을 거부한다.
+verify 완료 뒤 사람이 실제로 실행하기까지의 사이는 검사하지 못한다(race-free 아님).
+digest가 plan 시각을 덮지 않으므로 created를 admission 60초 신선도 안에서 옮긴 plan은 구별하지 못한다.
+이 경우에도 verify는 fresh admission을 다시 요구한다. 제목에 `kiwoom`/`키움`/`OpenAPI`가 들어간 모든 창
+(터미널·편집기·브라우저 탭 포함)은 기존 계약대로 보수적으로 BLOCKED다.
+
+verify의 `MANUAL_COMMAND_READY`도 **자동 실행 승인이 아니다**. 출력된 명령은 사람이 확인해 수동으로
+실행할 대상일 뿐이고 verify/prepare 어느 쪽도 collector launch·OCX login·SetRealReg를 호출하지 않는다.
+
+### 4. 승인 후 실제 Mock 1회 실행
+
+사전점검과 당일 거래일/구간 확인이 통과한 경우에만 다음 **한 번의 독립 실행**을 사용한다.
+
+```powershell
+.\.venv32\Scripts\python.exe collector\kiwoom\kiwoom_universe_logger.py `
+  --storage raw-v2 `
+  --capture-telemetry `
+  --fid-read-ab-test `
+  --duration-seconds 90
+```
+
+추가하지 말아야 할 인자: `--codes`, `--nxt-codes`, `--managed-launch`, `--explicit-ocx-teardown`, 모든 `--aftermarket-*`.
+관측 서버가 Mock이 아니면 backend/구독 전에 실패해야 하며 live로 계속 진행하지 않는다.
+로그인 실패·구독 거부·FID 예외·queue/storage 오류가 나면 자동 재시도하지 않는다.
+
+### 5. 실행 후 기계적 성공과 실험 해석을 분리
+
+우선 새 session 폴더의 작은 근거만 bounded analyzer로 읽는다. 이 명령은 raw DB를 열거나
+COUNT/hash/SQLite scan하지 않는다.
+
+```powershell
+C:\Projects\Stock\.venv32\Scripts\python.exe scripts\analyze_fid_read_ab.py `
+  --session-dir operations_state\capture_sessions\<session_id> `
+  --expected-revision <실행한 정확한 SHA>
+```
+
+analyzer가 READY를 반환해도 연구 적격이나 native 원인 규명으로 해석하지 않는다.
+LIMITED/DIAGNOSTIC_ERROR/INCOMPLETE/INVALID이면 두 번째 실행으로 덮지 말고 해당 작은 근거를 보존한다.
+
+READY인 경우에만 실제 결과 전에 고정한 `fid_read_ab_assessment_v1` 규칙을 적용한다.
+
+```powershell
+C:\Projects\Stock\.venv32\Scripts\python.exe scripts\assess_fid_read_ab.py `
+  --session-dir operations_state\capture_sessions\<session_id> `
+  --expected-revision <실행한 정확한 SHA>
+```
+
+1차 자동 판정은 체결/호가를 분리한 `fid_read_ns` A1/B/A2 중앙값의 방향만 본다.
+각 phase·real_type 유효 표본 3개 미만이면 not-assessable이다. 효과크기 threshold와 p-value는 없고,
+`processing_ns`는 보조, `queue_submit_ns`는 guardrail일 뿐이다.
+source clock difference·callback/30·resource history·PRE/POST는 자동 판정에 넣지 않는다.
+
+- raw manifest `feed_scope == "kiwoom_universe_fid_read_diagnostic"`
+- sidecar `fid_read_ab_test.json`은 `fid_read_ab_test_v2`, `diagnostic_only=true`, `research_eligible=false`
+- 최종 저장 snapshot의 closed/writer_closed, pending callback 0
+- raw/sidecar/telemetry/diagnostics의 session identity와 code revision 일치
+- sidecar `diagnostic_error`, FID read failure, queue/storage 오류 유무
+- A1/B/A2/POST별 callback·FID attempt/success 계수와 telemetry 표본
+- 저장 종료 뒤 collector PID·native Runtime 창·lease는 서로 독립 사실로 확인
+
+저장이 정상 종료돼도 phase별 callback이 없거나 표본이 부족하면 기계적 성공과 해석 가능성을 분리한다.
+A1/B/A2 callback 수를 30으로 나눈 값을 독립 정상상태 service rate로 부르지 않는다.
+POST는 분석에서 제외하되 버리지 않는다. FID clock difference를 network latency라고 부르지 않는다.
+정상 종료 뒤 PID/Runtime 창 잔류가 보이면 두 번째 실험을 시작하지 않는다.
+첫 실행 검토 전에는 live 비교·동시 두 계정 비교·반복 전종목 실행으로 자동 확대하지 않는다.
 
 ## 2026-09-17 설치된 공식 명세 대조
 
@@ -31,14 +358,15 @@ confirmed는 증거를 자동 검증하는 기능이 아니라 호출자의 선�
 레거시 엔진의 `--allow-unverified-nxt`는 필터 우회이며 검증 승격이 아니다. 거래가 0건이어도
 저장된 manifest의 `params.nxt_guard`에 두 정책·우회 여부·판정·이유를 남긴다.
 
-## NXT 소규모 검증 준비 (실행 미연결)
+## NXT 소규모 검증 준비
 
-`collector/kiwoom/nxt_probe.py`의 `prepare_plan`은 6자리 종목 하나에 대해 원 코드·`_NX`·`_AL`,
-명시한 mock/live, KST 시작 시각과 1~300초 제한을 담은 오프라인 계획만 만든다.
-`observation`은 요청/콜백 코드 원문, 이벤트 타입(알 수 없는 타입 포함), FID 원문 전체,
+이 절의 순수 함수와 후속 실행기를 구분한다. `collector/kiwoom/nxt_probe.py`의 `prepare_plan`은
+6자리 종목 하나에 대해 원 코드·`_NX`·`_AL`, 명시한 mock/live, KST 시작 시각과 1~300초 제한을 담은
+오프라인 계획만 만든다. `observation`은 요청/콜백 코드 원문, 이벤트 타입(알 수 없는 타입 포함), FID 원문 전체,
 UTC·단조 수신 시각, 세션·서버와 수신 시각 기준 시장 구간을 분리 보존하는 순수 함수다.
-접미사 힌트가 있어도 venue=unknown, coverage=unconfirmed를 유지한다. 이 코드는 운영 콜백이나
-로그인에 연결하지 않았고 파일 저장/구독 실행기도 아니다. 수신 시각 구간은 거래소 시각 인증이 아니다.
+접미사 힌트가 있어도 venue=unknown, coverage=unconfirmed를 유지한다. 순수 함수 자체는 로그인/파일 저장을 하지 않는다.
+후속 `run_nxt_probe` 모의 실행기와 logger의 명시적 `--nxt-codes` 경로는 아래 구현/실측 절에 있다.
+“실행 미연결”이라는 초기 상태를 현재 collector 전체에 적용하지 않는다. 수신 시각 구간은 거래소 시각 인증이 아니다.
 
 별도 실측 순서는 다음과 같다.
 
@@ -46,7 +374,7 @@ UTC·단조 수신 시각, 세션·서버와 수신 시각 기준 시장 구간�
    NXT 대상 여부를 공식 수단으로 확인한 한 종목으로 시작한다. mock 지원과 live 지원은 따로 기록한다.
 2. 각 코드의 SetRealReg를 순차로 시험한다. 요청 코드·화면번호·FID 요청 목록·반환값·실제 서버 응답·
    접속 중단/구독 해제 시각을 저널로 남긴다. 반환 성공과 실시간 수신 성공을 구분한다.
-   기존 운영 CLI는 6자리만 허용하므로 접미사 코드를 억지로 넣거나 운영 필터를 풀지 않는다.
+   기본 `--codes`는 6자리만 허용한다. 접미사 실측은 명시적 전용 경로를 쓰며 운영 필터를 풀지 않는다.
 3. 콜백 타입별 공식 OCX FID 정의에서 읽을 필드를 정하고 원문을 보존한다.
    저장 목록만으로 전체 제공 필드를 판단하지 않는다. `_AL`은 개별 체결 거래소로 분류하지 않는다.
    `observation`의 힌트를 per_event_venue 인증으로 바로 넘기지 않는다.
@@ -58,7 +386,7 @@ UTC·단조 수신 시각, 세션·서버와 수신 시각 기준 시장 구간�
 
 ## 2026-09-17 종료 후 원문 표본 검증 순서
 
-현재는 실행 중이므로 이 절차를 아직 수행하지 않았다. 먼저 같은 session_id의 종료 로그,
+아래는 2026-09-17 당시의 준비 기록이며 현재 실행 상태를 뜻하지 않는다. 먼저 같은 session_id의 종료 로그,
 상태(writer_closed/finalization/error), starting/draining/closed 보고, OS 프로세스 부재를 대조한다.
 pending/in_flight/queued=0만으로 종료를 판정하지 않는다. 정상 종료해도 10:31 이후 수신 정체는 별도 결손이다.
 
@@ -75,6 +403,7 @@ v1 거래량은 abs() 처리됐으므로 부호 복원이 불가능하며 기존
 
 ## 환경과 수집 시작
 
+먼저 [수집 시각·범위 판단](#collection-decision)과 [live 작업 경계](#collection-live-boundary)를 확인한다.
 64비트 분석/운영 화면은 `.venv`, 키움 OCX는 `.venv32`를 쓴다.
 환경 설치·변경은 수집 세션 밖에서 수행한다. 시작 전 변경을 커밋하고 중복 수집 여부를 확인한다.
 
@@ -112,8 +441,8 @@ uv sync
   1~300초로 허용한다. 장외 제한 실행도 실제 로그인이며 체결이 없으면 실피드 검증이 되지 않는다.
 - CLI는 OCX 생성 전 같은 체크아웃의 단일 수집 잠금을 획득한다. 남은 lock 파일 자체로 생존을
   판정하지 않는다. 다른 앱/체크아웃의 브로커 로그인 공존까지 보장하는 잠금은 아니다.
-- 로그인 후 실제 서버 응답이 0/1인지 확인하고 미확인은 중단한다. 콜백 진입 시 단조/UTC 시각을
-  잡고 원문 FID를 Qt 스레드에서 추출한다. 누적 거래대금 FID 14로 방향을 추정하지 않는다.
+- 로그인 후 서버 응답 `"1"`은 mock, 빈 문자열 또는 `"0"`은 live로 해석하고 다른 값은 중단한다.
+  콜백 진입 시 단조/UTC 시각을 잡고 원문 FID를 Qt 스레드에서 추출한다. 누적 거래대금 FID 14로 방향을 추정하지 않는다.
   현재 방향은 FID 15의 명시적 비영(非零) 부호를 쓰는 `signed_volume`, venue는 `unknown`이며 가격은 `signed_magnitude` 정책을 사용한다. 원문은 그대로 남기고 무부호·0·비정상 거래량은 방향 미확인 품질 오류로 보존한다.
 - 큐 8,192콜백·워커 배치 최대 512콜백으로 저장한다. 큐 초과·FID 조회 예외·연결 단절·구독 거부는
   중단하고 정상 완료로 기록하지 않는다. 파싱 불가 값은 원문과 품질 오류 레코드로 남긴다.
@@ -129,8 +458,9 @@ KIS `collector/run_daily_daemon.py`는 별도 프로그램으로 같은 날짜 r
 
 ## 수집 중 가벼운 확인
 
-우선 컨트롤 타워의 수동 로그 관측을 사용한다. 추가로 `scripts/check_tick_collection.py`의
-짧은 읽기 전용 관측을 사용할 수 있다. 전체 건수 집계·해시·인덱스 생성·변환은 장외 작업이다.
+별도 관측 승인이 있는 작업에서만 컨트롤 타워의 수동 로그 관측이나 `scripts/check_tick_collection.py`의
+짧은 읽기 전용 관측을 검토한다. GitHub-only 감사에서는 실행하지 않는다.
+전체 건수 집계·해시·인덱스 생성·변환은 별도 승인된 장외 작업이다.
 하트비트가 최근이라는 이유만으로 무누락·DB 저장 완료·매수 방향 정확성을 인증하지 않는다.
 
 ### 2026-09-17 수신 정체와 네이티브 충돌 조사
@@ -189,7 +519,7 @@ shares·시가총액·유통비율을 수신한다. 현재 자동 실행/운영 
 # 2. 32비트: 출력된 계획 파일 경로를 사용. 로그인 창에서 해당 서버로 접속한다.
 .\.venv32\Scripts\python.exe collector/kiwoom/run_meta_batch.py --job <계획파일.json>
 
-# 3. 64비트: 성공/결측 원응답을 파일럿 tidy 및 파생 CSV로 반영
+# 3. 64비트: 출력된 계획 파일 경로를 사용해 파일럿 tidy 및 파생 CSV로 반영
 .\.venv\Scripts\python.exe scripts/kiwoom_metadata.py import --job <계획파일.json>
 ```
 
@@ -425,7 +755,8 @@ CLI에서 직접 계획을 만드는 `--nxt-codes` 계열 인자는 `0cfc254`에
 같은 OCX 인스턴스·로그인 연결을 유지한 채 정규장 저장을 마치고 애프터마켓 저장으로 넘긴다.
 구현은 `collector/kiwoom/session_transition.py`(순서 실행기)와
 `KiwoomUniverseLogger.run_aftermarket_transition()`(수집기 연결)로 나뉜다.
-**호출해야 도는 명시적 동작**이며, 시계 기반 자동 발동은 아직 없다.
+**명시적 계획에서만 동작한다.** 초기 직접 호출 구현 뒤 2026-09-18에 CLI 시각/경과 시간 트리거가 추가됐다.
+아래 CLI/자동 트리거 절이 현재 연결이며, 기본 수집의 자동 전환이나 운영 실측 완료를 뜻하지 않는다.
 
 네 단계를 순서대로 실행하고, 앞 단계가 성공했다고 확인되기 전에는 다음 단계로 넘어가지 않는다.
 
@@ -611,20 +942,22 @@ NXT 개장부터 진입에는 전 거래일 애프터마켓도 참고하려는 �
 전 거래일 애프터마켓과 당일 프리마켓을 날짜/시장 구간별로 구분하고 휴장일과 야간 공백을 보존한다.
 연구에서는 같은 진입 조건에서 두 입력 범위를 비교하고, 결정 시점 이후 데이터가 들어가지 않도록 한다.
 
-- 사용자는 장 종료 후 애프터마켓도 모으는 방안을 검토하도록 요청했다. 오늘 1종목 실측을
-  근거로 제한된 NXT 대상 목록부터 확장하는 것을 제안한다. 전 종목 지원으로 일반화하지 않는다.
-- 초기 운영안은 정규장 결과를 보존한 별도 애프터마켓 세션/파일이다. 단일 OCX 로그인 안에서
-  정규장 저장을 마무리하고 구독/저장 세션을 전환하는 방식을 우선 검토한다. 세션 전환 지연과
-  결손은 기록하고, 서로 다른 수집기의 중복 로그인은 피한다. 구현 전에는 자동 전환을 약속하지 않는다.
-- 15:40~20:00 체결 수집과 저장 마무리를 별도 설정한다. 기존 15:35 종료만 늦춰서는 부족하다.
-  현재 침묵 판정도 정규장 시간에 묶여 있어 시장별 활동 구간과 휴장/구간 전환을 함께 반영해야 한다.
+다음은 2026-09-17 초기 운영안의 배경이다. 현재 CLI/프로필 연결과 당시 구현 전 제안을 구분한다.
+
+- 사용자는 장 종료 후 애프터마켓도 모으는 방안을 검토하도록 요청했다. 당시 1종목 실측을
+  근거로 제한된 NXT 대상 목록부터 확장하는 것을 제안했다. 전 종목 지원으로 일반화하지 않는다.
+- 초기 운영안은 정규장 결과를 보존한 별도 애프터마켓 세션/파일이었다. 단일 OCX 로그인 안에서
+  정규장 저장을 마무리하고 구독/저장 세션을 전환하는 방식은 이후 명시적 모드로 구현됐다.
+  세션 전환 지연과 결손은 기록하고, 서로 다른 수집기의 중복 로그인은 피한다. 운영 실측 완료는 아니다.
+- 15:40~20:00 체결 수집과 저장 마무리를 별도 설정해야 하며 기존 15:35 종료만 늦춰서는 부족하다.
+  기본 감시는 정규장 단일 창, 명시적 프로필은 시장별 구간을 사용한다. 휴장/임계값 실측은 별도다.
   소수 저유동성 종목의 무체결을 연결 장애로 단정하지 않고 호가·연결 상태와 함께 관측한다.
 - 후보 구독은 우선 `_NX`로 제한하고, 당일 거래 대상 목록의 출처/시각을 남긴다.
   `_AL` 통합과 중복 구독은 별도 비교 검증에만 사용한다. 원문 구독 코드·응답 코드·시장 구간은
   보존하되 접미사만으로 개별 체결 venue나 NXT 가드의 coverage를 confirmed로 올리지 않는다.
 - 최초에는 소수 종목의 제한 시간 실행으로 저장 종료·메모리 추이·침묵 감시·디스크 증가를 확인하고
   이후 종목 수와 관측 시간을 늘린다. 20시까지의 장시간 안정성과 저장량은 아직 미측정이다.
-- 오늘 기존 raw·정규장 운영 설정은 바꾸지 않는다. 자동 기동/예약이나 추가 로그인도 이번 검토에 포함하지 않는다.
+- 당시 기존 raw·정규장 운영 설정은 바꾸지 않았다. 자동 기동/예약이나 추가 로그인도 그 검토에 포함하지 않았다.
 
 2026-09-17 16:01:18~16:04:18 KST 실측: 모의서버에서 삼성전자 6자리 / `_NX` / `_AL`
 등록 반환 모두 0, 실제 체결·호가 콜백을 받았고 접미사가 보존됐다. 각 60초 순차 구간의

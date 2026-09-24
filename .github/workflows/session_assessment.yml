@@ -1,7 +1,9 @@
 name: Session assessment regressions
 
 on:
+  # feature branch는 pull_request로 검사한다. push 검사는 master만 실행한다.
   push:
+    branches: [master]
   pull_request:
 
 permissions:
