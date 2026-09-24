@@ -360,3 +360,31 @@ candidate는 다음 조건을 모두 만족할 때만 성립한다.
 이 v0는 provider 문서상 `-0` 의미를 확정하지 않고, 실제 prefix 전체에 적용하지 않으며,
 `smoke_backtest_eligible`를 변경하지 않는다. 다음 단계가 있다면 별도 opt-in smoke-quality policy에서
 zero-quote pair와 진짜 disqualifying issue를 분리하는 설계를 먼저 검증해야 한다.
+
+
+<a id="zero-quote-smoke-policy"></a>
+## 12. opt-in zero-quote smoke-quality evaluator candidate
+
+[policy evaluator](../collector/zero_quote_smoke_policy.py)는 §11 classifier를 이용해 ordered envelope stream을
+smoke-quality 관점에서만 분류하는 후보 구현이다. 아직 raw-v2 prefix reader나 NXT smoke에 연결되지 않았다.
+
+정확히 다음 두 record가 연속일 때만 quarantine한다.
+
+1. §11의 strict one-sided zero-quote candidate tick
+2. 바로 다음 seq의 mirrored `parse_error` — same received_ns/code/issues
+
+quarantine은 quality classification의 후보일 뿐 execution permission이 아니다.
+기존 quote validation은 해당 quote를 계속 `invalid_ask` / `invalid_bid`로 거부한다.
+
+다음은 모두 disqualifying 상태로 남긴다.
+
+- `trade_direction_unverified`
+- zero-quote candidate 뒤 exact mirrored parse_error 부재
+- mismatched seq/received_ns/code/issues
+- extra normalized issue
+- callback/disconnect/queue overflow 등 unsafe control
+- classifier가 인정하지 않는 nearby zero pattern
+
+policy result의 `smoke_quality_eligible`는 이 synthetic evaluator에 입력된 stream에 대해서만 의미한다.
+현재 `raw_v2_prefix_qualification_v1.smoke_backtest_eligible`이나 실제 NXT smoke gate를 바꾸지 않는다.
+실데이터 prefix에 연결하기 전 focused local regression을 먼저 통과해야 한다.
