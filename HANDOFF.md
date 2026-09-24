@@ -127,9 +127,25 @@ focused tests 97 passed / 0 failed / 0 skipped 후 master에 통합됐다.
 explicit fresh-valid-bid valuation, cash/accounting reconciliation이다.
 기존 PortfolioSimulator와 result schema는 PR #46에서 변경하지 않았다.
 
-다음 한 단계는 **`portfolio performance-accounting result integration`**이다.
-simulator execution semantics는 그대로 두고 NXT result finalization에 accounting subrecord를 먼저 연결한다.
-legacy top-level `realized_pnl/unrealized_pnl/equity`는 schema migration 전까지 그대로 null로 보존한다.
+PR #47의 NXT result performance-accounting subrecord integration은 HEAD
+`ac8197bfb5536cf7d5080ab0c08cc4596f11eac7`에서 Python 3.10 grammar PASS,
+focused tests 119 passed / 0 failed / 0 skipped 후 master에 통합됐다.
+GitHub Actions와 실제 데이터 실행은 하지 않았다.
+
+통합된 경계:
+- `PortfolioSimulator` execution semantics는 변경하지 않음
+- NXT finalization이 fill ledger를 pure accounting helper로 독립 재계산
+- `performance_accounting_v1` subrecord에 realized/cash/position reconciliation 기록
+- flat result는 `flat_complete`로 realized/total/equity accounting 가능
+- open position은 final fresh bid provenance 미연결로 `open_unpriced`
+- failure diagnostics는 failed 의미 유지
+- legacy top-level `realized_pnl/unrealized_pnl/equity`는 계속 null
+- accounting helper SHA와 subrecord는 reproducibility identity에 포함
+
+다음 한 단계는 **`portfolio final fresh-bid mark provenance`**다.
+simulator execution을 바꾸지 않고 read-only marking snapshot을 추가해,
+open position의 종료/실패 시점에서 fresh + valid two-sided quote의 bid만 mark로 인정한다.
+quote seq/received_ns/age/policy/reason을 provenance로 보존하고 stale/missing/invalid는 unpriced로 남긴다.
 
 ## 유지하는 운영/실데이터 차단 조건
 

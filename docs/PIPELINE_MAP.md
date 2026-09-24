@@ -808,3 +808,73 @@ caller가 준 current cash와 다르면 수정하지 않고
 이번 단계는 pure contract + synthetic regression만 추가한다.
 `PortfolioSimulator.snapshot()`, portfolio result schema, selected-v2 actual result의
 `realized_pnl/unrealized_pnl/equity`는 아직 변경하지 않는다.
+
+
+<a id="portfolio-accounting-result-integration"></a>
+## 22. NXT result performance-accounting subrecord integration candidate
+
+PR #46의 pure accounting contract를 기존 execution semantics와 분리한 채
+[NXT portfolio runner](../engine/nxt_portfolio_research.py)의 **result finalization에만** 연결하는 후보 단계다.
+
+기존 `PortfolioSimulator`는 수정하지 않는다.
+주문 admission, reservation, matching, latency, liquidity, cancellation, fill 생성과 cash mutation은 그대로다.
+
+finalizer는 저장된 account fill ledger를 `PortfolioFill`로 재구성하고
+`account_portfolio_fills()`로 cost basis/realized/cashflow를 독립 계산한다.
+그 결과와 snapshot의 final cash/positions를 비교해:
+
+- `cash_reconciled`
+- `position_reconciled`
+- `accounting_identity_reconciled`
+
+를 report에 보존한다. 차이가 있어도 숫자를 repair하지 않는다.
+
+새 subrecord schema 후보:
+
+`portfolio_performance_accounting_v1`
+
+### Flat result
+
+final position이 전부 0이면 final market mark가 필요하지 않으므로:
+
+- status = `flat_complete`
+- realized PnL 확정
+- unrealized = 0
+- total PnL = realized
+- equity = current cash
+- accounting identity 확인
+
+이 가능하다.
+
+### Open position
+
+현재 `run_portfolio` result에는 final quote freshness/validity를 인증한 bid mark가 별도 provenance로 남지 않는다.
+따라서 open position에서는 mark를 추론하지 않는다.
+
+- status = `open_unpriced`
+- mark_integration = `not_connected`
+- realized PnL은 fill ledger에서 계산 가능
+- unrealized/total/equity = null
+- `unpriced_codes` 기록
+
+last trade, stale quote, final observed quote를 자동 mark로 재사용하지 않는다.
+
+### Legacy fields / reproducibility
+
+기존 top-level:
+
+- `realized_pnl`
+- `unrealized_pnl`
+- `equity`
+
+는 이번 단계에서도 null을 유지한다.
+기존 schema 의미를 조용히 바꾸지 않고 accounting subrecord를 먼저 검증하기 위함이다.
+
+`execution/portfolio_accounting.py` SHA와 `performance_accounting` subrecord는
+NXT result reproducibility identity에 포함한다.
+
+실패 run도 partial execution report를 유지한 채 accounting subrecord를 추가할 수 있지만,
+`status=failed` / `diagnostics_only=true` 의미를 바꾸지 않는다.
+
+이번 단계가 통과해도 actual bounded result를 performance-certified 결과로 승격하지 않는다.
+open-position fresh-bid mark integration과 legacy/top-level schema migration은 별도 후속 단계다.
