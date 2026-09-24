@@ -71,22 +71,14 @@ Paper/Mock/Live 주문 어댑터, 대용량 성능, 다중 전략 arbitration. �
 
 ## 다음 행동
 
-PR #38의 selected-instrument pure evaluator는 focused local test 97 passed 후 master에 통합됐다.
-PR #39의 selected-prefix overlay는 HEAD `4db1cf5dafed037593593c7efa0646bba21d9fdc`를 detached Windows worktree에서
-Python 3.14.7 / pytest 9.1.1로 focused 검증했고, Python 3.10 grammar PASS,
-지정 테스트 101 passed / 0 failed / 0 skipped를 확인한 뒤 master에 통합됐다. GitHub Actions는 실행하지 않았다.
-
-통합된 overlay schema는 `raw_v2_selected_prefix_qualification_v1`이다.
-기존 strict report를 바꾸지 않고 동일 raw를 다시 sealed read하여 manifest·digest·consumed count·sentinel·strict counts·strict diagnostics를
-모두 대조한 뒤 같은 ordered prefix에 `SelectedInstrumentSmokePolicy`만 병렬 적용한다.
+PR #38 pure evaluator와 PR #39 selected-prefix overlay는 master에 통합됐다.
+overlay schema `raw_v2_selected_prefix_qualification_v1`은 strict report를 유지하면서
+동일 raw의 sealed prefix·digest·count·sentinel·diagnostics를 대조해 선택 종목 정책을 적용한다.
 
 2026-09-24 실제 `005930=unknown` selected-prefix overlay를 지정된 working snapshot과 기존 strict 10:00 KST
 report에 대해 **1회** 실행했다. 결과는 `C:\StockSnapshots\raw_v2_snapshot_24f657163264432da7af3ed533656eac\selected_prefix_overlay\b73870c2703b425c9c9ee09c945ce93e\result.json`.
-`raw_v2_selected_prefix_qualification_v1`, `status=completed`, 소요 383.705083초,
-`selected_prefix_structure_verified=true`; strict digest·소비 건수·boundary sentinel·counts·quality diagnostics
-재검증 5항목 모두 true다. manifest와 raw 경로가 strict report와 일치하고 strict report SHA-256
-`6953ec151aff0590a4fcd7ccdd7b1b343da18a541a936a4927d10f4a9dd540dd`를 기록했다.
-working DB의 WAL/SHM/journal은 실행 전후 부재했고 source stat은 불변이었다.
+`status=completed`, 소요 383.705083초, 구조 검증과 strict 재검증 5항목 모두 true다.
+working DB의 WAL/SHM/journal은 실행 전후 부재했다.
 
 **판정: `005930 selected-prefix quality: FAIL`.** 선택 tick 77,558건 중 clean 77,557건,
 selected issue pair 1건의 `trade_direction_unverified` 1건으로 `selected_smoke_quality_eligible=false`다.
@@ -96,21 +88,27 @@ selected issue pair 1건의 `trade_direction_unverified` 1건으로 `selected_sm
 whole-prefix 연구 품질·격리 quote 실행 권한·전략 성과는 승격되지 않았다.
 NXT smoke·GitHub Actions는 실행하지 않았다.
 
-다음 한 단계는 **`005930 selected quality bounded investigation`**이다.
+PR #40의 bounded diagnostics는 focused tests 64 passed 후 master에 통합됐다.
+eligibility 로직 변경 없이 selected issue 예시 최대 10건의 seq·시각·원문 FID·normalized 값·pair 여부를 남긴다.
 
-PR #40의 bounded diagnostics는 HEAD `c283d16778045ea58ca8bf312a33969f6ba73e2c`를
-detached worktree에서 Python 3.14.7 / pytest 9.1.1로 재검증했고,
-Python 3.10 grammar PASS, 지정 focused tests 64 passed / 0 failed / 0 skipped 후 master에 통합됐다.
-GitHub Actions는 실행하지 않았다.
+2026-09-24 PR #40 진단 코드로 같은 working snapshot + strict 10:00 KST report에 대해
+`005930=unknown` selected-prefix overlay를 **정확히 1회** 재실행했다.
+새 결과는 `C:\StockSnapshots\raw_v2_snapshot_24f657163264432da7af3ed533656eac\selected_prefix_overlay\7a7b6ee326ab4ad4a9b33b22d06c7fe7\result.json`.
+`status=completed`, 소요 386.78546초, 구조 검증과 strict 재검증 5항목 모두 true이며
+기존 selected tick 77,558 / clean 77,557 / issue pair 1 / 비선택 issue pair 13,901 및
+zero-quote·unapproved·unpaired·unsafe 0을 재현했다. selected gate는 false다.
 
-통합된 diagnostics는 eligibility 로직을 바꾸지 않고 selected disqualifying issue를 최대 10건까지만 남긴다.
-trade example은 price/volume/is_buy, quote example은 bid/ask/bid_size/ask_size만 기록하고,
-FID subset(10,14,15,20,21,27,28,41,51)과 tick/control seq·received_ns/UTC·exchange_ts_raw·pair 여부를 보존한다.
+유일한 `trade_direction_unverified`는 `005930=unknown` trade tick seq `711052`,
+직후 control seq `711053`의 `paired_parse_error=true`다. `received_ns=7328196670200`,
+`received_at_utc` 필드 원문은 `2026-09-21T09:00:51.125752+09:00`이고
+`market_second=32451`(KST 09:00:51), `exchange_ts_raw=090025`다.
+FID15 원문 repr은 `' 237016'`(선행 공백, 명시적 `+`/`-` 없음),
+normalized `price=264000`, `volume=237016`, `is_buy=null`이다.
+분류는 **`explicitly unsigned FID15`**. 현행 signed_volume 계약에서 방향을 확인할 수 없어
+선택 품질 FAIL은 정당하다. NXT smoke·GitHub Actions·추가 DB 조회는 실행하지 않았다.
 
-다음 단계는 실제 working snapshot + 기존 strict 10:00 prefix report로
-`005930=unknown` selected-prefix overlay를 **정확히 1회만 재실행**하는 것이다.
-목적은 이미 확인된 유일한 `trade_direction_unverified` 1건의 정확한 seq·시각·FID15 원문을 얻는 것이다.
-방향 추론·FID15 보정·NXT smoke는 여전히 금지한다.
+다음 한 단계는 **`single selected-direction blocker policy decision`**이다.
+이번 관측에서 방향 추론·FID15 보정·품질 정책 변경은 하지 않았다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
