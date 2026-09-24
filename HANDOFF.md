@@ -117,12 +117,13 @@ PR #36으로 통합된 `collector/zero_quote_policy_experiment.py`는 실제 pre
 
 기존 zero-quote classifier focused test는 Python 3.14.7에서 65 passed로 확인됐다.
 
-현재 작업 branch `feat/zero-quote-smoke-policy-20260924`는 그 다음 단계인 **순수 opt-in smoke-quality evaluator** 후보를 추가한다.
+PR #37로 **순수 opt-in smoke-quality evaluator**가 master에 통합됐다.
 `collector/zero_quote_smoke_policy.py`는 ordered envelope stream에서 정확히 짝지어진 one-sided zero-quote tick + mirrored parse_error만 quarantine한다.
 `trade_direction_unverified`, pairing mismatch, extra issue, callback/disconnect 등 다른 control은 계속 fail-closed다.
 
-아직 실제 prefix reader나 NXT smoke에는 연결하지 않았다. 다음 단계는 이 새 evaluator와 기존 classifier/quote-validation을 묶은 focused local test다.
-통과 전에는 PR을 merge하지 않고, 실제 50GB prefix 재실행·smoke·production eligibility 변경도 하지 않는다. GitHub Actions도 실행하지 않는다.
+실제 prefix reader나 NXT smoke에는 아직 연결하지 않았다. PR #37 HEAD `3da0207746747dfb4c1ab500bbb59cbdfd1e30a7`를 detached worktree에서 Python 3.14.7 / pytest 9.1.1로 focused 검증했고, Python 3.10 grammar PASS, 지정 테스트 75 passed / 0 failed / 0 skipped를 확인했다. GitHub Actions는 실행하지 않았다.
+
+다음 blocker는 zero quote 자체가 아니다. 그 pair는 opt-in quarantine 후보로 안전하게 분리 가능함을 합성으로 확인했다. 실제 오전 prefix에는 `trade_direction_unverified` 3,233건이 남아 있으므로, 다음 단계는 **전략 선택 종목 관점에서 unsigned FID15가 실제로 얼마나 영향을 주는지 bounded/selected-instrument quality 계약을 설계하는 것**이다. 실제 50GB prefix 재실행·smoke·production eligibility 변경은 아직 하지 않는다.
 
 ## 유지하는 운영/실데이터 차단 조건
 
