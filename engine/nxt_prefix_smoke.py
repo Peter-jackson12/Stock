@@ -82,7 +82,10 @@ def _load_prefix_report(path):
             or performance.get("assessed") is not False
             or performance.get("eligible") is not None):
         raise ValueError("smoke report must not claim performance research eligibility")
-    manifest = report.get("input", {}).get("manifest")
+    input_record = report.get("input")
+    if not isinstance(input_record, dict):
+        raise ValueError("prefix report input object required")
+    manifest = input_record.get("manifest")
     if not isinstance(manifest, dict):
         raise ValueError("prefix report manifest required")
     digest = report.get("prefix_event_sha256")
@@ -217,7 +220,7 @@ def run_nxt_prefix_smoke(raw_path, prefix_report, *, output_root, simulator_conf
     """Run one NXT strategy on a qualified bounded prefix only."""
     report_path, report_bytes, report = _load_prefix_report(prefix_report)
     raw_path = Path(raw_path).absolute()
-    reported_raw = report.get("input", {}).get("path")
+    reported_raw = report["input"].get("path")
     if not isinstance(reported_raw, str) or not _same_path(raw_path, reported_raw):
         raise ValueError("raw path must exactly match the qualified prefix source")
 
@@ -238,6 +241,7 @@ def run_nxt_prefix_smoke(raw_path, prefix_report, *, output_root, simulator_conf
         "kind": "raw_v2_prefix_smoke_v1",
         "purpose": "smoke_backtest_only",
         "raw_path": str(raw_path),
+        "raw_identity_verified": False,
         "prefix_report_path": str(report_path),
         "prefix_report_sha256": hashlib.sha256(report_bytes).hexdigest(),
         "prefix_report_run_id": report.get("run_id"),
