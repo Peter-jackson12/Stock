@@ -433,6 +433,11 @@ def run_nxt_selected_prefix_smoke(
         raise ValueError("selected-prefix v2 smoke currently requires exactly one instrument")
 
     sentinel_ns = strict["scope"]["boundary_sentinel"]["received_ns"]
+    policy_result = selected["selected_policy_result"]
+    expected_selected_events = (
+        policy_result["counts"]["selected_clean_ticks"]
+        + policy_result["quarantine"]["selected_unknown_direction_pairs"]
+    )
     provenance = {
         "kind": "raw_v2_selected_prefix_smoke_v1",
         "purpose": "selected_prefix_smoke_backtest_only",
@@ -453,7 +458,11 @@ def run_nxt_selected_prefix_smoke(
         "performance_research_assessed": False,
         "selected_instruments": dict(sorted(instruments.items())),
         "unknown_direction_policy": QUARANTINE_UNKNOWN_DIRECTION_POLICY,
-        "selected_policy_result": selected["selected_policy_result"],
+        "selected_smoke_quality_eligible": selected["selected_smoke_quality_eligible"],
+        "selected_strategy_input_expected_count": expected_selected_events,
+        "selected_zero_quote_pairs_quarantined": policy_result["quarantine"]["selected_zero_quote_pairs"],
+        "selected_unknown_direction_pairs_forwarded": policy_result["quarantine"]["selected_unknown_direction_pairs"],
+        "selected_policy_result": policy_result,
         "adapter_code_sha256": _code_identity(),
     }
     label = dataset_label or f"raw-v2-selected-prefix-smoke:{selected.get('run_id', 'unknown')}"
