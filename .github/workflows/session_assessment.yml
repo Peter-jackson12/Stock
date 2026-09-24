@@ -1,10 +1,11 @@
 name: Session assessment regressions
 
 on:
-  # feature branch는 pull_request로 검사한다. push 검사는 master만 실행한다.
-  push:
-    branches: [master]
-  pull_request:
+  # 작은 PR/커밋마다 자동 실행하지 않는다.
+  # 매주 일요일 09:15 KST(00:15 UTC) 정기 회귀 + 필요 시 수동 실행만 한다.
+  schedule:
+    - cron: "15 0 * * 0"
+  workflow_dispatch:
 
 permissions:
   contents: read
