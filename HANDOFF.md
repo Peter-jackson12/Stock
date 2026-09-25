@@ -158,6 +158,76 @@ cutoff·날짜·종목·비용·지연·direction policy를 수익을 만들기 
 탐색한 모든 조합과 결과를 보존하고, 성공 조합만 숨겨서 보고하지 않는다.
 후속 검증은 탐색에 사용하지 않은 새 날짜에서 별도로 한다.
 
+## Exploratory profitability search 01 — PROFITABLE_FOUND / candidate #268 동결
+
+2026-09-21 development set에서 총 693회 탐색을 완료했다.
+Stage A 243회는 positive 0, Stage B 450회에서 성공 조건을 모두 만족한 positive 80개를 찾았다.
+고유 parameter set은 663개다. selected-v2 입력 77,558건은 한 번만 재검증·materialize했고
+event SHA는 `a6fbcce85c321da1ee07f898f525537e8beb2361cc5769d08174935531741e48`다.
+
+**Primary candidate #268**을 후속 검증 대상으로 동결한다.
+
+고정 entry:
+- `spread_max_pct=0.0025`
+- `buy_ratio_min=0.55`
+- `obi_min_ratio=1.0`
+- `min_vol_15t=10`
+- `recent_ticks=15`
+- `breakout_window_sec=30`
+- `session_start_sec=32400`
+
+고정 exit:
+- rule `tick_trail`
+- `trail_ticks=5`
+- `stop_loss_pct=-0.0025`
+
+나머지 overheat/macro 설정은 해당 revision 기본값을 유지한다.
+실행 가정은 quantity 1 / cash 1,000,000 / fee 0.001 per-side /
+buy·sell·cancel latency 각 1초 / max quote age 2초 / cooldown 10초 /
+unknown-direction quarantine policy 유지다.
+
+9/21 in-sample 결과:
+- signals 2 / round trip 1 / fills 2
+- buy 264,000 → sell 269,000
+- total fees 533
+- `total_pnl=+4467`
+- final cash `1,004,467`
+- reconciliation 모두 true
+- baseline `-2039.5` 대비 `+6506.5`
+
+최초 positive #257은 fixed TP 0.012 / SL -0.005, total PnL +929였지만
+holdout primary는 탐색 종료 후 최고 PnL로 선택된 **#268 하나만** 사용한다.
+
+이 결과는 **2026-09-21 in-sample profitable candidate**일 뿐이다.
+693회 탐색 후 선택된 값이므로 과최적화 가능성이 높고, 수익성·robustness·실전 적격성을 뜻하지 않는다.
+
+### Holdout 01 사전등록 — 2026-09-18 / candidate #268
+
+2026-09-18 fixture는 profitability search에 사용하지 않았으므로 첫 holdout으로 사용한다.
+결과를 보기 전에 다음을 고정한다.
+
+- snapshot run `c43a255f907245eaa2f02124fadd6a0c`
+- 10:00 KST exclusive
+- `005930=unknown`
+- selected-v2 quarantine policy
+- selected strategy events 30,800
+- execution revision **`6fa2ccdcbf0ea2431b81c52d3ed6fb0deec39fac`**
+- candidate는 위 #268 exact params
+- 비용·지연·cash·quantity·cooldown은 9/21 탐색과 동일
+
+기존 9/18 snapshot/strict/selected evidence는 재생성하지 않는다.
+source/selected report identity를 먼저 재확인한 뒤 **actual replay를 정확히 1회** 실행한다.
+#268이 no-trade/손실이더라도 parameter를 바꾸거나 #257/다른 positive 후보를 같은 holdout에 이어서 시험하지 않는다.
+
+holdout 판정:
+- `HOLDOUT_POSITIVE`: flat_complete, fill>=2, total_pnl>0, reconciliation 모두 true
+- `HOLDOUT_NO_TRADE`: 정상 완료하지만 fill=0
+- `HOLDOUT_NONPOSITIVE`: 거래는 있으나 total_pnl<=0
+- `HOLDOUT_FAILED`: 입력/provenance/replay/accounting 계약 실패
+
+어느 결과도 한 날짜만으로 robustness를 확정하지 않는다.
+후속 새 날짜 검증 전 #268을 다시 튜닝하지 않는다.
+
 ## 유지하는 차단 조건
 
 2026-09-21 원본은 약 50.6 GB이며 당시 보고된 0-byte WAL + 32 KiB SHM residue를 보존한다.
