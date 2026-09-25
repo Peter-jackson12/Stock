@@ -252,37 +252,35 @@ selected-v2 bounded input은 strategy-research fixture로 승인됐지만 perfor
 - [ ] legacy top-level PnL/equity schema migration 필요성은 별도 검토한다. 현재 다음 실제 입력 확보의 blocker는 아니다.
 - [x] actual selected-v2 result는 회귀 fixture로만 사용하며 parameter tuning에 사용하지 않음
 
-### Independent actual input candidate 01 — 첫 시도 INCONCLUSIVE, Windows 실행 대기
+### Independent actual input candidate 01 — PASS_NO_TRADE
 
-두 번째 날짜의 actual regression fixture를 결과 확인 전에 고정한다.
+두 번째 날짜의 actual regression fixture를 사전등록값 그대로 Windows에서 완료했다.
 
-첫 시도는 Linux VM/FUSE 환경 제약 때문에 source 보호를 인증할 수 없어
-`INCONCLUSIVE_SOURCE_PROTECTION`으로 중단했다. 이는 데이터 품질 판정이 아니며,
-등록된 Windows actual 실행 횟수를 소비한 것으로 보지 않는다.
+- [x] source/session: `2026-09-18 / 21f8c124e64e421893275ccdc83818ad`
+- [x] Windows source protection: collector 관련 process/window 부재, lease free, 원본 identity/sidecar/closure 대조
+- [x] frozen snapshot 1회: `c43a255f907245eaa2f02124fadd6a0c`, source/working SHA-256 일치
+- [x] strict bounded prefix 1회: 10:00 KST exclusive, 구조 PASS / strict quality는 fail 유지
+- [x] selected-v2 overlay 1회: `005930=unknown`, quarantine policy, selected gate PASS
+- [x] actual replay/accounting 1회: 30,800/30,800/30,800 events, `completed_no_fills`
+- [x] accounting: fill 0 / PnL 0 / equity 1,000,000 / reconciliation 전부 true / provenance 일치
+- [x] source DB/WAL/SHM identity·size·mtime 실행 전후 불변
+- [x] result/snapshot은 Git에 추가하지 않고 Actions·commit·push·retry·parameter tuning을 하지 않음
 
+최종 판정:
 
-- [x] source/session 사전등록: `2026-09-18 / 21f8c124e64e421893275ccdc83818ad`
-- [x] 첫 VM 시도: `INCONCLUSIVE_SOURCE_PROTECTION`. Linux/FUSE 환경이라 Windows 보호 계약을 수행할 수 없어 SQLite/snapshot/qualification/replay는 미실행
-- [ ] Windows 로컬에서 historical raw path 존재/identity/종료 근거/프로세스 부재/sidecar 상태를 원본 비변경으로 새로 확인
-- [ ] `0-byte WAL + 32,768-byte SHM + journal 없음`이 재확인되면 기존 frozen snapshot acquisition으로 별도 working copy 생성
-- [ ] strict bounded prefix: **10:00:00 KST exclusive**, Windows에서 정확히 1회
-- [ ] selected overlay: **`005930=unknown`**, `unknown_direction_recent_window_quarantine_v0`, 정확히 1회
-- [ ] selected gate PASS일 때만 2026-09-21과 동일 smoke/accounting 설정으로 replay 정확히 1회
-- [ ] execution/result/accounting/provenance와 한계를 기록하고 결과 파일은 Git에 추가하지 않음
+**`Independent actual input candidate 01: PASS_NO_TRADE`**
 
-고정 smoke 설정: quantity 1 / cash 1,000,000 / fee 0.001 per-side /
-buy·sell·cancel latency 각 1초 / max quote age 2초 / cooldown 10초 / fixed exit.
+의미:
+- 두 번째 날짜에서도 source protection → snapshot → bounded prefix → selected-v2 → simulator/accounting 경로를 독립 확인했다.
+- 실제 신호·주문·체결은 0건이라 거래·PnL 사례 수는 늘지 않았다.
+- strict whole/prefix quality failure, whole-stream 미평가, venue unknown, performance-research 미승격을 유지한다.
+- 이 결과를 보고 cutoff/종목/policy/parameter를 바꿔 거래를 만들지 않는다.
 
-중단 규칙:
-
-- raw 부재, identity/closure 불일치, 보호 조건 불충족, snapshot 실패, prefix 구조 실패,
-  selected gate false면 **FAIL/INCONCLUSIVE로 중단**한다.
-- 결과를 보고 cutoff·종목·policy·parameter를 바꾸거나 다른 과거 raw로 자동 대체하지 않는다.
-- whole-file quality failure와 말미 방향 미확인 8건은 그대로 유지한다.
-- PASS여도 performance-research·수익성·robustness·NXT venue·whole raw·live 승격은 하지 않는다.
-
-비교 가능한 고정 cutoff를 우선하므로 2026-09-17 `cf18cb43…` 세션은 12:35경 시작한
-시간 범위 때문에 candidate 01에서 제외한다.
+다음 입력:
+- [ ] 다음 적격 실제 source/session이 생기면 **결과를 보기 전에** candidate 02를 사전등록한다.
+- [ ] 동일 연구 질문을 유지하려면 우선 같은 10:00 KST exclusive / 005930=unknown / 동일 policy·settings를 기본 후보로 검토한다.
+- [ ] source가 그 scope를 지원하지 않으면 결과를 보기 전에 변경 사유와 새 scope를 먼저 기록한다.
+- [ ] 과거 2026-09-17 오후 세션을 10:00 비교군으로 억지 사용하지 않는다.
 
 ## 5. 첫 시험 이후 — 전략 평가
 
