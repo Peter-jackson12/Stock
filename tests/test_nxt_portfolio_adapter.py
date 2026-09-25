@@ -266,6 +266,30 @@ def test_runner_requires_explicit_cost_and_does_not_create_output(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.parametrize(
+    "close_ns",
+    [None, False, True, 0, -1, 20.0, "20", float("nan"), float("inf")],
+)
+def test_runner_rejects_invalid_close_before_input_or_output(tmp_path, close_ns):
+    class IterationForbidden:
+        def __iter__(self):
+            raise AssertionError("invalid close_ns must fail before input iteration")
+
+    output_root = tmp_path / "new-output"
+    with pytest.raises(ValueError, match="^positive exclusive close required$"):
+        run_nxt_portfolio(
+            IterationForbidden(),
+            output_root=output_root,
+            dataset_label="invalid-close",
+            simulator_config=portfolio_config(),
+            close_ns=close_ns,
+            quantity=1,
+        )
+
+    assert not output_root.exists()
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_runner_output_cash_matches_fill_ledger(tmp_path):
     path = run_nxt_portfolio(
         [quote(), trade()],

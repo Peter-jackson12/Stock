@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-25 / selected-v2 actual accounting regression
+# 현재 인계 — 2026-09-25 / execution NXT close preflight
 
 [문서 인덱스](README.md) · [첫 실데이터 체크](BACKTEST_TODO.md) ·
 [파이프라인 지도](docs/PIPELINE_MAP.md#portfolio-research) ·
@@ -20,6 +20,12 @@ OCX/QAx·queue/teardown/telemetry·실제 수집·PID/창/lease 관측·#327/#16
 **research/backtest/execution 트랙의
 `005930 selected-v2 actual accounting regression` 1회는 PASS로 완료했다.**
 추가 rerun·parameter tuning·실주문은 현재 목표가 아니다.
+
+**execution/NXT portfolio runner의 `close_ns` 사전 검증 보강은 개발 후보에서 완료했다.**
+generic runner와 같은 positive exact-int 조건과 예외 메시지를 출력 생성 전에 적용했다.
+`None/False/True/0/-1/20.0/"20"/NaN/Infinity`가 입력 iteration과 output root 생성 전에
+거부되는 회귀를 추가했고, 지정한 adapter/simulator/accounting focused 검사는 101건 통과했다.
+실데이터·qualification·로그인·수집·주문·parameter tuning은 수행하지 않았다.
 
 Operator UX는 PR #45/#49/#50/#52까지 master에 통합됐다.
 `stock.cmd/stock.ps1`의 help/doctor/status/ui와 운영 화면의 상태·환경 요약은 사용 편의 계층이며,
@@ -64,31 +70,13 @@ PR #46~#48로 다음이 master에 들어왔다.
 - final fresh-valid-bid mark provenance
 - stale/missing/locked-crossed/invalid quote의 fail-closed unpriced 처리
 
-2026-09-25 지정 commit `6d878d93329c136157fbaaed61c4f950dddaea10` detached clean worktree에서
-기존 frozen working DB + selected-v2 report + 고정 smoke 설정으로 정확히 1회 실행했다.
-새 결과는
-`C:\StockSnapshots\raw_v2_snapshot_24f657163264432da7af3ed533656eac\selected_prefix_smoke\ed5e78db61da4646ad186ac943c1c5f4\result.json`이다.
-실행 전후 working DB의 WAL/SHM/journal은 모두 부재했고 추가 rerun·GitHub Actions는 실행하지 않았다.
-
-과거 비교 기준 `f37533fb67884b3f9033894befaed153`과 event SHA/count, settings,
-signals, intents, fills, transitions, final cash/positions/orders, rejects, execution status가 JSON/value 기준
-모두 동일하다. 77,558건을 모두 처리했고 final cash `997960.500`, position/open order/reject는 모두 0이다.
-새 reproducibility key는 `677bac5071d2ce07468ad909e6d6760764bf1f9a6e454ba30bc12f65a471780a`다.
-
-`performance_accounting`은 `flat_complete`, fill 2건, realized/total `-4079/2`,
-unrealized `0/1`, equity/current/expected cash `1995921/2`이며 cash/position/accounting reconciliation은
-모두 true다. `final_bid_mark_provenance`와 내부 provenance는 같은
-`portfolio_final_bid_mark_provenance_v1`, valuation time `10877071329700`, records 빈 목록이다.
-legacy top-level realized/unrealized/equity는 계속 null이다.
-
-selected/strict report SHA, unknown-direction policy, expected 77,558건, unknown 1건 전달,
-zero-quote 0건 격리와 `raw_identity_verified=false`, `whole_stream_assessed=false`,
-`performance_research_assessed=false`를 유지했다.
-**`005930 selected-v2 actual accounting regression: PASS`**.
-
-이 PASS는 bounded replay의 execution 불변성과 accounting/marking subrecord만 확인한다.
-전략 수익성·performance-research·여러 날짜 일반화·NXT venue·whole raw·live 적격성을 뜻하지 않는다.
-다음 단계는 자동 재실행이 아니라 현재 result를 보존하고, 별도 근거와 승인 아래 미완료 gate를 다루는 것이다.
+지정 commit `6d878d93329c136157fbaaed61c4f950dddaea10`에서 frozen working DB와 고정 설정으로
+정확히 1회 실행했다. 과거 기준과 event/settings 및 모든 경제적 결과가 동일했고 77,558건 처리,
+final cash `997960.500`, position/open order/reject 0을 확인했다. `performance_accounting`은
+`flat_complete`, fill 2, realized/total `-4079/2`, equity `1995921/2`, reconciliation 모두 true다.
+**`005930 selected-v2 actual accounting regression: PASS`**. 상세 결과 경로·SHA·mark provenance는
+[BACKTEST_TODO](BACKTEST_TODO.md)와 [보존본](docs/archive/HANDOFF_20260925_PRE_COMPACT.md)에 둔다.
+이는 bounded execution/accounting 확인일 뿐 수익성·NXT venue·whole raw·live 적격성 승격이 아니다.
 
 ## Independent actual input candidate 01 — PASS_NO_TRADE
 
@@ -102,48 +90,18 @@ zero-quote 0건 격리와 `raw_identity_verified=false`, `whole_stream_assessed=
 - smoke settings: quantity 1 / cash 1,000,000 / fee 0.001 per-side / buy·sell·cancel latency 각 1초 / max quote age 2초 / cooldown 10초 / fixed exit
 - execution revision: `8e969ceafe3d296c834e9b365757bf616266a1e4`
 
-Windows source protection은 PASS했다. 원본은 51,394,355,200 bytes, WAL 0 bytes,
-SHM 32,768 bytes, journal 없음이었고 collector 관련 process/window 부재와 free lease를 확인했다.
-snapshot acquisition은 정확히 1회 수행해 run
-`c43a255f907245eaa2f02124fadd6a0c`를 만들었다.
-source stream과 working readback SHA-256은 모두
-`86e81bca2071545ff130d1e515ea6c0ae4bbf47169e256cefa8502a6e352cf29`로 일치했다.
-원본 DB/WAL/SHM identity·size·mtime은 실행 전후 불변이었다.
-
-strict 10:00 prefix는 구조 검증 PASS, `stream_error=null`이며
-sentinel 포함 8,241,797건을 소비했다. prefix 이전 raw 8,241,796건 중 tick 8,225,687,
-trade 3,081,776, quote 5,143,911, control 16,109건이다.
-품질 영향 tick과 paired parse-error는 각각 16,108건이고
-`smoke_backtest_eligible=false`, tail/whole-stream/performance-research 미평가를 유지한다.
-
-selected-v2 overlay는 PASS했다.
-`005930=unknown` selected tick 30,800 / clean 30,799,
-unknown-direction quarantine 1쌍 / zero-quote 0 / disqualifying 0이며
-strict 재검증 5항목 모두 true다.
-
-actual replay는 정확히 1회 실행해 `completed_no_fills`로 끝났다.
-expected/actual/processed event는 모두 30,800건이며 signals/intents/fills/rejects/transitions가
-모두 0이다. 최종 cash 1,000,000, position/open order 0이다.
-event SHA는
-`ac1657b41dbaa7f1adde7f900b3c9ac9a78764f8041f7426b9ff08f43520537a`다.
-
-`performance_accounting`은 `flat_complete`, fill_count 0,
-realized/unrealized/total PnL 모두 0, equity 1,000,000이며
-cash/position/accounting identity reconciliation은 모두 true다.
-final bid-mark provenance records는 빈 목록이고 내부/최상위 provenance가 일치한다.
-legacy top-level realized/unrealized/equity는 계속 null이다.
+Windows source protection과 frozen snapshot acquisition 1회, strict 10:00 prefix 구조 검증,
+selected-v2 overlay가 모두 PASS했다. 원본 identity·size·mtime은 전후 불변이며 source/working SHA가
+일치했다. `005930=unknown` 입력 30,800건 중 clean 30,799, unknown-direction quarantine 1쌍,
+zero-quote/disqualifying 0이었다. 실제 replay는 정확히 1회 `completed_no_fills`로 끝나
+signals/intents/fills/rejects/transitions 0, cash 1,000,000, position/open order 0을 기록했다.
+`performance_accounting`은 `flat_complete`, 모든 PnL 0, reconciliation 모두 true다.
 
 **최종 판정: `Independent actual input candidate 01: PASS_NO_TRADE`.**
 
-이 결과로 2026-09-21의 PASS_WITH_TRADE와 별개 날짜에서
-source protection → frozen snapshot → strict bounded prefix → selected-v2 →
-shared simulator/accounting/mark provenance 경로가 다시 성립함을 확인했다.
-다만 두 번째 날짜에는 거래가 없으므로 실제 체결·PnL 사례는 추가되지 않았다.
-성과 우수성·robustness·performance-research·NXT venue·whole raw·live 적격성은 미승격이다.
-
-다음 단계는 이 과거 데이터에서 cutoff/종목을 바꿔 거래를 만들려는 것이 아니다.
-**다음 독립 실제 세션을 결과 확인 전에 같은 방식으로 사전등록하고 품질확인 입력을 축적한다.**
-candidate 02는 적격한 새 source/session이 생기기 전까지 자동 선택하지 않는다.
+별개 날짜에서 전체 경로가 다시 성립했지만 체결·PnL 사례는 추가되지 않았다.
+성과·robustness·performance-research·NXT venue·whole raw·live 적격성은 미승격이다.
+과거 cutoff/종목을 바꾸지 않으며 candidate 02는 새 적격 source/session 전까지 자동 선택하지 않는다.
 
 ## Exploratory profitability track — 2026-09-21 전용 in-sample 개발
 

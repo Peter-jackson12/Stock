@@ -234,6 +234,8 @@ def run_nxt_portfolio(events, *, output_root, dataset_label, simulator_config,
     """
     if not isinstance(dataset_label, str) or not dataset_label.strip():
         raise ValueError("dataset label required")
+    if type(close_ns) is not int or close_ns <= 0:
+        raise ValueError("positive exclusive close required")
     config = dict(simulator_config)
     if "fee_rate" not in config:
         raise ValueError("explicit fee_rate required; no silent zero-cost run")
