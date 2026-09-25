@@ -282,6 +282,36 @@ selected-v2 bounded input은 strategy-research fixture로 승인됐지만 perfor
 - [ ] source가 그 scope를 지원하지 않으면 결과를 보기 전에 변경 사유와 새 scope를 먼저 기록한다.
 - [ ] 과거 2026-09-17 오후 세션을 10:00 비교군으로 억지 사용하지 않는다.
 
+### Exploratory profitability search — 2026-09-21 development set
+
+검증 트랙과 분리해 2026-09-21 selected-v2 bounded fixture만 **in-sample 개발 데이터**로 사용한다.
+
+고정:
+- source/session/date/cutoff/instrument/policy 유지
+- quantity 1 / cash 1,000,000
+- fee 0.001 per-side
+- buy/sell/cancel latency 1초
+- max quote age 2초
+- 다른 날짜를 탐색 과정에 섞지 않음
+
+허용:
+- entry의 spread / buy ratio / OBI / recent volume / recent tick window / breakout window
+- fixed/tick-trail/step-trail exit parameter
+
+1차 성공 조건:
+- [ ] 정상 완료
+- [ ] `flat_complete`
+- [ ] fill_count >= 2
+- [ ] total PnL > 0
+- [ ] reconciliation 전부 true
+- [ ] 탐색한 모든 parameter/result를 보존
+
+해석:
+- 성공해도 **in-sample profitable candidate**일 뿐이다.
+- 2026-09-18 결과를 튜닝에 사용하지 않는다.
+- 이후 새 날짜를 holdout/out-of-sample 검증용으로 남긴다.
+- 수익을 만들기 위해 날짜·10:00 cutoff·005930·fee·latency·direction policy를 바꾸지 않는다.
+
 ## 5. 첫 시험 이후 — 전략 평가
 
 - [ ] 여러 날짜·시장 상황·종목에서 품질 확인된 입력과 진입 사례를 축적한다.
