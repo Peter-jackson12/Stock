@@ -167,6 +167,11 @@ rejection, session boundary, stale quote, no fill, tie를 포함한다.
 
 - #268: verified input cache 2.143초, feature build 11.768초, fast 평가 0.093초, 총 16.154초.
   production exact와 의사결정 시점·2 fills·1 trade·fee 533·net PnL `+4467`이 모두 같아 parity `PASS`다.
+- frozen raw에서 selected-v2를 다시 보호 검증한 별도 #268 측정은 event materialization 1,651.357초,
+  cache 7.026초, feature 44.831초, fast 0.401초, production exact 1,593.937초,
+  총 3,316.661초, peak traced memory 213,372,197 bytes였고 parity `PASS`다.
+  이 실행은 `tracemalloc`을 켠 50.6 GB raw 보호 스캔 2회를
+  포함하므로 아래 materialized-input sweep과 같은 성능 구간으로 비교하지 않는다.
 - 전체 663 unique: cache 2.167초, feature build 45.689초, sweep 62.924초,
   cache 포함 총 113.236초. sweep 평균은 후보당 약 0.095초다.
 - 전체 benchmark peak working set은 266,194,944 bytes, output/cache 합계는 77,299,018 bytes다.
@@ -182,6 +187,7 @@ fast의 순위와 PnL은 계속 screening-only이며 최종 top-N은 production 
 근거 artifact:
 
 - `C:\Projects\_data\Stock\fast_backtest\20260925T190000+0900-reference-268-saved\benchmark.json`
+- `C:\Projects\_data\Stock\fast_backtest\20260925T183131+0900-reference-268\benchmark.json`
 - `C:\Projects\_data\Stock\fast_backtest\20260925T190100+0900-full-663-top10\benchmark.json`
 - `C:\Projects\_data\Stock\fast_backtest\20260925T185500+0900-holdout-268\benchmark.json`
 

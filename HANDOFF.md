@@ -46,6 +46,10 @@ materialized event SHA-256은
 - 고정 #268: cache 2.143초, feature 11.768초, fast 0.093초, 총 16.154초.
   production exact와 entry/exit decision, fills 2, trade 1, buy 264,000, sell 269,000,
   fees 533, net PnL +4,467이 같아 parity `PASS`.
+- frozen raw 보호 재검증 benchmark도 parity `PASS`. 50.6 GB raw의 selected event materialization
+  1,651.357초, cache 7.026초, feature 44.831초, fast 0.401초, production exact 1,593.937초,
+  총 3,316.661초, peak traced memory 213,372,197 bytes였다. `tracemalloc`을 켠 raw 스캔 2회
+  비용이므로 materialized-input sweep과 분리한다.
 - 기존 693 records를 663 unique parameter로 중복 제거했다.
   cache 2.167초, feature 45.689초, fast sweep 62.924초, 총 113.236초.
   sweep 평균 약 0.095초/candidate, peak working set 266,194,944 bytes,
@@ -59,6 +63,7 @@ materialized event SHA-256은
 근거:
 
 - `C:\Projects\_data\Stock\fast_backtest\20260925T190000+0900-reference-268-saved\benchmark.json`
+- `C:\Projects\_data\Stock\fast_backtest\20260925T183131+0900-reference-268\benchmark.json`
 - `C:\Projects\_data\Stock\fast_backtest\20260925T190100+0900-full-663-top10\benchmark.json`
 
 2026-09-18 holdout도 보존된 30,800 events와 production exact 결과를 대조했다.
