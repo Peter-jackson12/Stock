@@ -33,14 +33,9 @@ preflight만 재사용한다. 각 축을 PASS/WARN/BLOCKED/UNVERIFIED와 다음 
 설치·수정·로그인·구독·수집·kill/restart·lock 삭제·시장 조회·raw DB 접근은 하지 않는다.
 GitHub/PR 사실을 운영 PC의 현재 process/window/lease 상태로 승격하지 않는다.
 
-후속 Operator UX 변경은 preflight 바로 다음에 **수집 Run Plan / 실행 직전 체크리스트**를 둔다.
-managed capture와 같은 입력 검증으로 `mock/live`, 1~10개 6자리 종목, 1~300초 계획을 검토하며,
-예상 필요 저장공간, 로컬 revision/clean tree, preflight 스냅샷을 분리 표시한다. 시장 날짜·장 구간과
-실행 승인은 항상 `UNVERIFIED`다. 저장은 별도 `operator_collection_run_plan_v1` `review_only` 계약이며
-queue/worker/launch token이 없고, 기존 시작 입력·버튼·로그인과 연결되지 않는다. 합성 검증만 수행했으며
-사용자 Windows에서는 `stock.cmd ui → 운영 관리 → 수집 Run Plan · 실행 직전 체크리스트` 확인이 남아 있다.
-정상 사용 진입점은 `stock.cmd ui` 하나로 모으고, 향후 같은 진입점의 Windows 바로가기/아이콘을 제공할 수
-있지만 이번 단계에는 exe 패키징을 포함하지 않는다.
+Operator 후속: preflight 다음 `review_only` Run Plan을 추가했다. 실행·승인과 비연결이고 시장·승인은
+`UNVERIFIED`다. Windows UI 확인은 남았다. 정상 진입점은 `stock.cmd ui`; 아이콘·exe는 후속이다.
+[상세](CONTROL_TOWER.md)
 
 ## selected-v2에서 이미 확인한 것
 
