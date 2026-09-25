@@ -323,6 +323,22 @@ Primary candidate #268:
 
 holdout 결과를 본 뒤 #268을 다시 튜닝하지 않는다. 이후 새 날짜 검증과 분리한다.
 
+### Fast Backtest v1
+
+- [x] production exact engine을 변경하지 않는 screening-only package 추가
+- [x] `causal_preopen` 기본 / explicit `posthoc_same_day`와 non-causal 표시
+- [x] historical metadata adapter와 market/price/trading-value/total-market-cap cheap filter
+- [x] float-market-cap filter 요청 시 silent fallback 없이 explicit reject
+- [x] content-addressed verified event cache와 causal feature cache
+- [x] parameter canonicalization/dedup, deterministic ranking, top-N exact bridge
+- [x] mismatch를 `FAST_EXACT_MISMATCH`로 보존
+- [x] synthetic causality/rolling/rejection/parity/top-N 회귀
+- [ ] 여러 종목 × 여러 날짜 development panel 평가 — 이번 작업 범위 밖
+- [ ] `TODO-FLOAT-001`: 전종목 Kiwoom opt10001 daily free-float history pipeline
+
+현재 historical size filter basis는 `total_market_cap_proxy`다. 전체 시가총액을 유통시총이라고 부르지 않는다.
+상세 계약과 재현 명령은 [Fast Backtest v1](docs/FAST_BACKTEST_V1.md)을 따른다.
+
 ## 5. 첫 시험 이후 — 전략 평가
 
 - [ ] 여러 날짜·시장 상황·종목에서 품질 확인된 입력과 진입 사례를 축적한다.

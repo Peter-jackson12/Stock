@@ -43,6 +43,7 @@ LOB/초봉 변환과 기존 런 비교는 유지하는 레거시 경로이며 �
 | 종료 단계 증거·선택적 ActiveX 해제와 미검증 경계 | [종료 계약](docs/COLLECTOR_TEARDOWN.md) |
 | 선택적 Qt 폴링·기존 FID 시각 표본과 해석 한계 | [수신 진단 계약](docs/COLLECTOR_TELEMETRY.md) |
 | raw 표본·연구 실행·결과 상태와 한계 | [틱 연구 실행 안내](TICK_RESEARCH_RUNBOOK.md) |
+| cheap universe → causal feature → fast sweep → top-N exact 계약 | [Fast Backtest v1](docs/FAST_BACKTEST_V1.md) |
 | 독립 execution oracle·유한 검증 범위·미해결 반례 | [실행 감사 명세](tests/EXECUTION_ORACLE_SPEC.md) |
 | 원본 보호 handle 기반 격리 복제 합성 lab·운영 미승인 경계 | [복제 lab 명세](tests/RAW_V2_CLONE_LAB_SPEC.md) |
 | 운영 화면·제어 계약·IPC·예약·권한 | [CONTROL_TOWER](CONTROL_TOWER.md) |

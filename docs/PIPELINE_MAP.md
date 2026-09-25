@@ -955,3 +955,29 @@ accounting subrecord는 mark provenance 전체를 다시 포함한다.
 
 legacy top-level `realized_pnl/unrealized_pnl/equity`는 계속 null이며,
 이 candidate는 performance-research 승격이나 forced liquidation을 만들지 않는다.
+
+
+<a id="fast-backtest-v1"></a>
+## 24. Fast Backtest v1 screening pipeline
+
+[상세 계약](FAST_BACKTEST_V1.md)의 구현은 production exact 앞단에만 추가된다.
+
+```text
+research/fast_backtest/plan.py
+  → universe.py
+  → input_cache.py
+  → features.py
+  → sweep.py
+  → exact.py
+  → scripts/run_fast_backtest.py
+```
+
+- `universe.py`: `causal_preopen`이 기본이며 같은 날/미래 EOD를 선택하지 않는다.
+- `input_cache.py`: selected semantics를 통과한 normalized `OrderedTick`을 content-addressed create-only cache로 고정한다.
+- `features.py`: current-or-past-only rolling/window feature family를 한 번 만든다.
+- `sweep.py`: parameter identity를 deduplicate하고 최소 screening summary만 계산한다.
+- `exact.py`: deterministic top-N만 기존 `engine.nxt_portfolio_research.run_nxt_portfolio`로 보낸다.
+
+fast 경로는 raw 적격성을 만들거나 production accounting/fill semantics를 변경하지 않는다.
+실제 selected-v2 #268 benchmark는 기존 `engine.nxt_selected_prefix_smoke`의 보호 reader/runner를 재사용한다.
+`FAST_EXACT_MISMATCH`는 실패 근거로 보존하며 어느 한쪽 결과로 덮지 않는다.
