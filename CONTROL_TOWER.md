@@ -49,6 +49,9 @@ flowchart TD
 - `control_tower/collector_preflight.py`: 기존 collector admission의 process/window·lease·disk reader와
   로그인 없는 공식 32-bit/OCX preflight를 재사용해 시작 판단 축을 표시한다. 시장 날짜·장 구간과
   실행 승인은 `UNVERIFIED`로 남기며 버튼이나 실행 경로에 연결하지 않는다.
+- `control_tower/collector_run_plan.py`: managed capture와 같은 종목·서버·시간 입력 검증을 재사용해
+  `operator_collection_run_plan_v1` / `review_only` 수집 계획을 만든다. 예상 저장공간, Git revision/clean tree, preflight 스냅샷을 분리하고
+  시장 날짜·장 구간과 실행 승인은 항상 `UNVERIFIED`로 둔다. 별도 SQLite에는 실행 가능한 상태·큐가 없다.
 - `control_tower/status.py`: 오늘 KST 로그의 끝부분만 읽는다. 최근/오래됨/미확인/시각 이상을 구분한다.
   프로세스 생존, DB 커밋, 무누락, 실제 venue/매수 방향을 인증하지 않는다.
 - `control_tower/jobs.py`: `operations_state/jobs.sqlite3`에 작업을 보존한다. 수집 DB와 분리했다.
@@ -82,8 +85,10 @@ flowchart TD
 덮어쓰지 말고 먼저 해당 서버를 확인한다. 이번 코드 작업에서 서버를 상시 실행해 두지는 않았다.
 
 1. **운영 관리:** 최근 하트비트의 적재 수와 큐를 확인한다. 새로고침은 수동이다.
-   **Operator 요약 → 읽기 전용 환경 점검 → 수집 전 읽기 전용 preflight** 순서로 펼치면
-   로컬 수집 준비 축과 다음 확인을 볼 수 있다. preflight 표시는 실행 승인이나 버튼 활성화가 아니다.
+   **Operator 요약 → 읽기 전용 환경 점검 → 수집 전 읽기 전용 preflight → 수집 Run Plan** 순서로
+   로컬 준비 축, 계획값, 실행 직전의 다음 확인을 본다. Run Plan은 `PASS/WARN/BLOCKED/UNVERIFIED`를
+   유지하며 `operations_state/collector_run_plans.sqlite3`에 검토 전용으로 저장할 수 있다.
+   검토/저장은 기존 managed capture 입력이나 시작 버튼, 로그인, 실행 승인과 연결되지 않는다.
 2. **결과 조회:** 저장된 `research_runs/<run-id>/result.json` 경로를 입력한다. 요청은 DB에 먼저
    저장하고 워커를 띄운다. 잠시 후 상태 새로고침 → 작업 이력에서 요약을 확인한다.
 3. **장외 재생 계획:** `sampledata/raw_ticks_v2/` 아래 파일과 종목·venue·비용·지연 가정을 입력한다.
@@ -94,6 +99,11 @@ flowchart TD
    종료 요청은 저장/수락/닫기 보고로 구분한다. 중단된 관리 세션은 종료 후 이력 대조를 요청한다.
 7. **장외 검사·재생 실행:** 작업 이력에서 저장한 계획을 실행한다. 32 MiB·100,000 raw 이내만 허용하고
    평일 08:00~16:30 및 수집 중에는 차단한다. 시작 실패는 대기로 보존하고 실행 중 중단은 자동 재시도하지 않는다.
+
+수집 Run Plan은 실행 작업 이력과 의도적으로 다른 계약이다. `review_only` 계획에는 queue/worker/launch token이
+없고 실행 승인 필드가 항상 false다. 저장된 revision, clean tree, preflight는 계획 당시의 스냅샷일 뿐이므로
+실행 직전 새 admission을 대신하지 않는다. 시장 날짜·장 구간은 공식 출처와
+[수집 의사결정 계약](docs/COLLECTION_RUNBOOK.md#collection-decision)으로 따로 확인한다.
 
 비용률에는 실제로 검증한 편도 비율을 직접 입력한다. 지연/호가 나이의 초기 입력값도 검증된
 운영 가정이 아니다. 계획 화면은 입력 원본을 바꾸거나 전체 이벤트를 읽지 않는다.

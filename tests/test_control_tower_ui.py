@@ -8,6 +8,7 @@ from streamlit.testing.v1 import AppTest
 
 from collector.raw_v2 import RawV2Writer
 from control_tower.jobs import JobStore
+from control_tower.collector_run_plan import CollectionRunPlanStore
 from control_tower.service import run_one_inspection
 from dashboard import operations as ui
 
@@ -37,6 +38,13 @@ def synthetic_preflight(status="UNVERIFIED", local_status="PASS"):
 def isolate_collector_preflight(monkeypatch):
     """Every UI smoke test remains synthetic and never probes this workstation."""
     monkeypatch.setattr(ui, "inspect_collector_preflight", lambda root: synthetic_preflight())
+    monkeypatch.setattr(ui, "inspect_run_target", lambda root: {
+        "probe_ok": True,
+        "revision": "a" * 40,
+        "branch": "fixture",
+        "clean": True,
+        "dirty_entry_count": 0,
+    })
 
 
 def screen(tmp_path):
@@ -62,6 +70,7 @@ def test_initial_screen_never_starts_worker_or_creates_jobs(tmp_path, monkeypatc
     assert len(app.tabs) == 4
     assert not calls and not JobStore(tmp_path).path.exists()
     assert not ui.ManagedCaptures(tmp_path).path.exists()
+    assert not CollectionRunPlanStore(tmp_path).path.exists()
 
 
 def test_environment_inventory_is_read_only_and_keeps_pass_narrow(tmp_path, monkeypatch):
@@ -102,6 +111,33 @@ def test_collector_preflight_shows_status_and_next_check_without_actions(tmp_pat
     assert any("다음 확인: 공식 출처 확인" in item.value for item in app.caption)
     assert any("시작 버튼" in item.value and "승격하지 않습니다" in item.value for item in app.caption)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_collection_run_plan_review_and_save_never_start_or_approve_capture(tmp_path, monkeypatch):
+    starts = []
+    monkeypatch.setattr(ui, "start_managed_capture", lambda *args: starts.append(args))
+    app = screen(tmp_path)
+    assert not app.exception
+    assert any(item.label == "수집 Run Plan · 실행 직전 체크리스트" for item in app.expander)
+    assert any("계획 상태: UNVERIFIED" in item.value for item in app.warning)
+    assert any("[UNVERIFIED] 실제 시장 날짜 · 장 구간" in item.value for item in app.text)
+    assert any("[UNVERIFIED] 수집 실행 승인" in item.value for item in app.text)
+    start_before = button(app, "소규모 수집 시작 · 로그인").disabled
+
+    button(app, "계획 검토 · 실행 안 함").click().run()
+    assert not app.exception and not starts
+    assert not CollectionRunPlanStore(tmp_path).path.exists()
+    assert not ui.ManagedCaptures(tmp_path).path.exists()
+
+    button(app, "계획 저장 · 실행 안 함").click().run()
+    assert not app.exception and not starts
+    saved = CollectionRunPlanStore(tmp_path).recent()[0]["payload"]
+    assert saved["state"] == "review_only"
+    assert saved["execution_approved"] is False
+    assert saved["launch_connected"] is False
+    assert saved["managed_capture_activated"] is False
+    assert not ui.ManagedCaptures(tmp_path).path.exists()
+    assert button(app, "소규모 수집 시작 · 로그인").disabled == start_before
 
 
 def test_capture_start_requires_click_and_stop_is_durable(tmp_path, monkeypatch):

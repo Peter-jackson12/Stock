@@ -15,6 +15,11 @@ from control_tower.capture_health import CaptureHealth
 from control_tower.operator_summary import summarize_operator_state
 from control_tower.operator_environment import inspect_operator_environment
 from control_tower.collector_preflight import inspect_collector_preflight
+from control_tower.collector_run_plan import (
+    CollectionRunPlanStore,
+    build_collection_run_plan,
+    inspect_run_target,
+)
 from control_tower.replay_schedule import schedule_replay, schedules, expire_missed
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,7 +37,8 @@ def render_control_tower(root=None):
     raw = observe_raw_capture(root)
     render_operator_overview(observation, raw)
     render_operator_environment(root)
-    render_collector_preflight(root)
+    preflight = render_collector_preflight(root)
+    render_collection_run_plan(root, preflight)
     if "payload" in raw:
         payload = raw["payload"]
         snapshot = payload["snapshot"]
@@ -253,7 +259,19 @@ def render_collector_preflight(root):
             report = inspect_collector_preflight(Path(root))
         except (OSError, RuntimeError, ValueError) as exc:
             st.warning(f"수집 전 점검을 읽지 못했습니다: {exc}. 자동 수정하거나 실행하지 않았습니다.")
-            return
+            return {
+                "schema": "operator_collector_preflight_unavailable",
+                "status": "UNVERIFIED",
+                "local_status": "UNVERIFIED",
+                "storage_free_bytes": None,
+                "checks": [{
+                    "id": "preflight_probe",
+                    "status": "UNVERIFIED",
+                    "label": "수집 전 preflight",
+                    "detail": str(exc)[:512],
+                    "next_check": "오류를 자동 수정하지 말고 실행 직전에 다시 점검하세요.",
+                }],
+            }
         renderer = {
             "PASS": st.info,
             "WARN": st.warning,
@@ -270,6 +288,103 @@ def render_collector_preflight(root):
         st.caption(
             "이 결과는 GitHub/원격 상태로 운영 PC를 추정하지 않으며, 기존 수집 시작 버튼을 "
             "활성화하거나 collector admission/실행 승인으로 승격하지 않습니다."
+        )
+        return report
+
+
+def render_collection_run_plan(root, preflight):
+    """Render a disconnected review/save contract immediately after preflight."""
+    with st.expander("수집 Run Plan · 실행 직전 체크리스트", expanded=True):
+        st.caption(
+            "managed capture와 같은 입력 규칙으로 계획값을 검토하지만, 저장해도 로그인·수집 시작·"
+            "시장 조회·실행 승인을 만들지 않습니다. 기존 시작 화면의 값이나 버튼 상태와도 연결되지 않습니다."
+        )
+        try:
+            run_target = inspect_run_target(Path(root))
+        except (OSError, RuntimeError, ValueError) as exc:
+            run_target = {"probe_ok": False, "error": f"run target probe failed: {exc}"}
+
+        with st.form("collection_run_plan_form"):
+            server = st.selectbox("계획 서버", ["mock", "live"], key="run_plan_server")
+            codes_text = st.text_input(
+                "계획 종목 (쉼표 구분)", value="005930", key="run_plan_codes",
+            )
+            duration = st.number_input(
+                "계획 수집 시간 (초)", min_value=1, max_value=300, value=60, step=1,
+                key="run_plan_duration",
+            )
+            required_storage = st.number_input(
+                "예상 필요 저장공간 (MiB, 0은 아직 미확인)",
+                min_value=0,
+                max_value=1024 * 1024,
+                value=0,
+                step=1,
+                key="run_plan_storage_mib",
+            )
+            market_date = st.text_input(
+                "목표 시장 날짜 (계획값, 검증 아님)", placeholder="YYYY-MM-DD 또는 비워 두기",
+                key="run_plan_market_date",
+            )
+            market_segment = st.text_input(
+                "목표 장 구간 (계획값, 검증 아님)", placeholder="승인된 구간 계약 또는 비워 두기",
+                key="run_plan_market_segment",
+            )
+            review = st.form_submit_button("계획 검토 · 실행 안 함")
+            save = st.form_submit_button("계획 저장 · 실행 안 함")
+
+        codes = [code.strip() for code in codes_text.split(",")]
+        try:
+            plan = build_collection_run_plan(
+                codes=codes,
+                duration_seconds=int(duration),
+                server=server,
+                required_storage_mib=int(required_storage) if required_storage else None,
+                planned_market_date=market_date,
+                planned_market_segment=market_segment,
+                preflight=preflight,
+                run_target=run_target,
+            )
+        except (TypeError, ValueError) as exc:
+            st.error(f"Run Plan 입력을 검토하지 못했습니다: {exc}")
+            return
+
+        renderer = {
+            "PASS": st.info,
+            "WARN": st.warning,
+            "BLOCKED": st.error,
+            "UNVERIFIED": st.warning,
+        }.get(plan["status"], st.warning)
+        renderer(f"계획 상태: {plan['status']} · review_only · 실행 연결 없음")
+        for check in plan["checks"]:
+            st.text(f"[{check['status']}] {check['label']}: {check['detail']}")
+            st.caption(f"다음 확인: {check['next_check']}")
+
+        store = CollectionRunPlanStore(root)
+        if review:
+            st.info("현재 입력을 검토했습니다. operations_state에 저장하거나 실행하지 않았습니다.")
+        if save:
+            try:
+                plan_id = store.save(plan)
+            except (OSError, ValueError, sqlite3.Error) as exc:
+                st.error(f"Run Plan을 저장하지 못했습니다: {exc}")
+            else:
+                st.success(f"검토 전용 Run Plan 저장: {plan_id[:8]} · 실행/승인 연결 없음")
+        try:
+            recent = store.recent(3)
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            st.warning(f"저장된 Run Plan 목록을 읽지 못했습니다: {exc}")
+        else:
+            if recent:
+                latest = recent[0]
+                inputs = latest["payload"]["inputs"]
+                st.caption(
+                    f"최근 저장 {latest['id'][:8]} · {latest['created_at']} · "
+                    f"{inputs['server']} / {', '.join(inputs['codes'])} / {inputs['duration_seconds']}초 · "
+                    "review_only"
+                )
+        st.caption(
+            "저장된 계획은 현재 preflight나 Git 상태가 아닙니다. 실제 실행 직전에 새 admission과 "
+            "시장 일정·장 구간·명시적 실행 승인을 모두 다시 확인해야 합니다."
         )
 
 

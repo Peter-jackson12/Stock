@@ -240,6 +240,8 @@ def reduce_collector_preflight(
         "checks": axes,
         "execution_approved": False,
         "market_verified": False,
+        "storage_free_bytes": free if type(free) is int else None,
+        "storage_code_minimum_bytes": minimum if type(minimum) is int else None,
         "non_actions": list(NON_ACTIONS),
         "note": (
             "PASS는 해당 순간의 좁은 관측만 뜻합니다. 이 보고서는 collector 실행 명령이나 "

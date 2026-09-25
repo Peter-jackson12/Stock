@@ -154,6 +154,19 @@ def test_handoff_remains_current_and_bounded():
     assert "docs/archive/README.md" in text
 
 
+def test_operator_run_plan_and_final_ux_contract_are_documented():
+    control = (ROOT / "CONTROL_TOWER.md").read_text(encoding="utf-8")
+    start = (ROOT / "START_HERE.md").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "operator_collection_run_plan_v1" in control
+    assert "review_only" in control
+    assert "실행 승인 필드가 항상 false" in control
+    assert "collector_run_plans.sqlite3" in start
+    assert "시작 버튼을 활성화하거나 로그인·수집을 실행하지 않는다" in start
+    assert ".\\stock.cmd ui" in start and "Windows 바로가기/아이콘" in start
+    assert "exe 패키징" in readme
+
+
 def test_fenced_examples_are_not_navigation():
     text = "# 제목\n```text\n[예시](missing.md)\n# 가짜\n```\n[실제](real.md)\n"
     visible = outside_fences(text)
