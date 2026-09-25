@@ -95,6 +95,45 @@ def test_environment_inventory_is_read_only_and_keeps_pass_narrow(tmp_path, monk
     assert list(tmp_path.iterdir()) == []
 
 
+def test_windows_shortcut_actions_are_explicit_and_never_start_capture(tmp_path, monkeypatch):
+    calls = []
+    starts = []
+
+    def inspect(root):
+        calls.append(("status", Path(root)))
+        return {
+            "desktop": {"state": "absent"},
+            "start_menu": {"state": "absent"},
+        }
+
+    def manage(root, *, location, action):
+        calls.append((action, location, Path(root)))
+        return {
+            "state": "ready" if action == "install" else "absent",
+            "target": str(Path(root) / "stock.cmd"),
+            "arguments": "ui",
+            "changed": True,
+        }
+
+    monkeypatch.setattr(ui, "inspect_shortcuts", inspect)
+    monkeypatch.setattr(ui, "manage_shortcut", manage)
+    monkeypatch.setattr(ui, "start_managed_capture", lambda *args: starts.append(args))
+
+    app = screen(tmp_path)
+    assert not app.exception
+    assert not calls and not starts
+    assert any(item.label == "Windows 실행 바로가기" for item in app.expander)
+
+    button(app, "바로가기 상태 확인").click().run()
+    assert calls == [("status", tmp_path)]
+
+    button(app, "바탕화면 바로가기 만들기/갱신").click().run()
+    assert ("install", "desktop", tmp_path) in calls
+    assert not starts
+    assert not ui.ManagedCaptures(tmp_path).path.exists()
+    assert any("아이콘 더블클릭" in item.value for item in app.success)
+
+
 def test_collector_preflight_shows_status_and_next_check_without_actions(tmp_path, monkeypatch):
     starts = []
     monkeypatch.setattr(ui, "start_managed_capture", lambda *args: starts.append(args))

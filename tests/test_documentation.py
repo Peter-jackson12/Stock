@@ -163,8 +163,9 @@ def test_operator_run_plan_and_final_ux_contract_are_documented():
     assert "실행 승인 필드가 항상 false" in control
     assert "collector_run_plans.sqlite3" in start
     assert "시작 버튼을 활성화하거나 로그인·수집을 실행하지 않는다" in start
-    assert ".\\stock.cmd ui" in start and "Windows 바로가기/아이콘" in start
-    assert "exe 패키징" in readme
+    assert ".\\stock.cmd ui" in start and "Windows 실행 바로가기" in start
+    assert "바탕화면 바로가기 만들기/갱신" in start and "시작 메뉴 바로가기 만들기/갱신" in start
+    assert "아이콘 더블클릭" in readme and "exe 패키징" in readme
 
 
 def test_fenced_examples_are_not_navigation():
