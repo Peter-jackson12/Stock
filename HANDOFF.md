@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-26 / MWFD-02 causal fix + shared market materialization
+# 현재 인계 — 2026-09-26 / MWFD-03 45-cell Fast runtime probe
 
 [문서 인덱스](README.md) · [Fast Backtest v1](docs/FAST_BACKTEST_V1.md) ·
 [첫 실데이터 체크](BACKTEST_TODO.md) · [파이프라인 지도](docs/PIPELINE_MAP.md#fast-backtest-v1) ·
@@ -46,62 +46,19 @@ production exact fill/accounting 의미를 수정하거나 복제하지 않았�
 v1 runner는 한 거래일·한 종목을 지원한다. collector/OCX/login/구독/raw writer/native/FID 경로는
 수정하거나 실행하지 않았다.
 
-### 실제 benchmark
+### 기존 실제 benchmark
 
-2026-09-21 `005930=unknown`, 10:00 KST exclusive selected-v2 입력 77,558건을 사용했다.
-materialized event SHA-256은
-`a6fbcce85c321da1ee07f898f525537e8beb2361cc5769d08174935531741e48`다.
-
-- 고정 #268: cache 2.143초, feature 11.768초, fast 0.093초, 총 16.154초.
-  production exact와 entry/exit decision, fills 2, trade 1, buy 264,000, sell 269,000,
-  fees 533, net PnL +4,467이 같아 parity `PASS`.
-- frozen raw 보호 재검증 benchmark도 parity `PASS`. 50.6 GB raw의 selected event materialization
-  1,651.357초, cache 7.026초, feature 44.831초, fast 0.401초, production exact 1,593.937초,
-  총 3,316.661초, peak traced memory 213,372,197 bytes였다. `tracemalloc`을 켠 raw 스캔 2회
-  비용이므로 materialized-input sweep과 분리한다.
-- 기존 693 records를 663 unique parameter로 중복 제거했다.
-  cache 2.167초, feature 45.689초, fast sweep 62.924초, 총 113.236초.
-  sweep 평균 약 0.095초/candidate, peak working set 266,194,944 bytes,
-  output/cache 합계 77,299,018 bytes.
-- fast 상위 10개는 보존된 production exact 결과와 모두 parity `PASS`.
-  해당 과거 exact elapsed 합은 188.820초다. 새 exact replay를 10회 더 실행하지 않았다.
-- 과거 production exact 693회 누적 elapsed는 11,918.286초다.
-  fast sweep만의 비율은 약 189배, cache/feature 포함 비율은 약 105배 규모지만,
-  과거 값은 개별 run elapsed 합이고 새 값은 한 프로세스 wall-clock이므로 공식 동등 speedup은 아니다.
-
-근거:
-
-- `C:\Projects\_data\Stock\fast_backtest\20260925T190000+0900-reference-268-saved\benchmark.json`
-- `C:\Projects\_data\Stock\fast_backtest\20260925T183131+0900-reference-268\benchmark.json`
-- `C:\Projects\_data\Stock\fast_backtest\20260925T190100+0900-full-663-top10\benchmark.json`
-
-2026-09-18 holdout도 보존된 30,800 events와 production exact 결과를 대조했다.
-#268 fast/exact 모두 signal/fill/trade 0, PnL 0으로 parity `PASS`다.
-근거는 `C:\Projects\_data\Stock\fast_backtest\20260925T185500+0900-holdout-268\benchmark.json`이다.
-#268을 다시 튜닝하지 않았다.
+2026-09-21 `005930=unknown` 77,558건에서 #268 fast/exact parity와 저장된 exact 상위 10개 대조가
+PASS였다. 693 source records는 663 unique parameter로 고정했다. 2026-09-18 고정 holdout은 #268이
+양쪽 모두 no-trade였다. 상세 수치·artifact 경로는 [Fast Backtest v1](docs/FAST_BACKTEST_V1.md#benchmark-해석)과
+[2026-09-25 보존본](docs/archive/HANDOFF_20260925_PRE_COMPACT.md)에 둔다. 이 결과로 후보를 다시 튜닝하지 않는다.
 
 ### Historical universe / PIT
 
-실제 KRX probe source
-`C:\Projects\TotalStock\_data\krx_pit_probe\20260925T173445+0900-01\normalized\20260918.csv`를
-adapter로 읽었다. 이 파일의 2,869행은 모두 `available_at`이 비어 있고 status도 READY allowlist
-밖이다. 과거 구현은 날짜만 보고 2026-09-21 `causal_preopen`에 이를 선택할 수 있었지만,
-MWFD-02 수정 뒤에는 `no eligible historical metadata snapshot`으로 fail-closed한다.
-
-기본 mode는 `causal_preopen`: D보다 앞선 observation 중 모든 row가 `READY`/`VALID`이고,
-timezone-aware `available_at <= universe_decision_cutoff`인 최신 snapshot만 사용한다.
-`NOT_READY`, availability 누락/지연, same-day EOD와 미래 observation은 제외한다.
-`captured_at`은 취득 provenance이며 semantic availability를 대신하지 않는다.
-`posthoc_same_day`는 명시적 opt-in일 때만 허용하며 `non_causal=true`다.
-
-**현재 historical size filter는 전체 시가총액이며 유통시총이 아니다.**
-raw field는 `market_cap_krw`, provenance는 `size_filter_basis=total_market_cap_proxy`다.
-float filter 요청 시 데이터가 없으면 명시적으로 실패하며 전체 시가총액으로 대체하지 않는다.
-
-`TODO-FLOAT-001`은 [BACKTEST_TODO](BACKTEST_TODO.md#fast-backtest-v1)에 추적한다.
-전종목 Kiwoom opt10001 daily free-float history의 raw observation, retry/rate limit,
-completeness/누락 탐지, immutable daily history, 자동 실행·알림과 `float_market_cap` 파생이 범위다.
-이번 구현에는 포함하지 않았다.
+`causal_preopen`은 D 이전의 READY/VALID snapshot 중 timezone-aware `available_at`이 cutoff 이하인
+최신본만 선택한다. NOT_READY, availability 누락·지연, same-day EOD, 미래 observation은 fail-closed한다.
+현재 size filter는 `total_market_cap_proxy`이며 유통시총이 아니다. historical float 요청은 대체값 없이
+실패한다. `TODO-FLOAT-001`은 [BACKTEST_TODO](BACKTEST_TODO.md#fast-backtest-v1)에 유지한다.
 
 ### MWFD-02 shared market materialization
 
@@ -164,13 +121,29 @@ Candidate #268은 2026-09-21 in-sample에서 +4,467, 2026-09-18 holdout에서 no
 두 날짜만으로 수익성·robustness·실전 적격성을 확정하지 않는다. 9/18 결과를 보고 parameter를
 변경하거나 같은 holdout에서 다른 후보를 시험하지 않는다.
 
+### MWFD-03 45-cell runtime probe
+
+전용 worktree `C:\Projects\TotalStock\worktrees\mwfd-03-runtime-probe`, branch
+`feat/mwfd-03-runtime-probe-20260926`에서 구현했다. 실행 코드 revision은 `220ddca`다.
+MWFD-02 `probe_admission.json`의 high/medium/low 각 15셀과 663 후보를 변경 없이 사용했다.
+50.6 GB raw는 8,414,461건 접두를 한 번만 순회해 179,123건 이벤트 캐시를 만들었고, 이후 실행은
+공유 depth cache와 이 이벤트 캐시만 사용했다.
+
+45셀·29,835 candidate-cell이 중복 없이 완료됐다. coldish 파이프라인 416.402초, 원천 캐시
+322.792초, warm smoke 27.661초, peak working set 323,891,200 bytes다. gate는 PASS 33,516 /
+FAIL 18,809 / UNKNOWN 6,084이며 MWFD-02 inventory와 일치한다. 45 checkpoint resume은 전부 skip,
+결과 파일 무재작성, digest 불변으로 PASS했다.
+
+1,286셀 단일 워커 추정은 15,522.747초(범위 11,833.331–22,400.368초), output 약 7.57 GB다.
+최종 판정은 `FULL_RUN_ADMITTED_WITH_CONDITIONS`: 동일 frozen identity, 단일 워커, create-only checkpoint,
+free-disk preflight, screening-only를 유지한다. 병렬 실행은 I/O·메모리 경합 probe 전에는 권장하지 않는다.
+artifact는 `C:\Projects\TotalStock\_data\mwfd_03\20260926T004154+0900-45-cell-runtime-probe`에 있다.
+
 ## 다음 권장 작업
 
-다음 단계는 `probe_admission.json`에 고정된 **45개 cell runtime probe**다. eligible 1,286개를
-event-count tercile로 나눈 뒤 PnL 비참조 SHA-256 순서로 high/medium/low 각 15개를 골랐다.
-cold/warm cache를 분리하고 shared depth materialization을 재사용하며 gate/feature/663 sweep/output
-시간, peak memory, output bytes를 측정한다. 실제 probe 전에 전체 시장 runtime을 확정하지 않고,
-결과를 보고 threshold나 parameter를 바꾸지 않는다.
+다음 실행은 위 조건으로 1,286셀 전체 Fast screening을 별도 승인·새 create-only run에서 수행하는 것이다.
+실행 전 여유 공간 8 GB 이상과 동일 source/sample/candidate/cache digest를 재확인한다. 병렬화, threshold·후보
+조정, production exact 대량 실행, holdout 재탐색은 이 허용에 포함되지 않는다.
 
 상세 실행 계약·benchmark·재현 명령은 [Fast Backtest v1](docs/FAST_BACKTEST_V1.md),
 현재 체크 항목은 [BACKTEST_TODO](BACKTEST_TODO.md), 코드 연결은

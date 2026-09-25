@@ -223,6 +223,62 @@ fast의 순위와 PnL은 계속 screening-only이며 최종 top-N은 production 
 - `C:\Projects\_data\Stock\fast_backtest\20260925T190100+0900-full-663-top10\benchmark.json`
 - `C:\Projects\_data\Stock\fast_backtest\20260925T185500+0900-holdout-268\benchmark.json`
 
+## MWFD-03 45-cell runtime probe
+
+MWFD-02의 `probe_admission.json`이 고정한 45개 셀(high/medium/low 각 15개)과 기존 693행에서
+deduplicate한 663개 후보를 사용한다. 셀은 PnL이 아니라 event-count tercile과
+`SHA256(session_id|cell_id)` 순서로 선정한다. 표본·후보 identity가 바뀌면 Phase 0에서 중단한다.
+
+실행 순서는 다음과 같다.
+
+1. frozen raw의 bounded prefix를 receive order로 한 번만 읽어 45셀 이벤트 cache를 create-only로 만든다.
+2. 각 계층 첫 셀 3개를 실행해 구조·유한값·후보 수를 검증한다.
+3. 나머지 42개를 셀별 atomic checkpoint로 실행한다.
+4. 대표 3셀은 저장된 gate/feature cache를 읽어 결과 digest를 다시 확인한다.
+5. resume check는 45 checkpoint를 건너뛰고 결합 결과 파일이 바뀌지 않았음을 확인한다.
+
+execution feasibility는 각 trade receipt 시점에서 이미 수신된 최신 depth만 exact join한다. 새 invalid/partial
+quote가 오면 이전 정상 quote를 대신 쓰지 않으며 미래 quote로 backfill하지 않는다. PASS/FAIL/UNKNOWN은
+서로 구분한다. 게이트는 **신규 진입 평가만** 막고 history·기존 position·exit 처리는 제거하지 않는다.
+
+실제 run `20260926T004154+0900-45-cell-runtime-probe` 결과:
+
+- 45셀, 663후보, 29,835 candidate-cell, 실패·중복 0
+- source event cache: 8,414,461건 1회 scan → 179,123건, 322.792초
+- coldish 45셀 pipeline: 416.402초; warm 3셀: 27.661초
+- peak working set 323,891,200 bytes; run artifact 261,103,126 bytes
+- gate PASS 33,516 / FAIL 18,809 / UNKNOWN 6,084, reconciliation PASS
+- 1,286셀 단일 워커: 15,522.747초(11,833.331–22,400.368초), 약 7.57 GB 추정
+- warm identity와 checkpoint resume PASS
+- 최종 `FULL_RUN_ADMITTED_WITH_CONDITIONS`
+
+조건부 허용은 동일 frozen source/sample/candidate/cache identity, 단일 워커, create-only checkpoint,
+free-disk preflight, screening-only에 한한다. 병렬 워커는 SQLite I/O와 워커별 feature/result memory 경합을
+측정하지 않았으므로 별도 contention probe 전에는 권장하지 않는다. 추정은 실제 전체 실행 시간이 아니다.
+
+재현 진입점:
+
+```powershell
+C:\Projects\TotalStock\Stock\.venv\Scripts\python.exe -m scripts.materialize_mwfd_03_probe_events `
+  --raw C:\path\frozen-working.db `
+  --snapshot-result C:\path\snapshot-result.json `
+  --prefix-report C:\path\prefix-result.json `
+  --mwfd02-root C:\path\mwfd-02-run `
+  --candidate-summary C:\path\summary.jsonl `
+  --output-dir C:\Projects\TotalStock\_data\mwfd_03\<new-run-id> `
+  --code-revision <git-sha>
+
+C:\Projects\TotalStock\Stock\.venv\Scripts\python.exe -m scripts.run_mwfd_03_probe `
+  --run-root C:\Projects\TotalStock\_data\mwfd_03\<new-run-id> `
+  --mwfd02-root C:\path\mwfd-02-run `
+  --candidate-summary C:\path\summary.jsonl `
+  --code-revision <git-sha>
+```
+
+사람용 결론은 run root의 `report-ko.md`, 기계 판정은 `runtime_summary.json`, `gate_summary.json`,
+`runtime_projection.json`, `full_run_admission.json`, `resume_validation.json`에 있다. 이 실행에서
+production exact 대량 실행, 후보/threshold 튜닝, OCX/login/live, 2026-09-18 holdout 신규 탐색은 하지 않았다.
+
 ## 알려진 한계
 
 - historical free-float ratio/shares/market cap 미지원
