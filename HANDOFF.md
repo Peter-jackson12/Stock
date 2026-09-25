@@ -12,10 +12,16 @@
 
 ## 현재 두 트랙
 
-**수집기/native 트랙은 다음 실제 시장 세션까지 보류한다.**
-별도 승인된 Mock A-B-A 1회가 다음 실질 단계다. 그 전에는 FID hot path·admission/run-plan·
-OCX/QAx·queue/teardown/telemetry·실제 수집·PID/창/lease 관측·#327/#162 원인 실험을 늘리지 않는다.
-자동 kill/restart/relogin, Runtime 창 닫기, lock 삭제, LAA 변경, queue 확대, 기본 FID 축소도 하지 않는다.
+**수집기/native 트랙은 2026-09-28 실제 시장 세션까지 코드 freeze 상태다.**
+월요일 기본 경로는 현재 수집 계약에 따라 장전/NXT 보존을 먼저 고려하면서 최신 정상 collector로
+실제 수집을 우선한다. 별도 Mock FID read A-B-A는 정상 수집의 선행 필수 절차가 아니다.
+과거와 유사하게 프로세스가 살아 있는 동안 callback/accepted 진행이 멈추거나 silence 한도를 넘는
+feed 정지, Runtime/OpenAPI/native 오류가 재발하면 해당 세션 evidence를 보존하고 원인을 단정하지 않은 채
+기존 admission/run-plan/A-B-A 절차를 진단 fallback으로 사용한다. 정상 수집이 유지되면 A-B-A는 실행하지 않는다.
+실행 직전에는 공식 시장 운영, 최신 master, HANDOFF/COLLECTION_RUNBOOK, preflight, process/window/lease,
+저장공간과 fresh execution approval을 다시 확인한다. 그 전에는 FID hot path·새 진단 계층·OCX/QAx·
+queue/teardown/telemetry·#327/#162 원인 실험을 늘리지 않는다. 자동 kill/restart/relogin, Runtime 창 닫기,
+lock 삭제, LAA 변경, queue 확대, 기본 FID 축소도 하지 않는다.
 
 **research/backtest/execution 트랙의
 `005930 selected-v2 actual accounting regression` 1회는 PASS로 완료했다.**
