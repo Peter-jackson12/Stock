@@ -161,7 +161,7 @@ COM 호출 감소가 원인이라고 증명하지 않으며 문자열·dict·JSO
 실행 명령은 bounded analyzer와 같은 세션 근거만 사용하며 raw DB를 열지 않는다.
 
 ```powershell
-C:\Projects\Stock\.venv32\Scripts\python.exe scripts\assess_fid_read_ab.py `
+C:\Projects\TotalStock\Stock\.venv32\Scripts\python.exe scripts\assess_fid_read_ab.py `
   --session-dir operations_state\capture_sessions\<session_id> `
   --expected-revision <실행한 정확한 SHA>
 ```
@@ -190,7 +190,7 @@ bool이 아닌 정수 계수와 pending/queue accounting, `Finalization`(64-hex 
 `final_seq == committed_seq`), 최상위·snapshot 오류 없음이 필요하다. 음수·비유한·비숫자 telemetry 값은 INVALID다.
 
 ```powershell
-C:\Projects\Stock\.venv32\Scripts\python.exe scripts\analyze_fid_read_ab.py `
+C:\Projects\TotalStock\Stock\.venv32\Scripts\python.exe scripts\analyze_fid_read_ab.py `
   --session-dir operations_state\capture_sessions\<session_id> `
   --expected-revision <실행한 정확한 SHA>
 ```

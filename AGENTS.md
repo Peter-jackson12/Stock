@@ -29,13 +29,13 @@ GitHub-only 작업에서는 로컬 status도 실행하지 않으며, 실행한 �
 ## 로컬 worktree / 임시 작업 폴더 규칙
 
 - Stock의 별도 checkout/worktree를 `C:\Projects` 최상위에 `Stock-*` 이름으로 흩어 만들지 않는다.
-- 기본 worktree 루트는 **`C:\Projects\_worktrees\Stock\<작업명>`** 으로 통일한다.
-  예: `C:\Projects\_worktrees\Stock\independent-actual-01`.
-- main checkout인 `C:\Projects\Stock` 내부에 다른 Git worktree를 중첩 생성하지 않는다.
+- 기본 worktree 루트는 **`C:\Projects\TotalStock\worktrees\<작업명>`** 으로 통일한다.
+  예: `C:\Projects\TotalStock\worktrees\independent-actual-01`.
+- main checkout인 `C:\Projects\TotalStock\Stock` 내부에 다른 Git worktree를 중첩 생성하지 않는다.
   main working tree의 untracked/ignore 경계와 작업 삭제를 복잡하게 만들 수 있기 때문이다.
 - frozen snapshot, qualification result, replay result 같은 대용량·비추적 데이터는 worktree와 분리한다.
-  **기존 `C:\StockSnapshots\...` evidence는 절대경로 provenance를 깨지 않도록 제자리 보존**하고,
-  새로 만드는 데이터는 기본적으로 **`C:\Projects\_data\Stock\snapshots\...`** 아래에 둔다.
+  **기존 `C:\Projects\TotalStock\StockSnapshots\...` evidence는 절대경로 provenance를 깨지 않도록 제자리 보존**하고,
+  새로 만드는 데이터는 기본적으로 **`C:\Projects\TotalStock\_data\snapshots\...`** 아래에 둔다.
   소스 worktree와 실제 데이터 보존 위치를 섞지 않는다.
 - 임시 worktree 이름은 목적 중심으로 짧게 만들고, 작업 종료 후 제거 가능한지 보고한다.
   다른 활성 작업이 연결된 worktree를 임의 삭제하거나 이동하지 않는다.

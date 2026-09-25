@@ -184,7 +184,7 @@ git status --short
 명시적으로 승인한 뒤에만 붙인다.
 
 ```powershell
-C:\Projects\Stock\.venv32\Scripts\python.exe scripts\check_fid_read_ab_admission.py `
+C:\Projects\TotalStock\Stock\.venv32\Scripts\python.exe scripts\check_fid_read_ab_admission.py `
   --repo-root <승인된 exact SHA의 clean 실행 worktree> `
   --expected-revision <컨트롤타워가 방금 확인한 정확한 SHA> `
   --official-market-date YYYY-MM-DD `
@@ -194,7 +194,7 @@ C:\Projects\Stock\.venv32\Scripts\python.exe scripts\check_fid_read_ab_admission
 
 checker는 **검사 대상 worktree 루트에서** 그 worktree의 `scripts\...`로 실행하고 `--repo-root`도 같은
 worktree를 준다. 실제로 import된 checker 코드의 checkout, `git rev-parse --show-toplevel`, `--repo-root`가
-하나라도 다르면 BLOCKED다. Python 실행 파일은 `C:\Projects\Stock\.venv32`처럼 다른 경로여도 된다
+하나라도 다르면 BLOCKED다. Python 실행 파일은 `C:\Projects\TotalStock\Stock\.venv32`처럼 다른 경로여도 된다
 (정상 sibling worktree). ignored 하위 폴더가 부모 저장소의 HEAD/clean을 빌리지 못한다.
 
 판정:
@@ -239,7 +239,7 @@ verify는 embedded admission이 **plan 생성 시각에도** READY·60초 이내
 plan 생성:
 
 ```powershell
-C:\Projects\Stock\.venv32\Scripts\python.exe scripts\prepare_fid_read_ab_run.py `
+C:\Projects\TotalStock\Stock\.venv32\Scripts\python.exe scripts\prepare_fid_read_ab_run.py `
   --repo-root <clean execution worktree> `
   --expected-revision <컨트롤타워가 방금 확인한 정확한 SHA> `
   --official-market-date YYYY-MM-DD `
@@ -256,7 +256,7 @@ collector는 실행하지 않는다.
 실제 명령을 보기 직전 fresh verify:
 
 ```powershell
-C:\Projects\Stock\.venv32\Scripts\python.exe scripts\verify_fid_read_ab_run_plan.py `
+C:\Projects\TotalStock\Stock\.venv32\Scripts\python.exe scripts\verify_fid_read_ab_run_plan.py `
   --plan <방금 만든 plan JSON> `
   --expected-revision <컨트롤타워가 다시 확인한 정확한 SHA> `
   --execution-approved
@@ -298,7 +298,7 @@ verify의 `MANUAL_COMMAND_READY`도 **자동 실행 승인이 아니다**. 출�
 COUNT/hash/SQLite scan하지 않는다.
 
 ```powershell
-C:\Projects\Stock\.venv32\Scripts\python.exe scripts\analyze_fid_read_ab.py `
+C:\Projects\TotalStock\Stock\.venv32\Scripts\python.exe scripts\analyze_fid_read_ab.py `
   --session-dir operations_state\capture_sessions\<session_id> `
   --expected-revision <실행한 정확한 SHA>
 ```
@@ -309,7 +309,7 @@ LIMITED/DIAGNOSTIC_ERROR/INCOMPLETE/INVALID이면 두 번째 실행으로 덮지
 READY인 경우에만 실제 결과 전에 고정한 `fid_read_ab_assessment_v1` 규칙을 적용한다.
 
 ```powershell
-C:\Projects\Stock\.venv32\Scripts\python.exe scripts\assess_fid_read_ab.py `
+C:\Projects\TotalStock\Stock\.venv32\Scripts\python.exe scripts\assess_fid_read_ab.py `
   --session-dir operations_state\capture_sessions\<session_id> `
   --expected-revision <실행한 정확한 SHA>
 ```

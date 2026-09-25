@@ -10,6 +10,15 @@
 매 작업 시작 시 원격 master·열린 PR·최신 CI와 작업 후보 HEAD/base를 다시 확인한다.
 아래 값은 이번 작업에서 확인한 시점의 기록이며 영구 최신값이 아니다.
 
+## TotalStock 경로 정리 — 2026-09-25
+
+main과 linked worktree 8개의 Git 연결을 공식 repair로 복구하고 이전 branch/HEAD/status와 대조했다.
+현재 경로 계약·가상환경 제한은 [README](README.md#canonical-workspace)에 둔다.
+현재 코드/예시만 정리하며 아래 과거 구현·실행 경로는 당시 provenance로 보존한다.
+두 가상환경은 Python 직접 실행이 가능하지만 옛 launcher 경로가 남아 재생성을 권장한다.
+기존 dirty worktree 2개, raw/snapshot/과거 결과/migration-backup은 수정하지 않는다.
+Fast/production/경로/Operator/문서 합성 회귀 306개 통과(실패 1건 수정 후 해당 3개 재검증). push·PR·merge·Actions 및 추가 실제 연구 실행은 하지 않는다.
+
 ## Fast Backtest v1 — IMPLEMENTED
 
 별도 worktree `C:\Projects\_worktrees\Stock\fast-backtest-v1`, branch

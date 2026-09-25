@@ -120,10 +120,17 @@ rejection, session boundary, stale quote, no fill, tie를 포함한다.
 
 ## 실행
 
+현재 checkout은 `C:\Projects\TotalStock\worktrees\fast-backtest-v1`이다.
+[경로 계약](../README.md#canonical-workspace)을 따르며 cache/output은
+`C:\Projects\TotalStock\_data\fast_backtest` 아래 새 run 디렉터리를 지정한다.
+현재 KRX CSV는 `C:\Projects\TotalStock\_data\krx_pit_probe\20260925T173445+0900-01\normalized\20260918.csv`다.
+과거 plan/result의 경로와 digest는 수정하지 않는다. 아래 명령은 예시이며 자동 실행하지 않는다.
+
+
 일반 normalized 입력:
 
 ```powershell
-.venv\Scripts\python.exe scripts\run_fast_backtest.py `
+C:\Projects\TotalStock\Stock\.venv\Scripts\python.exe scripts\run_fast_backtest.py `
   --plan C:\path\plan.json `
   --metadata-csv C:\path\historical-metadata.csv `
   --events-jsonl C:\path\verified-ordered-ticks.jsonl `
@@ -133,28 +140,28 @@ rejection, session boundary, stale quote, no fill, tie를 포함한다.
 고정 #268 selected-v2 reference benchmark:
 
 ```powershell
-.venv\Scripts\python.exe scripts\benchmark_fast_backtest_reference.py `
+C:\Projects\TotalStock\Stock\.venv\Scripts\python.exe scripts\benchmark_fast_backtest_reference.py `
   --raw C:\path\frozen-working.db `
   --selected-report C:\path\selected-prefix-result.json `
-  --output-root C:\Projects\_data\Stock\fast_backtest\<run-id>
+  --output-root C:\Projects\TotalStock\_data\fast_backtest\<run-id>
 ```
 
 보존된 materialized input/exact 결과와 전체 고유 후보 benchmark:
 
 ```powershell
-.venv\Scripts\python.exe scripts\benchmark_fast_backtest_saved_reference.py `
+C:\Projects\TotalStock\Stock\.venv\Scripts\python.exe scripts\benchmark_fast_backtest_saved_reference.py `
   --events-jsonl C:\path\materialized_events.jsonl `
   --exact-result C:\path\production-result.json `
   --trade-date 2026-09-21 `
   --candidate-id 268 `
-  --output-root C:\Projects\_data\Stock\fast_backtest\<run-id>
+  --output-root C:\Projects\TotalStock\_data\fast_backtest\<run-id>
 
-.venv\Scripts\python.exe scripts\benchmark_fast_backtest_full_sweep.py `
+C:\Projects\TotalStock\Stock\.venv\Scripts\python.exe scripts\benchmark_fast_backtest_full_sweep.py `
   --events-jsonl C:\path\materialized_events.jsonl `
   --summary-jsonl C:\path\summary.jsonl `
   --strict-report C:\path\strict-result.json `
   --exact-top-n 10 `
-  --output-root C:\Projects\_data\Stock\fast_backtest\<run-id>
+  --output-root C:\Projects\TotalStock\_data\fast_backtest\<run-id>
 ```
 
 두 명령 모두 output directory를 새로 만들며 덮어쓰지 않는다. 대용량 cache/result는 Git에 넣지 않는다.
