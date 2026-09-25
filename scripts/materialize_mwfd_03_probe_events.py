@@ -120,6 +120,7 @@ def main(argv=None) -> int:
     )
     if depth.cache_id != mwfd02_summary["execution_depth_cache"]["cache_id"]:
         raise ValueError("MWFD-02 depth cache identity mismatch")
+    output.parent.mkdir(parents=True, exist_ok=True)
     free_before = shutil.disk_usage(output.parent).free
     if free_before < args.minimum_free_bytes:
         raise ValueError("insufficient output capacity")
