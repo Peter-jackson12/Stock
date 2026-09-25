@@ -282,35 +282,46 @@ selected-v2 bounded input은 strategy-research fixture로 승인됐지만 perfor
 - [ ] source가 그 scope를 지원하지 않으면 결과를 보기 전에 변경 사유와 새 scope를 먼저 기록한다.
 - [ ] 과거 2026-09-17 오후 세션을 10:00 비교군으로 억지 사용하지 않는다.
 
-### Exploratory profitability search — 2026-09-21 development set
+### Exploratory profitability search 01 — PROFITABLE_FOUND
 
-검증 트랙과 분리해 2026-09-21 selected-v2 bounded fixture만 **in-sample 개발 데이터**로 사용한다.
+2026-09-21 selected-v2 development set에서 탐색 완료.
 
-고정:
-- source/session/date/cutoff/instrument/policy 유지
-- quantity 1 / cash 1,000,000
-- fee 0.001 per-side
-- buy/sell/cancel latency 1초
-- max quote age 2초
-- 다른 날짜를 탐색 과정에 섞지 않음
+- [x] Stage A 243회: positive 0
+- [x] Stage B 450회: positive 80
+- [x] 총 693회 / 고유 parameter 663개
+- [x] selected events 77,558을 한 번만 materialize
+- [x] 모든 positive는 flat_complete / fill>=2 / reconciliation true
+- [x] production source/snapshot 미변경
 
-허용:
-- entry의 spread / buy ratio / OBI / recent volume / recent tick window / breakout window
-- fixed/tick-trail/step-trail exit parameter
+Primary candidate #268:
 
-1차 성공 조건:
-- [ ] 정상 완료
-- [ ] `flat_complete`
-- [ ] fill_count >= 2
-- [ ] total PnL > 0
-- [ ] reconciliation 전부 true
-- [ ] 탐색한 모든 parameter/result를 보존
+- entry: spread 0.0025 / buy ratio 0.55 / OBI 1.0 / min recent volume 10 /
+  recent ticks 15 / breakout window 30 sec / session start 09:00
+- exit: `tick_trail`, trail 5 ticks, stop loss -0.0025
+- execution: quantity 1 / cash 1,000,000 / fee 0.001 per-side /
+  buy·sell·cancel latency 1 sec / max quote age 2 sec / cooldown 10 sec
+- in-sample result: 264,000 → 269,000 / fees 533 / **total PnL +4,467**
+- final cash 1,004,467
+- baseline -2,039.5 대비 +6,506.5
 
-해석:
-- 성공해도 **in-sample profitable candidate**일 뿐이다.
-- 2026-09-18 결과를 튜닝에 사용하지 않는다.
-- 이후 새 날짜를 holdout/out-of-sample 검증용으로 남긴다.
-- 수익을 만들기 위해 날짜·10:00 cutoff·005930·fee·latency·direction policy를 바꾸지 않는다.
+해석: **2026-09-21 in-sample profitable candidate**. 693회 탐색 뒤 선택했으므로 과최적화 가능성이 높다.
+
+### Holdout 01 — 2026-09-18 / candidate #268 사전등록
+
+- [ ] 기존 snapshot `c43a255f907245eaa2f02124fadd6a0c` 및 selected evidence identity 재확인
+- [ ] search와 동일 revision `6fa2ccdcbf0ea2431b81c52d3ed6fb0deec39fac` 사용
+- [ ] candidate #268 exact params만 사용
+- [ ] 기존 30,800 selected input에 actual replay 정확히 1회
+- [ ] 결과 후 #257/다른 candidate/parameter로 재시험하지 않음
+- [ ] result/accounting/provenance와 판정 기록
+
+판정:
+- HOLDOUT_POSITIVE: fill>=2, flat_complete, total PnL>0, reconciliation true
+- HOLDOUT_NO_TRADE: 정상 완료, fill=0
+- HOLDOUT_NONPOSITIVE: 거래 존재, total PnL<=0
+- HOLDOUT_FAILED: 입력/replay/accounting 계약 실패
+
+holdout 결과를 본 뒤 #268을 다시 튜닝하지 않는다. 이후 새 날짜 검증과 분리한다.
 
 ## 5. 첫 시험 이후 — 전략 평가
 
