@@ -40,6 +40,7 @@ def plan(**changes):
         universe_source="fixture",
         universe_mode="causal_preopen",
         historical_metadata_source="fixture.csv",
+        universe_decision_cutoff="2026-09-21T09:00:00+09:00",
         cheap_filter_spec={},
         tick_input_provenance={"source_dataset_identity": "fixture", "policy": "strict"},
         cutoff_market_second_exclusive=36000,

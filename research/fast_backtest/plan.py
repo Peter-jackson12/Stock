@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import date
+from datetime import date, datetime
 import hashlib
 import json
 from pathlib import Path
@@ -39,6 +39,7 @@ class FastBacktestPlan:
     universe_source: str
     universe_mode: str
     historical_metadata_source: str
+    universe_decision_cutoff: str
     cheap_filter_spec: Mapping[str, Any]
     tick_input_provenance: Mapping[str, Any]
     cutoff_market_second_exclusive: int
@@ -84,11 +85,21 @@ class FastBacktestPlan:
             raise ValueError("parameter identities required")
         if not self.exact_ranking:
             raise ValueError("deterministic exact ranking required")
+        _decision_cutoff = self.universe_decision_cutoff
+        try:
+            parsed_cutoff = datetime.fromisoformat(
+                _decision_cutoff.replace("Z", "+00:00")
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ValueError("universe_decision_cutoff must be a timezone-aware ISO timestamp") from exc
+        if parsed_cutoff.tzinfo is None or parsed_cutoff.utcoffset() is None:
+            raise ValueError("universe_decision_cutoff must be a timezone-aware ISO timestamp")
         if self.seed is not None and type(self.seed) is not int:
             raise ValueError("seed must be an integer")
         for value, name in (
             (self.universe_source, "universe_source"),
             (self.historical_metadata_source, "historical_metadata_source"),
+            (self.universe_decision_cutoff, "universe_decision_cutoff"),
             (self.candidate_source, "candidate_source"),
             (self.output_directory, "output_directory"),
             (self.code_revision, "code_revision"),

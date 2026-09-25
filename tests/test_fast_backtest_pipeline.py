@@ -43,8 +43,8 @@ def test_first_usable_pipeline_writes_create_only_manifest_and_exact_parity(tmp_
     candidate_records = [{"candidate_id": "reference", "params": params}]
     metadata = tmp_path / "metadata.csv"
     metadata.write_text(
-        "as_of_date,code,name,market,close_krw,volume_shares,trading_value_krw,market_cap_krw,listed_shares,float_ratio_pct,float_shares,float_market_cap_krw,source_upstream,validation_status\n"
-        "2026-09-18,005930,삼성전자,KOSPI,261000,17489615,4554291006250,1525878716688000,5846278608,,,,fixture,VALID\n",
+        "as_of_date,code,name,market,close_krw,volume_shares,trading_value_krw,market_cap_krw,listed_shares,float_ratio_pct,float_shares,float_market_cap_krw,source_upstream,validation_status,available_at,captured_at\n"
+        "2026-09-18,005930,삼성전자,KOSPI,261000,17489615,4554291006250,1525878716688000,5846278608,,,,fixture,VALID,2026-09-18T18:00:00+09:00,2026-09-19T12:00:00+09:00\n",
         encoding="utf-8",
     )
     events = [
@@ -64,6 +64,7 @@ def test_first_usable_pipeline_writes_create_only_manifest_and_exact_parity(tmp_
         universe_source="fixture",
         universe_mode="causal_preopen",
         historical_metadata_source=str(metadata),
+        universe_decision_cutoff="2026-09-21T09:00:00+09:00",
         cheap_filter_spec={},
         tick_input_provenance={"source_dataset_identity": "fixture-events", "policy": "strict"},
         cutoff_market_second_exclusive=36000,

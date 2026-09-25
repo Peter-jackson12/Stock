@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Iterable, Mapping
@@ -28,7 +28,11 @@ ALIASES = {
     "float_market_cap_krw": ("float_market_cap_krw",),
     "source": ("source", "source_upstream", "source_identifier"),
     "validation_status": ("validation_status",),
+    "available_at": ("available_at",),
+    "captured_at": ("captured_at", "retrieved_at"),
 }
+
+CAUSAL_READY_STATUSES = frozenset({"READY", "VALID"})
 
 
 def _value(record: Mapping[str, str], name: str, *, required: bool = True) -> str | None:
@@ -64,6 +68,29 @@ def _decimal(value: str | None, name: str) -> Decimal | None:
     return number
 
 
+def _timestamp(value: str | None, name: str) -> str | None:
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"invalid {name}") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{name} must be timezone-aware")
+    return parsed.isoformat()
+
+
+def _decision_time(value: str | datetime | None) -> datetime:
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("invalid decision_cutoff") from exc
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("causal_preopen requires a timezone-aware decision_cutoff")
+    return value
+
+
 @dataclass(frozen=True)
 class HistoricalMetadata:
     as_of_date: str
@@ -80,6 +107,8 @@ class HistoricalMetadata:
     float_market_cap_krw: int | None
     source: str
     validation_status: str
+    available_at: str | None
+    captured_at: str | None
 
     @classmethod
     def from_mapping(cls, record: Mapping[str, str]) -> "HistoricalMetadata":
@@ -106,6 +135,8 @@ class HistoricalMetadata:
             ),
             source=_value(record, "source"),
             validation_status=_value(record, "validation_status"),
+            available_at=_timestamp(_value(record, "available_at", required=False), "available_at"),
+            captured_at=_timestamp(_value(record, "captured_at", required=False), "captured_at"),
         )
 
 
@@ -142,6 +173,8 @@ class UniverseSelection:
     non_causal: bool
     screening_only: bool
     size_filter_basis: str
+    decision_cutoff: str | None
+    availability_status: str
     rows: tuple[HistoricalMetadata, ...]
 
 
@@ -156,17 +189,34 @@ def select_historical_snapshot(
     trade_date: str,
     mode: str = "causal_preopen",
     posthoc_same_day_opt_in: bool = False,
+    decision_cutoff: str | datetime | None = None,
+    ready_statuses: frozenset[str] = CAUSAL_READY_STATUSES,
 ) -> UniverseSelection:
     target = date.fromisoformat(trade_date)
     items = tuple(rows)
     if mode == "causal_preopen":
-        eligible_dates = {date.fromisoformat(row.as_of_date) for row in items if date.fromisoformat(row.as_of_date) < target}
+        cutoff = _decision_time(decision_cutoff)
+        prior_dates = sorted({date.fromisoformat(row.as_of_date) for row in items if date.fromisoformat(row.as_of_date) < target})
+        eligible_dates = set()
+        for candidate_date in prior_dates:
+            snapshot = tuple(row for row in items if date.fromisoformat(row.as_of_date) == candidate_date)
+            if snapshot and all(
+                row.validation_status in ready_statuses
+                and row.available_at is not None
+                and datetime.fromisoformat(row.available_at) <= cutoff
+                for row in snapshot
+            ):
+                eligible_dates.add(candidate_date)
         non_causal = False
+        cutoff_text = cutoff.isoformat()
+        availability_status = "READY_BEFORE_DECISION_CUTOFF"
     elif mode == "posthoc_same_day":
         if not posthoc_same_day_opt_in:
             raise ValueError("posthoc_same_day requires explicit opt-in")
         eligible_dates = {date.fromisoformat(row.as_of_date) for row in items if date.fromisoformat(row.as_of_date) == target}
         non_causal = True
+        cutoff_text = None
+        availability_status = "NON_CAUSAL_EXPLICIT_OPT_IN"
     else:
         raise ValueError("unsupported universe mode")
     if not eligible_dates:
@@ -188,6 +238,8 @@ def select_historical_snapshot(
         non_causal=non_causal,
         screening_only=True,
         size_filter_basis="total_market_cap_proxy",
+        decision_cutoff=cutoff_text,
+        availability_status=availability_status,
         rows=selected,
     )
 

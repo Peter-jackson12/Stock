@@ -83,6 +83,7 @@ def run_fast_backtest_pipeline(
         trade_date=plan.trade_dates[0],
         mode=plan.universe_mode,
         posthoc_same_day_opt_in=plan.posthoc_same_day_opt_in,
+        decision_cutoff=plan.universe_decision_cutoff,
     )
     filters = UniverseFilter(**dict(plan.cheap_filter_spec))
     universe = apply_cheap_filters(universe, filters)
