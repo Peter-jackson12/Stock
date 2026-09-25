@@ -74,8 +74,10 @@ PR #46~#48로 다음이 master에 들어왔다.
 정확히 1회 실행했다. 과거 기준과 event/settings 및 모든 경제적 결과가 동일했고 77,558건 처리,
 final cash `997960.500`, position/open order/reject 0을 확인했다. `performance_accounting`은
 `flat_complete`, fill 2, realized/total `-4079/2`, equity `1995921/2`, reconciliation 모두 true다.
-**`005930 selected-v2 actual accounting regression: PASS`**. 상세 결과 경로·SHA·mark provenance는
-[BACKTEST_TODO](BACKTEST_TODO.md)와 [보존본](docs/archive/HANDOFF_20260925_PRE_COMPACT.md)에 둔다.
+**`005930 selected-v2 actual accounting regression: PASS`**.
+근거 anchor는 result run `ed5e78db61da4646ad186ac943c1c5f4`, reproducibility key
+`677bac5071d2ce07468ad909e6d6760764bf1f9a6e454ba30bc12f65a471780a`, valuation time
+`10877071329700`이다. 당시 전체 경로·mark provenance 문맥은 직전 master `6fa2ccdcbf0ea2431b81c52d3ed6fb0deec39fac`의 HANDOFF 원문에 남아 있다.
 이는 bounded execution/accounting 확인일 뿐 수익성·NXT venue·whole raw·live 적격성 승격이 아니다.
 
 ## Independent actual input candidate 01 — PASS_NO_TRADE
@@ -96,6 +98,9 @@ selected-v2 overlay가 모두 PASS했다. 원본 identity·size·mtime은 전후
 zero-quote/disqualifying 0이었다. 실제 replay는 정확히 1회 `completed_no_fills`로 끝나
 signals/intents/fills/rejects/transitions 0, cash 1,000,000, position/open order 0을 기록했다.
 `performance_accounting`은 `flat_complete`, 모든 PnL 0, reconciliation 모두 true다.
+근거 anchor는 snapshot run `c43a255f907245eaa2f02124fadd6a0c`, source/working SHA-256
+`86e81bca2071545ff130d1e515ea6c0ae4bbf47169e256cefa8502a6e352cf29`, event SHA
+`ac1657b41dbaa7f1adde7f900b3c9ac9a78764f8041f7426b9ff08f43520537a`다.
 
 **최종 판정: `Independent actual input candidate 01: PASS_NO_TRADE`.**
 
