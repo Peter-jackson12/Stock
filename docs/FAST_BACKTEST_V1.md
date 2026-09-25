@@ -27,8 +27,17 @@ historical EOD metadata
 
 ## Historical universe와 PIT 계약
 
-기본 `universe_mode`는 `causal_preopen`이다. 거래일 D에는 `as_of_date < D`인 실제 metadata
-snapshot 중 가장 최근 날짜를 쓴다. 달력상 전날을 임의 생성하지 않고, D 당일 또는 미래 EOD를 사용하지 않는다.
+기본 `universe_mode`는 `causal_preopen`이다. 거래일 D에는 다음 조건을 모두 만족하는 실제 metadata
+snapshot 중 가장 최근 날짜를 쓴다.
+
+- `as_of_date < D`: D 당일 EOD와 미래 observation은 제외한다.
+- 모든 row의 `validation_status`가 명시적 allowlist(`READY`, `VALID`)에 든다.
+- 모든 row에 timezone-aware `available_at`이 있고 `available_at <= universe_decision_cutoff`이다.
+
+`NOT_READY`, 누락되거나 timezone-naive인 `available_at`, cutoff 이후 availability는 fail-closed한다.
+`captured_at`은 파일을 취득한 시각을 보존하는 provenance일 뿐 semantic availability를 대신하지 않는다.
+최신 과거 observation이 준비되지 않았더라도 더 이전의 유효 snapshot은 사용할 수 있다. 달력상 전날을
+임의 생성하지 않으며, 미래 파일을 입력에 추가해도 이미 고정된 과거 cutoff 선택은 변하지 않는다.
 
 `posthoc_same_day`는 `posthoc_same_day_opt_in=true`일 때만 허용하며 결과에
 `non_causal=true`, `screening_only=true`를 기록한다. 장 시작 전에 선택 가능했던 universe로 해석하지 않는다.
@@ -62,7 +71,7 @@ legacy `float=60`을 사용하지 않는다.
 `fast_backtest_plan_v1`은 다음을 고정한다.
 
 - trade dates, instruments, universe source/mode
-- historical metadata source와 cheap filter spec
+- historical metadata source, timezone-aware universe decision cutoff와 cheap filter spec
 - tick input provenance, cutoff
 - account assumptions
 - candidate source와 canonical parameter identities
@@ -98,6 +107,22 @@ payload는 `events.jsonl`, 계약은 `manifest.json`으로 create-only content-a
 각 row는 현재 또는 이전 이벤트만 사용한다. prior breakout high는 현재 trade를 넣기 전에 계산하고,
 recent volume/buy ratio는 현재 trade까지 포함한다. exact second window boundary는 포함한다.
 unknown direction이 recent window에 남아 있으면 buy ratio는 unavailable이며 신규 진입을 막는다.
+
+### Execution-depth companion cache
+
+`fast_backtest_execution_depth_v1`은 기존 OrderedTick input cache에 `raw_fields` 전체를 복제하지 않는다.
+동결된 bounded prefix를 한 번 receive-order scan하면서 quote row에 대해서만 다음 최소 정보를 보존한다.
+
+- source/session, seq, received_ns, code, venue
+- source FID 41..50 ask price, 51..60 bid price, 61..70 ask size, 71..80 bid size
+- ask/bid 10단계 vector와 `sum(price_i * size_i)` notional
+- ask/bid/top-of-book의 COMPLETE/PARTIAL/INVALID 상태와 reason
+
+깊은 가격을 best price나 tick size로 추정하지 않고 missing·0·invalid level을 보간하지 않는다.
+invalid 새 quote도 이전 정상 quote로 바꾸지 않는다. cache identity에는 schema, source prefix digest,
+source file identity, cutoff와 관련 코드 provenance를 넣고 create-only로 게시한다. reader는 identity/count와
+선택적으로 전체 logical payload digest를 검증하며 source digest가 다르면 fail-closed한다. 원시 10단계
+vector를 보존하므로 spread, concentration, slope 같은 연속 파생값은 threshold 조정 없이 후속 계산할 수 있다.
 
 ## Fast sweep와 exact bridge
 

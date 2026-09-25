@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-25 / Fast Backtest v1 구현
+# 현재 인계 — 2026-09-26 / MWFD-02 causal fix + shared market materialization
 
 [문서 인덱스](README.md) · [Fast Backtest v1](docs/FAST_BACKTEST_V1.md) ·
 [첫 실데이터 체크](BACKTEST_TODO.md) · [파이프라인 지도](docs/PIPELINE_MAP.md#fast-backtest-v1) ·
@@ -83,11 +83,15 @@ materialized event SHA-256은
 ### Historical universe / PIT
 
 실제 KRX probe source
-`C:\Projects\_data\Stock\krx_pit_probe\20260925T173445+0900-01\normalized\20260918.csv`를
-adapter로 읽었다. 2026-09-21 `causal_preopen`은 2026-09-18 EOD를 선택했고 2,869종목,
-duplicate 0, `005930` 포함을 확인했다. threshold 미지정은 no-op다.
+`C:\Projects\TotalStock\_data\krx_pit_probe\20260925T173445+0900-01\normalized\20260918.csv`를
+adapter로 읽었다. 이 파일의 2,869행은 모두 `available_at`이 비어 있고 status도 READY allowlist
+밖이다. 과거 구현은 날짜만 보고 2026-09-21 `causal_preopen`에 이를 선택할 수 있었지만,
+MWFD-02 수정 뒤에는 `no eligible historical metadata snapshot`으로 fail-closed한다.
 
-기본 mode는 `causal_preopen`: D보다 앞선 실제 거래일 중 최신 EOD만 사용한다.
+기본 mode는 `causal_preopen`: D보다 앞선 observation 중 모든 row가 `READY`/`VALID`이고,
+timezone-aware `available_at <= universe_decision_cutoff`인 최신 snapshot만 사용한다.
+`NOT_READY`, availability 누락/지연, same-day EOD와 미래 observation은 제외한다.
+`captured_at`은 취득 provenance이며 semantic availability를 대신하지 않는다.
 `posthoc_same_day`는 명시적 opt-in일 때만 허용하며 `non_causal=true`다.
 
 **현재 historical size filter는 전체 시가총액이며 유통시총이 아니다.**
@@ -98,6 +102,39 @@ float filter 요청 시 데이터가 없으면 명시적으로 실패하며 전�
 전종목 Kiwoom opt10001 daily free-float history의 raw observation, retry/rate limit,
 completeness/누락 탐지, immutable daily history, 자동 실행·알림과 `float_market_cap` 파생이 범위다.
 이번 구현에는 포함하지 않았다.
+
+### MWFD-02 shared market materialization
+
+별도 worktree `C:\Projects\TotalStock\worktrees\mwfd-02-causal-depth`, branch
+`feat/mwfd-02-causal-depth-20260925`에서 구현했다. causal/depth 구현 checkpoint는
+`e01f2c7b685eb53b40f819bbdd19eccdc29d262c`다. 원래 Fast HEAD `ac7a7a7`에서 분기했고
+기존 Fast worktree와 dirty profitability worktree는 수정하지 않았다.
+
+2026-09-21 frozen bounded prefix를 code별 반복 없이 receive-order로 정확히 한 번 스캔했다.
+prefix 8,414,461 records, tick 8,400,558, control 13,903, 3,642 unique code×venue cell을
+확인해 source가 multi-code임을 입증했다. 모든 venue는 `unknown`이며 causal universe/NXT/whole-stream
+적격성으로 승격하지 않는다. source digest는
+`93e833dcb34cb6c28d0c40fcce346023636e0ff13c8a917a642748af8c73a712`다.
+
+`fast_backtest_execution_depth_v1` companion cache는 quote 5,117,806행의 source FID 41..80
+10단계 ask/bid 가격·잔량 vector, notional, completeness/reason을 보존한다. 전체 raw_fields를 Fast
+cache에 복제하지 않았고, 미래 backfill·가격 추정·missing/0 보간·invalid quote 은폐를 하지 않는다.
+cache ID는 `71ab319e…b27cd7`, logical digest는 `47305c9f…07156`이며 전체 payload roundtrip을
+통과했다. source size/mtime 불변과 전후 sidecar 부재도 확인했다.
+
+cell admission은 eligible 1,286, no opportunity 1,938, insufficient depth 399,
+quality disqualified 12, not assessed 7이다. event gate는 PASS 2,175,048 / FAIL 719,298 /
+UNKNOWN 388,406(66.2568%), cell-equal 평균 19.0947%다. clock-time pass ratio는 14.8308%,
+cell-equal 평균 14.5045%다. 005930의 77,558 events와 PASS 67,217 / UNKNOWN 160 / FAIL 0은
+MWFD-01과 일치한다. 단일 pass는 6,135.999824초, tracemalloc peak 37,601,388 bytes,
+materialization output 약 1.5865 GB였다.
+
+artifact는
+`C:\Projects\TotalStock\_data\mwfd_02\20260925T220712+0900-shared-market`에 create-only로 둔다.
+사람용 결론은 `report-ko.md`, 기계 집계는 `summary.json`/`market_inventory.json`, 다음 표본은
+`probe_admission.json`에 있다. 최종 Fast/causal/depth/parity/documentation 81개와 실제 cache 전체 roundtrip이
+통과했다. push/PR/merge/Actions, 663 sweep, tuning, production exact 대량 실행, OCX/login,
+2026-09-18 holdout 신규 탐색은 하지 않았다.
 
 ### 검증
 
@@ -129,9 +166,11 @@ Candidate #268은 2026-09-21 in-sample에서 +4,467, 2026-09-18 holdout에서 no
 
 ## 다음 권장 작업
 
-Fast Backtest v1의 자연스러운 다음 단계는 **여러 종목 × 여러 날짜 development panel에서
-고정 parameter candidate를 평가하는 것**이다. 새 적격 input과 PIT metadata를 먼저 고정하고,
-fast screening 뒤 top-N만 production exact로 재실행한다. 대규모 panel은 이번 작업에서 시작하지 않는다.
+다음 단계는 `probe_admission.json`에 고정된 **45개 cell runtime probe**다. eligible 1,286개를
+event-count tercile로 나눈 뒤 PnL 비참조 SHA-256 순서로 high/medium/low 각 15개를 골랐다.
+cold/warm cache를 분리하고 shared depth materialization을 재사용하며 gate/feature/663 sweep/output
+시간, peak memory, output bytes를 측정한다. 실제 probe 전에 전체 시장 runtime을 확정하지 않고,
+결과를 보고 threshold나 parameter를 바꾸지 않는다.
 
 상세 실행 계약·benchmark·재현 명령은 [Fast Backtest v1](docs/FAST_BACKTEST_V1.md),
 현재 체크 항목은 [BACKTEST_TODO](BACKTEST_TODO.md), 코드 연결은
