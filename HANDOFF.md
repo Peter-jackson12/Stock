@@ -10,6 +10,12 @@
 아래 값은 현재 인계이며 영구 최신값이 아니다. 2026-09-24~25 상세 실행·수치·경로 원문은
 [압축 전 인계 보존본](docs/archive/HANDOFF_20260925_PRE_COMPACT.md)에 그대로 남긴다.
 
+## TotalStock 경로 정리 — 2026-09-25
+
+Git repair 후 9개 checkout의 이전 상태를 확인했다. 현재 경로·가상환경 제한은
+[README](README.md#canonical-workspace)를 따른다. 아래 과거 실행 경로는 보존한다.
+경로·문서 합성 회귀 40개 통과. push·PR·Actions·실데이터 실행 없음.
+
 ## 현재 두 트랙
 
 **수집기/native 트랙은 다음 실제 시장 세션까지 보류한다.**
@@ -26,17 +32,15 @@ Operator UX는 PR #45/#49/#50/#52까지 master에 통합됐다.
 수집 준비·OCX 준비·시장 상태·데이터 품질·실행 승인을 만들지 않는다.
 
 
-운영 화면에는 환경 목록과 분리된 **수집 전 읽기 전용 preflight**가 추가됐다.
-기존 collector admission의 process/window·lease·disk reader와 로그인 없는 공식 32-bit/OCX
-preflight만 재사용한다. 각 축을 PASS/WARN/BLOCKED/UNVERIFIED와 다음 확인으로 표시하지만,
-실행 대상 revision·CLI 계약과 시장 날짜·장 구간·실행 승인은 UNVERIFIED다. 시작 버튼과 연결하지 않으며
-설치·수정·로그인·구독·수집·kill/restart·lock 삭제·시장 조회·raw DB 접근은 하지 않는다.
-GitHub/PR 사실을 운영 PC의 현재 process/window/lease 상태로 승격하지 않는다.
+운영 화면의 읽기 전용 preflight는 기존 admission·32-bit/OCX 점검을 재사용한다.
+실행 revision·CLI·시장·승인은 UNVERIFIED이며 시작 버튼과 연결하지 않는다.
+설치·로그인·구독·수집·프로세스 제어·raw DB 접근은 하지 않는다.
+원격 PR 사실을 운영 PC의 현재 상태로 승격하지 않는다. 상세는 [CONTROL_TOWER](CONTROL_TOWER.md).
 
-Operator UX의 preflight/Run Plan은 Windows 화면 확인까지 완료했다. 이번 후속은 운영 화면에서
-현재 사용자 바탕화면·시작 메뉴의 `Stock Operator.lnk`를 명시적 클릭으로 만들고 제거하는 진입점을 추가한다.
-바로가기는 현재 저장소 `stock.cmd ui`만 호출하며 관리자 권한·레지스트리·영구 실행 정책 변경이 없다.
-실제 Windows .lnk 생성 확인은 이 후보 병합 후 남는다. exe 패키징은 하지 않는다. [상세](START_HERE.md)
+Operator preflight/Run Plan 화면 확인은 완료했다. 현재 후보는 사용자 범위의
+`Stock Operator.lnk` 생성·제거 기능이며 `stock.cmd ui`를 호출한다.
+실제 .lnk 생성 확인은 후보 병합 후 남는다. 관리자 권한·레지스트리·영구 실행 정책 변경과
+exe 패키징은 없다. [상세](START_HERE.md)
 
 ## selected-v2에서 이미 확인한 것
 
@@ -169,11 +173,8 @@ qualification != strategy validation; backtest != live trading approval.
 
 ## 개발/검증 원칙
 
-GitHub Actions는 작은 PR/커밋마다 자동 실행하지 않는다.
-일반 CI는 주간 정기 실행과 필요 시 수동 실행이며, focused/local 합성 검증과 실제 데이터·OCX 검증을 구분한다.
-통과 건수에 deselected/skipped나 중복 focused test를 더하지 않는다.
-운영 raw/dump/operations_state/`.venv32`/Daily_baseline/old_data/사용자 변경을 보존한다.
-live 중에는 master 병합 보류 규칙을 유지한다.
+CI는 주간/필요 시 수동 실행한다. 합성 검증과 실데이터·OCX 검증을 구분하고 중복 건수는 합산하지 않는다.
+raw/dump/operations_state/가상환경/Daily_baseline/old_data/사용자 변경을 보존한다. live 중 병합은 보류한다.
 
 현재 상세 체크와 historical candidate 근거는 [BACKTEST_TODO](BACKTEST_TODO.md),
 코드 연결·진입점 차이는 [PIPELINE_MAP](docs/PIPELINE_MAP.md),

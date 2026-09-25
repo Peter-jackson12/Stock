@@ -90,6 +90,42 @@ PowerShell wrapper를 선호하면 `.\stock.ps1 ui`도 같다. 두 wrapper는 �
 변경을 요구하지 않는다. 프로젝트 폴더를 옮기면 새 위치에서 `.\stock.cmd ui`로 한 번 연 뒤 바로가기를 갱신한다.
 문제 해결용 fallback은 계속 `.\stock.cmd ui` 하나다. exe 패키징은 수행하지 않는다.
 
+
+## Canonical workspace
+
+현재 로컬 경로 계약은 다음과 같다. 환경 생성이나 데이터 실행 승인은 별도다.
+
+| 용도 | 경로 |
+|---|---|
+| Workspace | `C:\Projects\TotalStock` |
+| Main repository | `C:\Projects\TotalStock\Stock` |
+| Linked worktrees | `C:\Projects\TotalStock\worktrees` |
+| Research/cache/audit data | `C:\Projects\TotalStock\_data` |
+| Historical snapshots | `C:\Projects\TotalStock\StockSnapshots` |
+
+실제 research 하위 폴더는 `_data\krx_pit_probe`, `_data\pit_metadata_audit`,
+`_data\fast_backtest`다. `_data` 뒤에 `Stock`을 추가하지 않는다.
+repo 내부 경로는 해당 checkout 기준이며 shared input/output은 CLI/plan의 명시적 경로를 사용한다.
+기존 plan/result/manifest의 경로·digest를 덮어쓰지 않고 다음 실행에는 별도 새 plan을 작성한다.
+archive와 과거 benchmark/provenance의 당시 절대 경로는 보존한다.
+`C:\StockSnapshots`는 canonical snapshot root로 향하는 호환 junction이다.
+대표 result JSON의 동일 파일 identity·크기·SHA-256을 확인했으며 새 실행은 canonical root를 쓴다.
+
+### 이동된 가상환경
+
+2026-09-25 검사에서 main의 `.venv` Python 3.14.7은 64비트, `.venv32` Python 3.10.11은
+32비트였으며 `sys.executable`과 `sys.prefix`는 새 위치였다. 두 환경 모두 pip 모듈은 없고
+uv 관리 환경이다. pip 부재만으로 이동 손상을 판단하지 않는다.
+활성화 스크립트와 실행 launcher에 이전 경로가 남아 **RECREATE_RECOMMENDED**다.
+자동 삭제/재생성·문자열 패치는 하지 않았다. 별도 환경 복구 전에는 활성화나 launcher에 의존하지 않고
+검증된 main의 Python 절대 경로와 `-m`으로 필요한 모듈을 호출한다. 이것이 OCX 준비를 인증하지 않는다.
+worktree에서 검증할 때도 main의 Python을 사용하되 작업 디렉터리는 검증할 worktree로 지정한다.
+
+`sqlite.py`는 legacy 수동 DB 조회 도구다. 기본 파일은 해당 checkout의
+`sampledata/raw_ticks/20260914_raw.db`이며 `--database`로 별도 경로를 지정한다.
+명시적으로 실행할 때만 읽기 전용으로 열고, import/`--help`는 DB를 열지 않는다.
+이전 경로 정리 검증에서는 실제 raw DB를 실행하지 않는다.
+
 ## 코드와 데이터 위치
 
 | 위치 | 역할 |

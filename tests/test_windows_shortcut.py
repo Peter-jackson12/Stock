@@ -20,9 +20,9 @@ def ready_json(location="desktop", **changes):
         "owned": True,
         "matches_expected": True,
         "path": "C:/Users/user/Desktop/Stock Operator.lnk",
-        "target": "C:/Projects/Stock/stock.cmd",
+        "target": "C:/Projects/TotalStock/Stock/stock.cmd",
         "arguments": "ui",
-        "working_directory": "C:/Projects/Stock",
+        "working_directory": "C:/Projects/TotalStock/Stock",
         "description": shortcut.DESCRIPTION,
     }
     value.update(changes)

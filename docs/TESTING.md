@@ -31,7 +31,7 @@ Git으로 받을 수 있다는 것만으로 대용량 자료를 CI 검증 입력
 
 ## Windows 로컬 명령
 
-저장소 루트 `C:\Projects\Stock`에서 실행한다. 기존 `.venv32`나 운영 환경을 교체하지 않는다.
+저장소 루트 `C:\Projects\TotalStock\Stock`에서 실행한다. 기존 `.venv32`나 운영 환경을 교체하지 않는다.
 
 ```powershell
 uv sync --locked --group dev
