@@ -15,6 +15,7 @@ from control_tower.capture_health import CaptureHealth
 from control_tower.operator_summary import summarize_operator_state
 from control_tower.operator_environment import inspect_operator_environment
 from control_tower.collector_preflight import inspect_collector_preflight
+from control_tower.windows_shortcut import inspect_shortcuts, manage_shortcut, shortcut_contract
 from control_tower.collector_run_plan import (
     CollectionRunPlanStore,
     build_collection_run_plan,
@@ -37,6 +38,7 @@ def render_control_tower(root=None):
     raw = observe_raw_capture(root)
     render_operator_overview(observation, raw)
     render_operator_environment(root)
+    render_windows_shortcuts(root)
     preflight = render_collector_preflight(root)
     render_collection_run_plan(root, preflight)
     if "payload" in raw:
@@ -246,6 +248,71 @@ def render_operator_environment(root):
         else:
             st.warning("환경 목록 점검: 미충족 — 자동 설치하거나 수정하지 않았습니다.")
         st.caption("PASS는 위 작은 목록 점검만 뜻합니다. GUI 정상 기동·수집 준비·OCX 준비 또는 실행 승인이 아닙니다.")
+
+
+def _render_shortcut_state(label, result):
+    state = result.get("state")
+    if state == "ready":
+        st.success(f"{label}: 준비됨 · 아이콘 더블클릭으로 Stock UI를 열 수 있습니다.")
+        st.caption(f"대상: {result.get('target')} {result.get('arguments') or ''}")
+    elif state == "absent":
+        st.info(f"{label}: 아직 바로가기가 없습니다.")
+    elif state == "stale":
+        st.warning(f"{label}: 이전 프로젝트 경로를 가리킵니다. 현재 경로로 갱신할 수 있습니다.")
+        st.caption(f"현재 바로가기 대상: {result.get('target')}")
+    elif state == "conflict":
+        st.error(f"{label}: 같은 이름의 다른 바로가기가 있습니다. 자동 덮어쓰기·삭제하지 않습니다.")
+    elif state == "unsupported":
+        st.info(f"{label}: Windows에서만 바로가기를 관리합니다.")
+    else:
+        st.warning(f"{label}: {result.get('reason') or '상태를 확인하지 못했습니다.'}")
+
+
+def render_windows_shortcuts(root):
+    """Create/remove only the current user's shortcuts after explicit clicks."""
+    root = Path(root)
+    with st.expander("Windows 실행 바로가기"):
+        contract = shortcut_contract(root, "desktop")
+        st.caption(
+            "한 번 만든 뒤에는 Stock Operator 아이콘을 더블클릭하면 기존 stock.cmd ui가 실행됩니다. "
+            "관리자 권한·레지스트리·영구 PowerShell 실행 정책 변경은 없습니다."
+        )
+        st.text(f"현재 프로젝트 대상: {contract['expected_target']} ui")
+
+        status_key = "operator_windows_shortcut_status"
+        if st.button("바로가기 상태 확인", key="shortcut_status_check"):
+            st.session_state[status_key] = inspect_shortcuts(root)
+
+        left, right = st.columns(2)
+        with left:
+            if st.button("바탕화면 바로가기 만들기/갱신", key="shortcut_desktop_install"):
+                result = manage_shortcut(root, location="desktop", action="install")
+                st.session_state.setdefault(status_key, {})["desktop"] = result
+            if st.button("바탕화면 바로가기 제거", key="shortcut_desktop_remove"):
+                result = manage_shortcut(root, location="desktop", action="remove")
+                st.session_state.setdefault(status_key, {})["desktop"] = result
+        with right:
+            if st.button("시작 메뉴 바로가기 만들기/갱신", key="shortcut_start_install"):
+                result = manage_shortcut(root, location="start_menu", action="install")
+                st.session_state.setdefault(status_key, {})["start_menu"] = result
+            if st.button("시작 메뉴 바로가기 제거", key="shortcut_start_remove"):
+                result = manage_shortcut(root, location="start_menu", action="remove")
+                st.session_state.setdefault(status_key, {})["start_menu"] = result
+
+        statuses = st.session_state.get(status_key) or {}
+        labels = {"desktop": "바탕화면", "start_menu": "시작 메뉴"}
+        for location in ("desktop", "start_menu"):
+            if location in statuses:
+                _render_shortcut_state(labels[location], statuses[location])
+
+        st.caption(
+            "같은 이름의 다른 바로가기는 보호합니다. 프로젝트 폴더를 옮겼다면 새 위치에서 "
+            "stock.cmd ui로 한 번 연 뒤 여기서 바로가기를 현재 경로로 갱신하세요."
+        )
+        st.caption(
+            "브라우저 탭만 닫으면 Streamlit 서버는 계속 실행될 수 있습니다. "
+            "바로가기가 연 콘솔 창을 닫거나 그 창에서 Ctrl+C를 누르면 UI 서버가 종료됩니다."
+        )
 
 
 def render_collector_preflight(root):

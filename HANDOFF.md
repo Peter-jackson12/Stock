@@ -33,9 +33,10 @@ preflight만 재사용한다. 각 축을 PASS/WARN/BLOCKED/UNVERIFIED와 다음 
 설치·수정·로그인·구독·수집·kill/restart·lock 삭제·시장 조회·raw DB 접근은 하지 않는다.
 GitHub/PR 사실을 운영 PC의 현재 process/window/lease 상태로 승격하지 않는다.
 
-Operator 후속: preflight 다음 `review_only` Run Plan을 추가했다. 실행·승인과 비연결이고 시장·승인은
-`UNVERIFIED`다. Windows UI 확인은 남았다. 정상 진입점은 `stock.cmd ui`; 아이콘·exe는 후속이다.
-[상세](CONTROL_TOWER.md)
+Operator UX의 preflight/Run Plan은 Windows 화면 확인까지 완료했다. 이번 후속은 운영 화면에서
+현재 사용자 바탕화면·시작 메뉴의 `Stock Operator.lnk`를 명시적 클릭으로 만들고 제거하는 진입점을 추가한다.
+바로가기는 현재 저장소 `stock.cmd ui`만 호출하며 관리자 권한·레지스트리·영구 실행 정책 변경이 없다.
+실제 Windows .lnk 생성 확인은 이 후보 병합 후 남는다. exe 패키징은 하지 않는다. [상세](START_HERE.md)
 
 ## selected-v2에서 이미 확인한 것
 
