@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 import hashlib
 import json
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from engine.tick_ordering import OrderedTick, ReceiveOrderReplay
 from execution.quote_validation import check_ordered_quote
@@ -234,3 +234,39 @@ def write_feature_cache(cache: CausalFeatureCache, output_dir: str | Path) -> Pa
         encoding="utf-8",
     )
     return root / "manifest.json"
+
+
+def _feature_row(value: Mapping) -> FeatureRow:
+    return FeatureRow(**dict(value))
+
+
+def load_feature_cache(
+    cache_dir: str | Path,
+    *,
+    expected_input_event_digest: str | None = None,
+) -> CausalFeatureCache:
+    root = Path(cache_dir).resolve()
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("schema") != SCHEMA or manifest.get("screening_only") is not True:
+        raise ValueError("unsupported feature cache")
+    if (
+        expected_input_event_digest is not None
+        and manifest.get("input_event_digest") != expected_input_event_digest
+    ):
+        raise ValueError("feature cache input digest mismatch")
+    config = FeatureConfig(**manifest["config"])
+    rows = []
+    digest = hashlib.sha256()
+    with (root / manifest["features_file"]).open("rb") as stream:
+        for line in stream:
+            digest.update(line)
+            rows.append(_feature_row(json.loads(line.decode("utf-8"))))
+    if len(rows) != manifest.get("row_count") or digest.hexdigest() != manifest.get("feature_digest"):
+        raise ValueError("feature cache payload verification failed")
+    return CausalFeatureCache(
+        schema=SCHEMA,
+        input_event_digest=manifest["input_event_digest"],
+        feature_digest=digest.hexdigest(),
+        config=config,
+        rows=tuple(rows),
+    )

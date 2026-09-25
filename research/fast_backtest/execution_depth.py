@@ -347,6 +347,46 @@ def load_execution_depth_cache(
     return ExecutionDepthManifest(root, spec.cache_id, count, manifest["logical_digest"], spec)
 
 
+def load_cell_execution_depth(
+    cache_dir: str | Path,
+    *,
+    expected_source_prefix_digest: str,
+    code: str,
+    venue: str,
+) -> tuple[ExecutionDepthRecord, ...]:
+    """검증된 companion cache에서 한 cell의 quote depth를 receive order로 읽는다."""
+    manifest = load_execution_depth_cache(
+        cache_dir,
+        expected_source_prefix_digest=expected_source_prefix_digest,
+        verify_payload=False,
+    )
+    return load_cell_execution_depth_from_manifest(manifest, code=code, venue=venue)
+
+
+def load_cell_execution_depth_from_manifest(
+    manifest: ExecutionDepthManifest,
+    *,
+    code: str,
+    venue: str,
+) -> tuple[ExecutionDepthRecord, ...]:
+    metadata = json.loads((manifest.cache_dir / "manifest.json").read_text(encoding="utf-8"))
+    database = manifest.cache_dir / metadata["database_file"]
+    conn = sqlite3.connect(database.as_uri() + "?mode=ro&immutable=1", uri=True)
+    try:
+        rows = tuple(
+            _record_from_row(manifest.spec, row)
+            for row in conn.execute(
+                "SELECT * FROM quotes WHERE code=? AND venue=? ORDER BY seq",
+                (code, venue),
+            )
+        )
+    finally:
+        conn.close()
+    if any(row.code != code or row.venue != venue for row in rows):
+        raise ValueError("execution-depth cell identity mismatch")
+    return rows
+
+
 @dataclass
 class Distribution:
     count: int = 0

@@ -8,6 +8,7 @@ import hashlib
 from typing import Any, Iterable, Mapping
 
 from engine.nxt_tick_engine import PARAMS, get_tick_size
+from research.fast_backtest.feasibility import EntryFeasibilityState
 from research.fast_backtest.features import CausalFeatureCache, FeatureRow
 from research.fast_backtest.plan import canonical_json
 
@@ -73,6 +74,7 @@ class FastSweepResult:
     entry_decision_ns: tuple[int, ...]
     exit_decision_ns: tuple[int, ...]
     fill_records: tuple[FastFill, ...]
+    terminal_open_order: bool = False
 
 
 def _canonical_number(value: int | float | Decimal) -> str:
@@ -178,6 +180,7 @@ def evaluate_candidate(
     candidate: FastCandidate,
     *,
     account: FastAccountAssumptions,
+    entry_feasibility: Mapping[int, EntryFeasibilityState] | None = None,
 ) -> FastSweepResult:
     params, exit_rule = materialize_strategy_params(candidate.params)
     entry = params["entry"]
@@ -191,6 +194,10 @@ def evaluate_candidate(
     codes = {row.code for row in cache.rows}
     if len(codes) != 1:
         raise ValueError("Fast Backtest v1 sweep currently requires one instrument per feature cache")
+    if entry_feasibility is not None:
+        trade_sequences = {row.seq for row in cache.rows if row.kind == "trade"}
+        if trade_sequences != set(entry_feasibility):
+            raise ValueError("entry feasibility must cover every and only trade decision point")
 
     cash = float(account.cash)
     initial_cash = cash
@@ -292,12 +299,15 @@ def evaluate_candidate(
         ratio = row.buy_ratio_by_ticks.get(recent_key)
         volume = row.recent_volume_by_ticks.get(recent_key)
         prior_high = row.prior_high_by_window.get(breakout_key)
+        feasibility = entry_feasibility.get(row.seq) if entry_feasibility is not None else None
         exhausted = bool(
             pre_open is not None
             and pre_last / pre_open - 1 >= float(overheat["gain_threshold"])
             and pre_volume >= int(overheat["volume_threshold"])
         )
         eligible = bool(
+            (feasibility is None or feasibility.status == "PASS")
+            and
             not exhausted
             and open_price is not None
             and _quote_at(row, row.received_ns, account.max_quote_age_ns)
@@ -343,6 +353,7 @@ def evaluate_candidate(
         entry_decision_ns=tuple(entry_decisions),
         exit_decision_ns=tuple(exit_decisions),
         fill_records=tuple(fills),
+        terminal_open_order=pending is not None,
     )
 
 
@@ -362,8 +373,17 @@ def run_fast_sweep(
     candidates: Iterable[FastCandidate],
     *,
     account: FastAccountAssumptions,
+    entry_feasibility: Mapping[int, EntryFeasibilityState] | None = None,
 ) -> tuple[FastSweepResult, ...]:
-    return rank_results(evaluate_candidate(cache, candidate, account=account) for candidate in candidates)
+    return rank_results(
+        evaluate_candidate(
+            cache,
+            candidate,
+            account=account,
+            entry_feasibility=entry_feasibility,
+        )
+        for candidate in candidates
+    )
 
 
 def result_record(result: FastSweepResult) -> dict[str, Any]:
