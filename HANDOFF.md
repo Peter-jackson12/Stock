@@ -21,7 +21,7 @@ OCX/QAx·queue/teardown/telemetry·실제 수집·PID/창/lease 관측·#327/#16
 `005930 selected-v2 actual accounting regression` 1회는 PASS로 완료했다.**
 추가 rerun·parameter tuning·실주문은 현재 목표가 아니다.
 
-Operator UX는 PR #45/#49/#50까지 master에 통합됐다.
+Operator UX는 PR #45/#49/#50/#52까지 master에 통합됐다.
 `stock.cmd/stock.ps1`의 help/doctor/status/ui와 운영 화면의 상태·환경 요약은 사용 편의 계층이며,
 수집 준비·OCX 준비·시장 상태·데이터 품질·실행 승인을 만들지 않는다.
 
@@ -32,6 +32,10 @@ preflight만 재사용한다. 각 축을 PASS/WARN/BLOCKED/UNVERIFIED와 다음 
 실행 대상 revision·CLI 계약과 시장 날짜·장 구간·실행 승인은 UNVERIFIED다. 시작 버튼과 연결하지 않으며
 설치·수정·로그인·구독·수집·kill/restart·lock 삭제·시장 조회·raw DB 접근은 하지 않는다.
 GitHub/PR 사실을 운영 PC의 현재 process/window/lease 상태로 승격하지 않는다.
+
+Operator 후속: preflight 다음 `review_only` Run Plan을 추가했다. 실행·승인과 비연결이고 시장·승인은
+`UNVERIFIED`다. Windows UI 확인은 남았다. 정상 진입점은 `stock.cmd ui`; 아이콘·exe는 후속이다.
+[상세](CONTROL_TOWER.md)
 
 ## selected-v2에서 이미 확인한 것
 
