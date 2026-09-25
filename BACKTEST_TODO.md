@@ -252,14 +252,20 @@ selected-v2 bounded input은 strategy-research fixture로 승인됐지만 perfor
 - [ ] legacy top-level PnL/equity schema migration 필요성은 별도 검토한다. 현재 다음 실제 입력 확보의 blocker는 아니다.
 - [x] actual selected-v2 result는 회귀 fixture로만 사용하며 parameter tuning에 사용하지 않음
 
-### Independent actual input candidate 01 — 사전등록, 아직 미실행
+### Independent actual input candidate 01 — 첫 시도 INCONCLUSIVE, Windows 실행 대기
 
 두 번째 날짜의 actual regression fixture를 결과 확인 전에 고정한다.
 
-- [ ] source/session: `2026-09-18 / 21f8c124e64e421893275ccdc83818ad`
-- [ ] historical raw path 존재/identity/종료 근거/프로세스 부재/sidecar 상태를 원본 비변경으로 재확인
-- [ ] 필요 시 기존 frozen snapshot acquisition으로 별도 working copy 생성
-- [ ] strict bounded prefix: **10:00:00 KST exclusive**, 정확히 1회
+첫 시도는 Linux VM/FUSE 환경 제약 때문에 source 보호를 인증할 수 없어
+`INCONCLUSIVE_SOURCE_PROTECTION`으로 중단했다. 이는 데이터 품질 판정이 아니며,
+등록된 Windows actual 실행 횟수를 소비한 것으로 보지 않는다.
+
+
+- [x] source/session 사전등록: `2026-09-18 / 21f8c124e64e421893275ccdc83818ad`
+- [x] 첫 VM 시도: `INCONCLUSIVE_SOURCE_PROTECTION`. Linux/FUSE 환경이라 Windows 보호 계약을 수행할 수 없어 SQLite/snapshot/qualification/replay는 미실행
+- [ ] Windows 로컬에서 historical raw path 존재/identity/종료 근거/프로세스 부재/sidecar 상태를 원본 비변경으로 새로 확인
+- [ ] `0-byte WAL + 32,768-byte SHM + journal 없음`이 재확인되면 기존 frozen snapshot acquisition으로 별도 working copy 생성
+- [ ] strict bounded prefix: **10:00:00 KST exclusive**, Windows에서 정확히 1회
 - [ ] selected overlay: **`005930=unknown`**, `unknown_direction_recent_window_quarantine_v0`, 정확히 1회
 - [ ] selected gate PASS일 때만 2026-09-21과 동일 smoke/accounting 설정으로 replay 정확히 1회
 - [ ] execution/result/accounting/provenance와 한계를 기록하고 결과 파일은 Git에 추가하지 않음
