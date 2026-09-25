@@ -10,6 +10,14 @@
 아래 값은 현재 인계이며 영구 최신값이 아니다. 2026-09-24~25 상세 실행·수치·경로 원문은
 [압축 전 인계 보존본](docs/archive/HANDOFF_20260925_PRE_COMPACT.md)에 그대로 남긴다.
 
+## snapshot 보존 점검 — 2026-09-25
+
+`C:\StockSnapshots` 최초 3개/334 files/204,092,746,177 bytes. 두 핵심 snapshot
+`24f657…`·`c43a255…`와 활성 `exploratory_profitability_20260921_01` 모두 KEEP_CORE다.
+탐색 Python 실행과 output 증가를 확인했다. SAFE_DELETE 없음: 삭제·이동·절감 0.
+raw/operations_state/DB를 열거나 수정하지 않았다. 새 빈 일반 디렉터리
+`C:\Projects\_data\Stock\snapshots`를 준비했으며 다음 승인된 신규 output부터 사용한다.
+
 ## 현재 두 트랙
 
 **수집기/native 트랙은 2026-09-28 실제 시장 세션까지 코드 freeze 상태다.**
