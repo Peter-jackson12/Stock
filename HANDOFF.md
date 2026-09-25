@@ -90,69 +90,60 @@ zero-quote 0건 격리와 `raw_identity_verified=false`, `whole_stream_assessed=
 전략 수익성·performance-research·여러 날짜 일반화·NXT venue·whole raw·live 적격성을 뜻하지 않는다.
 다음 단계는 자동 재실행이 아니라 현재 result를 보존하고, 별도 근거와 승인 아래 미완료 gate를 다루는 것이다.
 
-## 다음 research 단계 — Independent input candidate 01 사전등록
+## Independent actual input candidate 01 — PASS_NO_TRADE
 
-성과를 본 뒤 날짜·종목·cutoff를 고르는 것을 막기 위해 다음 후보를 **실행 전에 고정**한다.
+사전등록한 두 번째 날짜 actual fixture를 Windows 네이티브 환경에서 완료했다.
 
+고정 scope:
 - source date/session: `2026-09-18 / 21f8c124e64e421893275ccdc83818ad`
-- historical raw path: `sampledata/raw_ticks_v2/20260918/21f8c124e64e421893275ccdc83818ad.db`
-- historical state: 07:55경 시작, 정상 종료 근거 보존. 말미에는 방향 미확인 8 trade + 대응 parse_error 8건이 있어 whole-file 연구 적격성은 계속 차단한다.
-- bounded cutoff: **10:00:00 KST exclusive**
-- selected instrument: **`005930=unknown`**
-- selected policy: **`unknown_direction_recent_window_quarantine_v0`**
-- smoke settings: 2026-09-21 selected-v2 PASS와 동일한 quantity 1 / cash 1,000,000 / fee 0.001 per-side / buy·sell·cancel latency 각 1초 / max quote age 2초 / cooldown 10초 / fixed exit
+- bounded cutoff: `10:00:00 KST exclusive`
+- selected instrument: `005930=unknown`
+- policy: `unknown_direction_recent_window_quarantine_v0`
+- smoke settings: quantity 1 / cash 1,000,000 / fee 0.001 per-side / buy·sell·cancel latency 각 1초 / max quote age 2초 / cooldown 10초 / fixed exit
+- execution revision: `8e969ceafe3d296c834e9b365757bf616266a1e4`
 
-2026-09-17 정상 종료 세션 `cf18cb437b9a4f6ba2abf0fdadbbfe57`은 12:35경 시작했으므로
-같은 10:00 bounded comparison의 후보에서 제외한다. 이는 결과를 본 뒤의 성과 선택이 아니라
-고정 cutoff를 만족하지 못하는 시간 범위 제외다.
+Windows source protection은 PASS했다. 원본은 51,394,355,200 bytes, WAL 0 bytes,
+SHM 32,768 bytes, journal 없음이었고 collector 관련 process/window 부재와 free lease를 확인했다.
+snapshot acquisition은 정확히 1회 수행해 run
+`c43a255f907245eaa2f02124fadd6a0c`를 만들었다.
+source stream과 working readback SHA-256은 모두
+`86e81bca2071545ff130d1e515ea6c0ae4bbf47169e256cefa8502a6e352cf29`로 일치했다.
+원본 DB/WAL/SHM identity·size·mtime은 실행 전후 불변이었다.
 
-실행 순서는 고정한다.
+strict 10:00 prefix는 구조 검증 PASS, `stream_error=null`이며
+sentinel 포함 8,241,797건을 소비했다. prefix 이전 raw 8,241,796건 중 tick 8,225,687,
+trade 3,081,776, quote 5,143,911, control 16,109건이다.
+품질 영향 tick과 paired parse-error는 각각 16,108건이고
+`smoke_backtest_eligible=false`, tail/whole-stream/performance-research 미평가를 유지한다.
 
-1. 원본 존재·identity·종료 근거·프로세스 부재·sidecar 상태를 먼저 메타데이터/운영 근거로 확인한다.
-   원본을 writable SQLite로 열거나 sidecar를 삭제하지 않는다.
-2. 필요 시 기존 raw-v2 frozen snapshot acquisition 경로로 원본을 보존한 별도 working copy를 만든다.
-   보호 조건을 만족하지 못하면 **INCONCLUSIVE로 중단**하고 다른 날짜/종목으로 자동 대체하지 않는다.
-3. working copy에서 strict 10:00 prefix qualification을 정확히 1회 수행한다.
-4. strict 구조 재검증이 가능할 때만 `005930=unknown` selected-v2 overlay를 동일 policy로 정확히 1회 수행한다.
-5. selected gate가 true일 때만 위 고정 설정으로 selected-v2 smoke/accounting replay를 정확히 1회 수행한다.
-6. FAIL/INCONCLUSIVE에서 cutoff·instrument·policy·parameter를 바꿔 재시도하지 않는다.
-   PASS에서도 parameter tuning이나 performance-research 승격을 하지 않는다.
+selected-v2 overlay는 PASS했다.
+`005930=unknown` selected tick 30,800 / clean 30,799,
+unknown-direction quarantine 1쌍 / zero-quote 0 / disqualifying 0이며
+strict 재검증 5항목 모두 true다.
 
-이 후보의 목적은 **두 번째 날짜의 독립 actual regression fixture 확보**다.
-전략 수익성 비교, NXT venue 인증, whole raw 승인, live trading readiness가 아니다.
+actual replay는 정확히 1회 실행해 `completed_no_fills`로 끝났다.
+expected/actual/processed event는 모두 30,800건이며 signals/intents/fills/rejects/transitions가
+모두 0이다. 최종 cash 1,000,000, position/open order 0이다.
+event SHA는
+`ac1657b41dbaa7f1adde7f900b3c9ac9a78764f8041f7426b9ff08f43520537a`다.
 
-## Independent input candidate 01 — 첫 시도 환경 제약, Windows 실행 대기
+`performance_accounting`은 `flat_complete`, fill_count 0,
+realized/unrealized/total PnL 모두 0, equity 1,000,000이며
+cash/position/accounting identity reconciliation은 모두 true다.
+final bid-mark provenance records는 빈 목록이고 내부/최상위 provenance가 일치한다.
+legacy top-level realized/unrealized/equity는 계속 null이다.
 
-사전등록 후 첫 실행 시도는 **`INCONCLUSIVE_SOURCE_PROTECTION`**으로 종료했다.
-이는 데이터 품질 실패가 아니라 실행 환경이 보호 계약을 수행할 수 없었던 결과다.
+**최종 판정: `Independent actual input candidate 01: PASS_NO_TRADE`.**
 
-첫 시도 환경은 사용자 Windows PC의 프로젝트를 FUSE로 마운트한 Linux VM이었다.
-따라서 Windows local NTFS와 kernel32 sharing semantics를 요구하는
-`raw_v2_frozen_snapshot_v1` acquisition을 실행할 수 없었고,
-Windows 쪽 collector/Python process·reader/writer 부재도 독립 확인할 수 없었다.
-Linux `cp`, 직접 SQLite open 등 비등록 우회는 하지 않았다.
-snapshot/strict prefix/selected-v2/smoke/accounting은 모두 **미실행**이며 result도 생성되지 않았다.
+이 결과로 2026-09-21의 PASS_WITH_TRADE와 별개 날짜에서
+source protection → frozen snapshot → strict bounded prefix → selected-v2 →
+shared simulator/accounting/mark provenance 경로가 다시 성립함을 확인했다.
+다만 두 번째 날짜에는 거래가 없으므로 실제 체결·PnL 사례는 추가되지 않았다.
+성과 우수성·robustness·performance-research·NXT venue·whole raw·live 적격성은 미승격이다.
 
-원본에 대해 SQLite를 열지 않고 관측한 기준선:
-- DB size: `51,394,355,200` bytes
-- WAL: `0` bytes
-- SHM: `32,768` bytes
-- journal: 없음
-- historical status: closed / writer_closed=true / final_seq=committed_seq=`43,218,720` / dropped=0
-- historical payload SHA-256 claim: `7e82ddf0…c508`
-- 시작 시각: 약 07:55 KST / 종료 사유: 장 마감(15:35)
-- 관측 전후 DB/WAL/SHM size·mtime·inode 불변
-- DB ctime이 2026-09-24 08:47Z로 변경된 원인은 미확인. 내용 불변을 이 ctime만으로 인증하지 않는다.
-
-따라서 candidate 01은 소진되거나 거부된 것이 아니다.
-**동일 2026-09-18 / 10:00 KST exclusive / 005930=unknown / 동일 policy·settings를
-Windows 로컬 보호 경로에서 처음부터 이어서 실행해야 한다.**
-Windows 실행 전에는 현재 process/window/lease와 source identity/sidecar를 새로 확인한다.
-source 보호 조건이 맞지 않으면 그대로 INCONCLUSIVE로 남기며 다른 날짜·종목·cutoff로 대체하지 않는다.
-
-첫 VM 시도 중 Git 조회가 만든 `.git/index.lock`, `.git/objects/maintenance.lock` 0-byte 파일은
-Windows Git 작업 차단을 피하기 위해 해당 두 파일만 삭제했다는 보고다.
-raw/sidecar 및 다른 파일은 변경하지 않았고 이후 VM에서 Git 명령을 추가 실행하지 않았다.
+다음 단계는 이 과거 데이터에서 cutoff/종목을 바꿔 거래를 만들려는 것이 아니다.
+**다음 독립 실제 세션을 결과 확인 전에 같은 방식으로 사전등록하고 품질확인 입력을 축적한다.**
+candidate 02는 적격한 새 source/session이 생기기 전까지 자동 선택하지 않는다.
 
 ## 유지하는 차단 조건
 
