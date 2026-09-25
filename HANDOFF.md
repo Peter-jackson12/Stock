@@ -53,7 +53,7 @@ Operator UX의 preflight/Run Plan은 Windows 화면 확인까지 완료했다. �
 따라서 **bounded selected strategy-research input**으로는 승인했다.
 하지만 strict prefix failure와 whole-stream 미평가를 유지한다.
 `performance_research`, whole-file FIRST_RESEARCH_CANDIDATE, NXT venue, whole raw, live 적격성은 미승격이다.
-한 왕복 결과를 보고 threshold/exit/parameter를 조정하지 않는다.
+기존 회귀/검증 트랙에서는 한 왕복 결과를 보고 threshold/exit/parameter를 조정하지 않는다. 단, 아래 명시한 2026-09-21 전용 exploratory profitability track에서는 in-sample 탐색임을 표시하고 entry/exit parameter search를 허용한다.
 
 ## actual accounting regression 결과
 
@@ -144,6 +144,42 @@ shared simulator/accounting/mark provenance 경로가 다시 성립함을 확인
 다음 단계는 이 과거 데이터에서 cutoff/종목을 바꿔 거래를 만들려는 것이 아니다.
 **다음 독립 실제 세션을 결과 확인 전에 같은 방식으로 사전등록하고 품질확인 입력을 축적한다.**
 candidate 02는 적격한 새 source/session이 생기기 전까지 자동 선택하지 않는다.
+
+## Exploratory profitability track — 2026-09-21 전용 in-sample 개발
+
+사용자 목표에 따라 별도 **탐색용 트랙**을 연다.
+목표는 현재 사용 가능한 bounded actual 입력 하나에서라도 비용·지연을 포함해
+`performance_accounting.total_pnl > 0`인 전략 파라미터 조합을 찾는 것이다.
+
+개발 입력은 오직 기존 검증이 끝난
+`2026-09-21 / 10:00 KST exclusive / 005930=unknown / selected-v2`
+fixture로 고정한다. 이 날짜는 이제 **in-sample development set**으로 취급한다.
+2026-09-18 candidate 01과 이후 새 실제 날짜는 이 탐색에 사용하지 않는다.
+
+고정할 실행 가정:
+- quantity 1
+- initial cash 1,000,000
+- fee 0.001 per-side
+- buy/sell/cancel latency 각 1초
+- max quote age 2초
+- unknown-direction policy `unknown_direction_recent_window_quarantine_v0`
+- cutoff 10:00 KST exclusive
+- source/session/instrument 변경 없음
+
+탐색 가능한 것은 NXT breakout의 **entry/exit 파라미터**다.
+cutoff·날짜·종목·비용·지연·direction policy를 수익을 만들기 위해 바꾸지 않는다.
+
+1차 성공 기준은:
+- run status가 정상 완료
+- `performance_accounting.status=flat_complete`
+- fill_count >= 2
+- `total_pnl > 0`
+- cash/position/accounting reconciliation 모두 true
+
+이 성공은 **in-sample profitable candidate 발견**만 뜻한다.
+수익성·robustness·out-of-sample 성과·실전 적격성 주장이 아니다.
+탐색한 모든 조합과 결과를 보존하고, 성공 조합만 숨겨서 보고하지 않는다.
+후속 검증은 탐색에 사용하지 않은 새 날짜에서 별도로 한다.
 
 ## 유지하는 차단 조건
 
