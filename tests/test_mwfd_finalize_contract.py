@@ -124,7 +124,12 @@ def test_combine_recovers_after_partial_final_publication(tmp_path, monkeypatch)
     cell = SimpleNamespace(index=1, code="A", venue="unknown", cell_id="A=unknown")
     checkpoint = tmp_path / "checkpoints" / "0001-A-unknown"
     checkpoint.mkdir(parents=True)
-    write_json(checkpoint / "completion.json", {"status": "COMPLETED"})
+    serialized_digest = hashlib.sha256(b"{}\n").hexdigest()
+    write_json(checkpoint / "completion.json", {
+        "status": "COMPLETED",
+        "candidate_results_digest": "economic",
+        "candidate_results_file_digest": serialized_digest,
+    })
 
     # One output was already renamed to its final name before the process died.
     (tmp_path / finalizer.OUTPUTS[0]).write_text("{}\n", encoding="utf-8")
@@ -142,7 +147,7 @@ def test_combine_recovers_after_partial_final_publication(tmp_path, monkeypatch)
             "cell_index": 1,
             "cell_id": "A=unknown",
             "candidate_results_digest": "economic",
-            "file_digest": "serialized",
+            "file_digest": serialized_digest,
         }) + "\n",
         encoding="utf-8",
     )
