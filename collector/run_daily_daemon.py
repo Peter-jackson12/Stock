@@ -25,6 +25,7 @@ from engine.config import DATA_DIR
 from collector.universe import TARGET_CODES
 from collector.build_lob_db import resample_raw_to_lob
 from collector.daily_collector import FastDailyCollector
+from collector.daily_daemon_result import DaemonOutcome, post_process, raw_capture_step
 
 # 환경변수 로드
 ENV_CANDIDATES = [
@@ -101,10 +102,15 @@ class FullAutoCollector:
         print(f"📁 저장 파일: {self.db_path.name}")
         print("=" * 60)
 
+        # 단계별 결과. 모든 필수 단계가 성공일 때만 완전 성공이다(daily_daemon_result).
+        outcome = DaemonOutcome()
         approval_key = self.get_approval_key()
         if not approval_key:
             print("❌ Approval Key 발급 실패! KIS_APP.env를 확인하세요.")
-            return
+            outcome.steps.append(raw_capture_step(approval_ok=False, tick_count=0))
+            for line in outcome.lines():
+                print(line)
+            return outcome
 
         ws_url = (
             "ws://ops.koreainvestment.com:31000"
@@ -210,6 +216,7 @@ class FullAutoCollector:
         self.conn.commit()
         self.conn.close()
         print(f"\n💾 원본 틱 저장 완료 (총 {tick_count:,}건 적재)")
+        outcome.steps.append(raw_capture_step(approval_ok=True, tick_count=tick_count))
 
         # =======================================================
         # 2단계: 장 마감 후 자동 후처리 (LOB 빌드 + 일봉 업데이트)
@@ -218,22 +225,19 @@ class FullAutoCollector:
         print(f"⚙️ [후처리 파이프라인 자동 가동]")
         print("=" * 60)
 
-        # 1) 1초봉 51개 컬럼 LOB.db 자동 빌드
-        print("1️⃣ [LOB 생성] 원본 틱 ➔ 1초봉 LOB 변환 시작...")
-        resample_raw_to_lob(self.today_str)
+        # 1) 1초봉 51개 컬럼 LOB.db 자동 빌드 → 2) 오늘 일봉 8개 CSV 자동 업데이트.
+        # 각 반환값을 판정한다. 예외는 요약을 남기고 그대로 전파한다(재시도·rollback 없음).
+        post_process(outcome, self.today_str, self.target_codes,
+                     resample=resample_raw_to_lob, collector_factory=FastDailyCollector,
+                     daily_start="20220420")
 
-        # 2) 오늘 일봉 8개 CSV 자동 업데이트
-        print("2️⃣ [일봉 갱신] 오늘 날짜 일봉 8대 매트릭스 CSV 갱신 시작...")
-        collector = FastDailyCollector()
-        collector.collect(
-            start_date="20220420",
-            end_date=self.today_str,
-            target_tickers=self.target_codes,
-        )
-
-        print("\n🎉🎉 [수집 완료] 오늘의 모든 데이터 수집 및 전처리가 완벽히 끝났습니다!")
+        print()
+        for line in outcome.lines():
+            print(line)
+        return outcome
 
 
 if __name__ == "__main__":
     daemon = FullAutoCollector(target_codes=TARGET_CODES)
-    asyncio.run(daemon.run())
+    # 완전 성공만 0. 일부 성공·무데이터·실패·결과 미확인은 1.
+    raise SystemExit(asyncio.run(daemon.run()).exit_code)

@@ -166,7 +166,7 @@ gate는 PASS 2,174,745 / FAIL 464,037 / UNKNOWN 177,682이며 MWFD-02 inventory�
 MWFD-04 산출물(`factor_dataset_manifest.json`)을 입력으로 하는 MWFD-05는 별도 승인 후 진행한다.
 push·PR·merge와 `win_to_local`의 Linux 경로 처리 수정 여부는 컨트롤타워가 판단한다.
 threshold·후보 조정, production exact 대량 실행, holdout 재탐색은 여전히 허용 범위 밖이다.
-Operator/managed capture P2 수정은 [기록](docs/PIPELINE_AUDIT_REMEDIATION_20260926.md#operator-p2)을 본다.
+Operator·legacy P2 수정은 [기록](docs/PIPELINE_AUDIT_REMEDIATION_20260926.md)을 본다.
 
 상세 실행 계약·benchmark·재현 명령은 [Fast Backtest v1](docs/FAST_BACKTEST_V1.md),
 현재 체크 항목은 [BACKTEST_TODO](BACKTEST_TODO.md), 코드 연결은
