@@ -271,10 +271,14 @@ class FastDailyCollector:
                   f"⚠️ 요청 기간 일부 수신 ({coverage['matched_days']}/{coverage['requested_days']}일)")
             time.sleep(0.05)
 
+        # 반환값은 이 실행의 journal 종료 이벤트와 같은 사실을 돌려준다(새 판정이 아니다).
+        # priced = 요청 기간 가격을 받은 종목 수, targets = 요청 종목 수.
+        outcome = {"journal": str(journal), "targets": len(targets), "priced": success_count,
+                   "trading_dates": len(trading_dates), "snapshots": len(snapshot_rows)}
         if success_count == 0 and not snapshot_rows:
             print("🚨 수집된 데이터가 없습니다.")
             _record_attempt(journal, {"event": "no_data", "at": datetime.now(KST).isoformat()})
-            return
+            return {"status": "no_data", **outcome}
 
         # 3. OHLCV CSV 저장 (기존 규격: 1행 Name, 1열 Code, CP949 인코딩)
         print(f"\n💾 {len(DAILY_FILES)}개 일봉 CSV 파일 저장 중...")
@@ -348,6 +352,7 @@ class FastDailyCollector:
         )
         print(f"  📁 {manifest_path.name} 저장 완료 (결측 사유 {len(meta_reasons)}종목)")
         _record_attempt(journal, {"event": "completed", "at": datetime.now(KST).isoformat()})
+        return {"status": "completed", **outcome}
 
 
 if __name__ == "__main__":

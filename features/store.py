@@ -25,6 +25,8 @@ SQLite 를 걷어내는 게 아니다. 장중 무유실 append 는 SQLite WAL �
 from __future__ import annotations
 
 import json
+import os
+import uuid
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
@@ -46,6 +48,12 @@ COMPRESSION_LEVEL = 3
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FEATURE_ROOT = PROJECT_ROOT / "sampledata" / "features"
+
+
+def _fsync_file(path: Path) -> None:
+    # Windows 는 읽기 전용 핸들의 fsync 를 거부한다(EBADF).
+    with open(path, "r+b") as stream:
+        os.fsync(stream.fileno())
 
 
 class FeatureStore:
@@ -77,7 +85,14 @@ class FeatureStore:
 
     # -- 쓰기 ---------------------------------------------------------------
 
-    def write(self, date: str, frame: "pd.DataFrame", feature_set: FeatureSet) -> Path:
+    def write(
+        self,
+        date: str,
+        frame: "pd.DataFrame",
+        feature_set: FeatureSet,
+        *,
+        coverage: Optional[dict] = None,
+    ) -> Path:
         """
         하루치 피처 DataFrame 을 parquet 로 기록한다.
 
@@ -87,6 +102,16 @@ class FeatureStore:
           - 첫 쓰기 때 _manifest.json 을 남기고, 이후 쓰기마다 대조해
             **계산식이 다르면 에러**를 낸다. 같은 fs_v1 디렉토리에 다른 버전의
             피처가 섞이면 그 버전 전체의 재현성이 조용히 깨진다.
+
+        게시 계약 (PIPELINE_AUDIT 2026-09-26 P2):
+          - parquet 는 같은 디렉토리의 임시 파일(`.<date>.<id>.tmp`, glob `*.parquet` 에
+            걸리지 않음)에 다 쓴 뒤 os.replace 로 한 번에 바꾼다. 도중 실패는 기존 파일을 남긴다.
+          - 매니페스트는 **병합**한다. 다른 날짜의 coverage 와 기존 피처 선언을 보존하고,
+            이번 피처셋의 선언만 추가/갱신한다. 매니페스트도 임시 파일 + os.replace 로 바꾼다.
+          - 같은 날짜를 다시 쓰면 그 날짜의 기존 coverage 는 새 파일을 설명하지 않으므로
+            parquet 교체 **전에** 지운다(중간 중단 시 '모름'이지 '틀린 값'이 아니다).
+            coverage 를 넘기면 parquet 교체 뒤 같은 매니페스트 갱신에서 그 날짜에 기록한다.
+          - strict 판정 같은 검증은 호출자가 이 메서드를 부르기 **전에** 끝내야 한다.
         """
         if frame is None or len(frame) == 0:
             raise ValueError(f"{date}: 기록할 피처가 없습니다")
@@ -103,17 +128,47 @@ class FeatureStore:
 
         table = pa.Table.from_pandas(ordered, preserve_index=False)
         path = self.path_for(date)
+        staged = self.root / f".{date}.{uuid.uuid4().hex}.tmp"
 
-        # 종목 단위로 나눠 쓰면 write_table 호출 하나가 row group 하나가 된다
-        boundaries = self._code_boundaries(ordered["code"])
-        with pq.ParquetWriter(
-            path, table.schema, compression=COMPRESSION, compression_level=COMPRESSION_LEVEL
-        ) as writer:
-            for start, length in boundaries:
-                writer.write_table(table.slice(start, length))
+        try:
+            # 종목 단위로 나눠 쓰면 write_table 호출 하나가 row group 하나가 된다
+            boundaries = self._code_boundaries(ordered["code"])
+            with pq.ParquetWriter(
+                staged, table.schema, compression=COMPRESSION, compression_level=COMPRESSION_LEVEL
+            ) as writer:
+                for start, length in boundaries:
+                    writer.write_table(table.slice(start, length))
+            _fsync_file(staged)
 
-        self.write_manifest(feature_set)
+            existing = self.read_manifest()
+            if str(date) in existing.get("coverage", {}):
+                # 이전 파일의 coverage 를 새 파일 설명으로 남기지 않는다.
+                self.replace_manifest(self._merged_manifest(existing, feature_set, date, None))
+            os.replace(staged, path)
+        finally:
+            staged.unlink(missing_ok=True)
+
+        self.replace_manifest(self._merged_manifest(self.read_manifest(), feature_set, date, coverage))
         return path
+
+    @staticmethod
+    def _merged_manifest(existing: dict, feature_set: FeatureSet, date: str,
+                         coverage: Optional[dict]) -> dict:
+        """기존 매니페스트에 이번 피처셋 선언을 합친다. 다른 날짜 coverage 는 그대로 둔다."""
+        incoming = feature_set.manifest()
+        merged = dict(existing)
+        merged["feature_set_version"] = incoming["feature_set_version"]
+        by_name = {entry["name"]: entry for entry in existing.get("features", [])}
+        for entry in incoming["features"]:
+            by_name[entry["name"]] = entry
+        merged["features"] = list(by_name.values())
+        dates = dict(existing.get("coverage", {}))
+        dates.pop(str(date), None)
+        if coverage is not None:
+            dates[str(date)] = coverage
+        if dates or "coverage" in existing:
+            merged["coverage"] = dict(sorted(dates.items()))
+        return merged
 
     @staticmethod
     def _code_boundaries(codes: "pd.Series") -> list[tuple[int, int]]:
@@ -147,10 +202,22 @@ class FeatureStore:
             )
 
     def write_manifest(self, feature_set: FeatureSet) -> None:
-        self.manifest_path.write_text(
-            json.dumps(feature_set.manifest(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        """피처셋 선언을 매니페스트에 병합한다. 기존 날짜별 coverage 는 보존한다."""
+        existing = self.read_manifest()
+        merged = self._merged_manifest(existing, feature_set, "", None) if existing else feature_set.manifest()
+        self.replace_manifest(merged)
+
+    def replace_manifest(self, manifest: dict) -> None:
+        """매니페스트 전체를 임시 파일 + fsync + os.replace 로 바꾼다. 반쪽 JSON 을 남기지 않는다."""
+        staged = self.root / f"._manifest.{uuid.uuid4().hex}.tmp"
+        try:
+            with staged.open("w", encoding="utf-8") as stream:
+                json.dump(manifest, stream, ensure_ascii=False, indent=2)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(staged, self.manifest_path)
+        finally:
+            staged.unlink(missing_ok=True)
 
     def read_manifest(self) -> dict:
         if not self.manifest_path.exists():
@@ -165,6 +232,7 @@ class FeatureStore:
         이유는 결손 자체가 아니라 **결손을 모른 채 지나가는 것**이 문제이기 때문이다.
         거시 필터를 켜는 순간 커버리지 1.5% 는 유니버스의 98.5% 를 조용히 날린다.
         런을 나중에 들여다볼 때 "그때 그 파일의 커버리지가 얼마였나"를 답할 수 있어야 한다.
+        같은 날짜를 다시 기록하면 그 날짜 값만 교체한다.
         """
         manifest = self.read_manifest()
         if not manifest:
@@ -172,9 +240,7 @@ class FeatureStore:
                 f"매니페스트가 없습니다: {self.manifest_path}. 먼저 write() 로 피처를 기록하세요"
             )
         manifest.setdefault("coverage", {})[str(date)] = coverage
-        self.manifest_path.write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        self.replace_manifest(manifest)
         return manifest
 
     # -- 읽기 ---------------------------------------------------------------
