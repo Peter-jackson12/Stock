@@ -885,9 +885,12 @@ def command_manifest(args, env: Env) -> int:
         for path in sorted(p for p in run_root.iterdir()
                            if p.is_file() and not p.name.startswith(".") and p.name != target.name):
             current_entries.append({"path": path.name, "bytes": path.stat().st_size, "sha256": sha256_file(path)})
-        gate_errors = _completion_gate_errors(
-            run_root, {entry["path"]: entry for entry in current_entries}
-        )
+        current_by_name = {entry["path"]: entry for entry in current_entries}
+        recorded_by_name = {entry["path"]: entry for entry in existing.get("entries", [])}
+        if recorded_by_name != current_by_name:
+            print(json.dumps({"status": "FINALIZATION_BLOCKED", "errors": ["artifact_manifest:entries_drift"]}))
+            return 3
+        gate_errors = _completion_gate_errors(run_root, current_by_name)
         if gate_errors:
             print(json.dumps({"status": "FINALIZATION_BLOCKED", "errors": gate_errors}))
             return 3
