@@ -276,6 +276,12 @@ def command_combine(args, env: Env) -> int:
         ledger_rows = [json.loads(line) for line in ledger_source.read_text().splitlines()]
         if [row["cell_id"] for row in ledger_rows] != [cell.cell_id for cell in env.population.cells]:
             raise ValueError("combine recovery ledger is incomplete or out of order")
+        for row, cell in zip(ledger_rows, env.population.cells):
+            completion = read_json(env.checkpoints / checkpoint_name(cell) / "completion.json")
+            if row.get("candidate_results_digest") != completion.get("candidate_results_digest"):
+                raise ValueError(f"combine recovery economic digest mismatch: {cell.cell_id}")
+            if row.get("file_digest") != completion.get("candidate_results_file_digest"):
+                raise ValueError(f"combine recovery serialization digest mismatch: {cell.cell_id}")
         results = {}
         for name, writer in writers.items():
             if writer.final.exists():
