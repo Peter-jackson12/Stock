@@ -1,4 +1,4 @@
-# 현재 인계 — 2026-09-26 / MWFD-03 45-cell Fast runtime probe
+# 현재 인계 — 2026-09-26 / MWFD-04 1,286-cell Fast full run
 
 [문서 인덱스](README.md) · [Fast Backtest v1](docs/FAST_BACKTEST_V1.md) ·
 [첫 실데이터 체크](BACKTEST_TODO.md) · [파이프라인 지도](docs/PIPELINE_MAP.md#fast-backtest-v1) ·
@@ -139,11 +139,31 @@ FAIL 18,809 / UNKNOWN 6,084이며 MWFD-02 inventory와 일치한다. 45 checkpoi
 free-disk preflight, screening-only를 유지한다. 병렬 실행은 I/O·메모리 경합 probe 전에는 권장하지 않는다.
 artifact는 `C:\Projects\TotalStock\_data\mwfd_03\20260926T004154+0900-45-cell-runtime-probe`에 있다.
 
+### MWFD-04 1,286-cell full run
+
+전용 worktree `C:\Projects\TotalStock\worktrees\mwfd-04-full-run`, branch `feat/mwfd-04-full-run-20260926`.
+실행 코드 revision은 `6436255`이며, `7246308`은 provenance 밖 파일 2개(finalize, 호스트 한도 예외 드라이버)만
+추가했다. 1,286셀·852,618 candidate-cell이 완료됐고 모든 checkpoint의 code_revision은 `6436255` 하나다.
+셀 1–441(252 제외)은 Cowork Linux VM, 442–1286과 셀 252 retry는 로컬 Windows에서 실행했다.
+runtime은 호스트별로 해석한다. 호스트가 섞인 합계 20,686초는 MWFD-03 추정 범위 안이다.
+
+finalize 6단계, crosscheck(MWFD-03 45/45, 비분할 3/3), resumecheck, 직접 완료 검증 21/21이 PASS다.
+gate는 PASS 2,174,745 / FAIL 464,037 / UNKNOWN 177,682이며 MWFD-02 inventory와 일치한다. 미해결 failure는 0건이다.
+셀 252 failure 기록은 `failures_resolved/`에 보존했다. 예외 드라이버가 관여한 셀 279·252는 finalize crosscheck
+범위 밖이다. 일반 `CellRunner` 경로로 따로 재계산해 digest가 일치했다(279 8/8, 252 독립 3/3·retry 5/5).
+셀 252의 Linux 드라이버 중간 산출물은 남아 있지 않아 직접 비교하지 못했고, 최종 결과에는 쓰이지 않았다.
+
+`run_manifest.json`의 `candidate_family.source_path`는 Linux VM 경로로 남아 있다. Windows 재개는 manifest·코드
+수정 없이 임시 junction `C:\sessions\rcw-01fdfe2equdn5tenjzpcmaww\mnt\TotalStock` → `C:\Projects\TotalStock`으로
+우회했고, 완료 후 제거했다. 이 run root를 다시 실행하려면 같은 junction이 필요하다.
+보고서: `C:\Projects\TotalStock\_data\mwfd_04\MWFD-04_final_report_20260926.md`,
+검증 증거: 같은 폴더의 `verification\`. 사용자 진행 지시에 따라 이 인계에 반영했다(2026-09-26).
+
 ## 다음 권장 작업
 
-다음 실행은 위 조건으로 1,286셀 전체 Fast screening을 별도 승인·새 create-only run에서 수행하는 것이다.
-실행 전 여유 공간 8 GB 이상과 동일 source/sample/candidate/cache digest를 재확인한다. 병렬화, threshold·후보
-조정, production exact 대량 실행, holdout 재탐색은 이 허용에 포함되지 않는다.
+MWFD-04 산출물(`factor_dataset_manifest.json`)을 입력으로 하는 MWFD-05는 별도 승인 후 진행한다.
+push·PR·merge와 `win_to_local`의 Linux 경로 처리 수정 여부는 컨트롤타워가 판단한다.
+threshold·후보 조정, production exact 대량 실행, holdout 재탐색은 여전히 허용 범위 밖이다.
 
 상세 실행 계약·benchmark·재현 명령은 [Fast Backtest v1](docs/FAST_BACKTEST_V1.md),
 현재 체크 항목은 [BACKTEST_TODO](BACKTEST_TODO.md), 코드 연결은
