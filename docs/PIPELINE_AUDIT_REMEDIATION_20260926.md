@@ -54,8 +54,8 @@ Fast sweep가 직접 참조하는 `engine/nxt_tick_engine.py`를 MWFD code-prove
 
 - collector trade/quote silence recovery 및 session 종료 경계
 - queue backlog 기본 임계치/시간 창
-- 오래된 활성 job의 운영 화면 접근성
-- managed capture 초기화 실패 전달
+- 오래된 활성 job의 운영 화면 접근성 → 아래 [Operator P2 후속](#operator-p2)
+- managed capture 초기화 실패 전달 → 아래 [Operator P2 후속](#operator-p2)
 - legacy feature coverage manifest 누적/strict publish 순서
 - legacy KIS daemon의 후처리 완료 판정
 
@@ -67,3 +67,19 @@ Fast sweep가 직접 참조하는 `engine/nxt_tick_engine.py`를 MWFD code-prove
 - 기존 MWFD-04 run은 이미 고정된 revision/provenance와 직접 완료 검증 결과를 따른다.
 - 이번 변경은 **향후 run과 MWFD-05 이후 exact validation 경계**를 강화한다.
 - focused tests와 Git-only 전체 회귀가 통과하기 전에는 master 병합 완료로 간주하지 않는다.
+
+<a id="operator-p2"></a>
+## Operator / managed capture P2 후속
+
+collector/native hot path 와 별개인 control-plane 변경이다. 현행 계약 원문은
+[CONTROL_TOWER](../CONTROL_TOWER.md)의 작업 이력·managed capture 절에 두고,
+합성 회귀는 `tests/test_operator_p2_contract.py`에 둔다.
+
+| 감사 발견 | 조치 |
+|---|---|
+| 작업 화면이 최근 30개만 읽어 오래된 미완료 작업이 사라졌다 | `JobStore.active()`(미완료, 오래된 순, 상한 100)와 `finished()`(종료, 최신 30)를 분리했다. |
+| dedup 이 30개 밖 작업 ID를 돌려주면 화면에서 찾기 어려웠다 | 미완료 목록에서 항상 보이고 `get()`으로 조회한다. |
+| claim 전 자식 종료가 `launching`에 남아 다음 launch 를 막았다 | spawn identity 를 고정하고 소멸이 확인되면 `failed`로 수렴한다. |
+
+`recent()`, 취소/claim/complete, 소유 프로세스 reconcile, Popen 예외의 `unknown`,
+단일 활성 launch 제약, DB user_version 은 바꾸지 않았다. collector 코드는 수정하지 않았다.
