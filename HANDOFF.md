@@ -155,7 +155,9 @@ gate는 PASS 2,174,745 / FAIL 464,037 / UNKNOWN 177,682이며 MWFD-02 inventory�
 
 `run_manifest.json`의 `candidate_family.source_path`는 Linux VM 경로로 남아 있다. Windows 재개는 manifest·코드
 수정 없이 임시 junction `C:\sessions\rcw-01fdfe2equdn5tenjzpcmaww\mnt\TotalStock` → `C:\Projects\TotalStock`으로
-우회했고, 완료 후 제거했다. 이 run root를 다시 실행하려면 같은 junction이 필요하다.
+우회했고, 완료 후 제거했다. 이후 `win_to_local`이 Linux VM mount 경로를 어느 호스트에서든 해석하도록 고쳤다.
+새 run은 `source_path`를 Windows 표기로 기록한다. 다만 이 수정은 MWFD-04 provenance 파일을 바꾼다.
+따라서 기존 run root의 실행기·resumecheck 재실행은 `7246308`의 checkout과 위 junction으로만 가능하다(`CODE_IDENTITY_DRIFT`).
 보고서: `C:\Projects\TotalStock\_data\mwfd_04\MWFD-04_final_report_20260926.md`,
 검증 증거: 같은 폴더의 `verification\`. 사용자 진행 지시에 따라 이 인계에 반영했다(2026-09-26).
 
