@@ -4,7 +4,7 @@
 [첫 실데이터 체크](BACKTEST_TODO.md) · [파이프라인 지도](docs/PIPELINE_MAP.md#fast-backtest-v1) ·
 [수집 의사결정 계약](docs/COLLECTION_RUNBOOK.md#collection-decision) ·
 [live 작업 경계](docs/COLLECTION_RUNBOOK.md#collection-live-boundary) ·
-[보존본 안내](docs/archive/README.md) ·
+[세션 근거 표시](docs/SESSION_ASSESSMENT.md) · [보존본 안내](docs/archive/README.md) ·
 [압축 전 인계 보존본](docs/archive/HANDOFF_20260925_PRE_COMPACT.md)
 
 매 작업 시작 시 원격 master·열린 PR·최신 CI와 작업 후보 HEAD/base를 다시 확인한다.
