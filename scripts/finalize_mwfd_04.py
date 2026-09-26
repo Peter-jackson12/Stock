@@ -875,6 +875,16 @@ def command_manifest(args, env: Env) -> int:
         existing = read_json(target)
         if existing.get("status") != "COMPLETE":
             raise ValueError("existing artifact manifest is not COMPLETE")
+        current_entries = []
+        for path in sorted(p for p in run_root.iterdir()
+                           if p.is_file() and not p.name.startswith(".") and p.name != target.name):
+            current_entries.append({"path": path.name, "bytes": path.stat().st_size, "sha256": sha256_file(path)})
+        gate_errors = _completion_gate_errors(
+            run_root, {entry["path"]: entry for entry in current_entries}
+        )
+        if gate_errors:
+            print(json.dumps({"status": "FINALIZATION_BLOCKED", "errors": gate_errors}))
+            return 3
         print(json.dumps({"status": "ALREADY_DONE", "validation": "PASS"}))
         return 0
     entries = []
