@@ -1,255 +1,171 @@
-# 현재 인계 — 2026-09-25 / execution NXT close preflight
+# 현재 인계 — 2026-09-26 / MWFD-04 1,286-cell Fast full run
 
-[문서 인덱스](README.md) · [첫 실데이터 체크](BACKTEST_TODO.md) ·
-[파이프라인 지도](docs/PIPELINE_MAP.md#portfolio-research) ·
+[문서 인덱스](README.md) · [Fast Backtest v1](docs/FAST_BACKTEST_V1.md) ·
+[첫 실데이터 체크](BACKTEST_TODO.md) · [파이프라인 지도](docs/PIPELINE_MAP.md#fast-backtest-v1) ·
 [수집 의사결정 계약](docs/COLLECTION_RUNBOOK.md#collection-decision) ·
 [live 작업 경계](docs/COLLECTION_RUNBOOK.md#collection-live-boundary) ·
-[세션 근거 표시](docs/SESSION_ASSESSMENT.md) · [보존본 안내](docs/archive/README.md)
+[세션 근거 표시](docs/SESSION_ASSESSMENT.md) · [보존본 안내](docs/archive/README.md) ·
+[압축 전 인계 보존본](docs/archive/HANDOFF_20260925_PRE_COMPACT.md)
 
 매 작업 시작 시 원격 master·열린 PR·최신 CI와 작업 후보 HEAD/base를 다시 확인한다.
-아래 값은 현재 인계이며 영구 최신값이 아니다. 2026-09-24~25 상세 실행·수치·경로 원문은
-[압축 전 인계 보존본](docs/archive/HANDOFF_20260925_PRE_COMPACT.md)에 그대로 남긴다.
+아래 값은 이번 작업에서 확인한 시점의 기록이며 영구 최신값이 아니다.
 
-## snapshot 보존 점검 — 2026-09-25
+## TotalStock 경로 정리 — 2026-09-25
 
-`C:\StockSnapshots` 최초 3개/334 files/204,092,746,177 bytes. 두 핵심 snapshot
-`24f657…`·`c43a255…`와 활성 `exploratory_profitability_20260921_01` 모두 KEEP_CORE다.
-탐색 Python 실행과 output 증가를 확인했다. SAFE_DELETE 없음: 삭제·이동·절감 0.
-raw/operations_state/DB를 열거나 수정하지 않았다. 새 빈 일반 디렉터리
-`C:\Projects\_data\Stock\snapshots`를 준비했으며 다음 승인된 신규 output부터 사용한다.
+main과 linked worktree 8개의 Git 연결을 공식 repair로 복구하고 이전 branch/HEAD/status와 대조했다.
+현재 경로 계약·가상환경 제한은 [README](README.md#canonical-workspace)에 둔다.
+현재 코드/예시만 정리하며 아래 과거 구현·실행 경로는 당시 provenance로 보존한다.
+두 가상환경은 Python 직접 실행이 가능하지만 옛 launcher 경로가 남아 재생성을 권장한다.
+기존 dirty worktree 2개, raw/snapshot/과거 결과/migration-backup은 수정하지 않는다.
+Fast/production/경로/Operator/문서 합성 회귀 306개 통과(실패 1건 수정 후 해당 3개 재검증). push·PR·merge·Actions 및 추가 실제 연구 실행은 하지 않는다.
 
-## 현재 두 트랙
+## Fast Backtest v1 — IMPLEMENTED
 
-**수집기/native 트랙은 2026-09-28 실제 시장 세션까지 코드 freeze 상태다.**
-월요일 기본 경로는 현재 수집 계약에 따라 장전/NXT 보존을 먼저 고려하면서 최신 정상 collector로
-실제 수집을 우선한다. 별도 Mock FID read A-B-A는 정상 수집의 선행 필수 절차가 아니다.
-과거와 유사하게 프로세스가 살아 있는 동안 callback/accepted 진행이 멈추거나 silence 한도를 넘는
-feed 정지, Runtime/OpenAPI/native 오류가 재발하면 해당 세션 evidence를 보존하고 원인을 단정하지 않은 채
-기존 admission/run-plan/A-B-A 절차를 진단 fallback으로 사용한다. 정상 수집이 유지되면 A-B-A는 실행하지 않는다.
-실행 직전에는 공식 시장 운영, 최신 master, HANDOFF/COLLECTION_RUNBOOK, preflight, process/window/lease,
-저장공간과 fresh execution approval을 다시 확인한다. 그 전에는 FID hot path·새 진단 계층·OCX/QAx·
-queue/teardown/telemetry·#327/#162 원인 실험을 늘리지 않는다. 자동 kill/restart/relogin, Runtime 창 닫기,
-lock 삭제, LAA 변경, queue 확대, 기본 FID 축소도 하지 않는다.
+별도 worktree `C:\Projects\_worktrees\Stock\fast-backtest-v1`, branch
+`feat/fast-backtest-v1-20260925`, base `a8b9cac23ff1783aca8033626a91270ad79359f4`에서 구현했다.
+구현 checkpoint는 `080dd72`다. 시작 시 원격 master는 위 base였고 열린 PR은
+#20, #22, #23, #25, #26, #27, #28이었다. 최신 확인 master CI와 Session assessment regressions는
+성공 상태였다. push·PR·merge·Actions 수동 실행은 하지 않았다.
 
-**research/backtest/execution 트랙의
-`005930 selected-v2 actual accounting regression` 1회는 PASS로 완료했다.**
-추가 rerun·parameter tuning·실주문은 현재 목표가 아니다.
+구조:
 
-**execution/NXT portfolio runner의 `close_ns` 사전 검증 보강은 개발 후보에서 완료했다.**
-generic runner와 같은 positive exact-int 조건과 예외 메시지를 출력 생성 전에 적용했다.
-`None/False/True/0/-1/20.0/"20"/NaN/Infinity`가 입력 iteration과 output root 생성 전에
-거부되는 회귀를 추가했고, 지정한 adapter/simulator/accounting focused 검사는 101건 통과했다.
-실데이터·qualification·로그인·수집·주문·parameter tuning은 수행하지 않았다.
+```text
+historical EOD metadata
+  → cheap universe cut
+  → immutable verified OrderedTick cache
+  → causal feature cache
+  → canonical/deduplicated fast sweep (screening_only)
+  → deterministic top-N
+  → existing production exact replay
+  → parity/accounting 확인
+```
 
-Operator UX는 PR #45/#49/#50/#52까지 master에 통합됐다.
-`stock.cmd/stock.ps1`의 help/doctor/status/ui와 운영 화면의 상태·환경 요약은 사용 편의 계층이며,
-수집 준비·OCX 준비·시장 상태·데이터 품질·실행 승인을 만들지 않는다.
+주요 진입점은 `research/fast_backtest/`와 `scripts/run_fast_backtest.py`다.
+production exact fill/accounting 의미를 수정하거나 복제하지 않았고, fast 결과는 항상
+`screening_only=true`다. fast/exact 차이는 `FAST_EXACT_MISMATCH`로 보존한다.
+v1 runner는 한 거래일·한 종목을 지원한다. collector/OCX/login/구독/raw writer/native/FID 경로는
+수정하거나 실행하지 않았다.
 
+### 기존 실제 benchmark
 
-운영 화면에는 환경 목록과 분리된 **수집 전 읽기 전용 preflight**가 추가됐다.
-기존 collector admission의 process/window·lease·disk reader와 로그인 없는 공식 32-bit/OCX
-preflight만 재사용한다. 각 축을 PASS/WARN/BLOCKED/UNVERIFIED와 다음 확인으로 표시하지만,
-실행 대상 revision·CLI 계약과 시장 날짜·장 구간·실행 승인은 UNVERIFIED다. 시작 버튼과 연결하지 않으며
-설치·수정·로그인·구독·수집·kill/restart·lock 삭제·시장 조회·raw DB 접근은 하지 않는다.
-GitHub/PR 사실을 운영 PC의 현재 process/window/lease 상태로 승격하지 않는다.
+2026-09-21 `005930=unknown` 77,558건에서 #268 fast/exact parity와 저장된 exact 상위 10개 대조가
+PASS였다. 693 source records는 663 unique parameter로 고정했다. 2026-09-18 고정 holdout은 #268이
+양쪽 모두 no-trade였다. 상세 수치·artifact 경로는 [Fast Backtest v1](docs/FAST_BACKTEST_V1.md#benchmark-해석)과
+[2026-09-25 보존본](docs/archive/HANDOFF_20260925_PRE_COMPACT.md)에 둔다. 이 결과로 후보를 다시 튜닝하지 않는다.
 
-Operator UX의 preflight/Run Plan은 Windows 화면 확인까지 완료했다. 이번 후속은 운영 화면에서
-현재 사용자 바탕화면·시작 메뉴의 `Stock Operator.lnk`를 명시적 클릭으로 만들고 제거하는 진입점을 추가한다.
-바로가기는 현재 저장소 `stock.cmd ui`만 호출하며 관리자 권한·레지스트리·영구 실행 정책 변경이 없다.
-실제 Windows .lnk 생성 확인은 이 후보 병합 후 남는다. exe 패키징은 하지 않는다. [상세](START_HERE.md)
+### Historical universe / PIT
 
-## selected-v2에서 이미 확인한 것
+`causal_preopen`은 D 이전의 READY/VALID snapshot 중 timezone-aware `available_at`이 cutoff 이하인
+최신본만 선택한다. NOT_READY, availability 누락·지연, same-day EOD, 미래 observation은 fail-closed한다.
+현재 size filter는 `total_market_cap_proxy`이며 유통시총이 아니다. historical float 요청은 대체값 없이
+실패한다. `TODO-FLOAT-001`은 [BACKTEST_TODO](BACKTEST_TODO.md#fast-backtest-v1)에 유지한다.
 
-고정 scope:
-- source session `6f39117671c048f6b60477ceafbf40b6`
-- frozen snapshot run `24f657163264432da7af3ed533656eac`
-- 10:00:00 KST exclusive prefix
-- `005930=unknown`
-- schema `raw_v2_selected_prefix_qualification_v2`
-- policy `unknown_direction_recent_window_quarantine_v0`
-- strategy input 77,558 events
+### MWFD-02 shared market materialization
 
-이 범위에서 pipeline smoke, 대표 왕복 raw exact-seq audit, 동일 input/settings/code 재실행 재현성은 PASS다.
-따라서 **bounded selected strategy-research input**으로는 승인했다.
-하지만 strict prefix failure와 whole-stream 미평가를 유지한다.
-`performance_research`, whole-file FIRST_RESEARCH_CANDIDATE, NXT venue, whole raw, live 적격성은 미승격이다.
-기존 회귀/검증 트랙에서는 한 왕복 결과를 보고 threshold/exit/parameter를 조정하지 않는다. 단, 아래 명시한 2026-09-21 전용 exploratory profitability track에서는 in-sample 탐색임을 표시하고 entry/exit parameter search를 허용한다.
+별도 worktree `C:\Projects\TotalStock\worktrees\mwfd-02-causal-depth`, branch
+`feat/mwfd-02-causal-depth-20260925`에서 구현했다. causal/depth 구현 checkpoint는
+`e01f2c7b685eb53b40f819bbdd19eccdc29d262c`다. 원래 Fast HEAD `ac7a7a7`에서 분기했고
+기존 Fast worktree와 dirty profitability worktree는 수정하지 않았다.
 
-## actual accounting regression 결과
+2026-09-21 frozen bounded prefix를 code별 반복 없이 receive-order로 정확히 한 번 스캔했다.
+prefix 8,414,461 records, tick 8,400,558, control 13,903, 3,642 unique code×venue cell을
+확인해 source가 multi-code임을 입증했다. 모든 venue는 `unknown`이며 causal universe/NXT/whole-stream
+적격성으로 승격하지 않는다. source digest는
+`93e833dcb34cb6c28d0c40fcce346023636e0ff13c8a917a642748af8c73a712`다.
 
-PR #46~#48로 다음이 master에 들어왔다.
-- fee-inclusive weighted-average cost와 exact realized accounting
-- cash/accounting reconciliation
-- NXT result의 `performance_accounting_v1`
-- final fresh-valid-bid mark provenance
-- stale/missing/locked-crossed/invalid quote의 fail-closed unpriced 처리
+`fast_backtest_execution_depth_v1` companion cache는 quote 5,117,806행의 source FID 41..80
+10단계 ask/bid 가격·잔량 vector, notional, completeness/reason을 보존한다. 전체 raw_fields를 Fast
+cache에 복제하지 않았고, 미래 backfill·가격 추정·missing/0 보간·invalid quote 은폐를 하지 않는다.
+cache ID는 `71ab319e…b27cd7`, logical digest는 `47305c9f…07156`이며 전체 payload roundtrip을
+통과했다. source size/mtime 불변과 전후 sidecar 부재도 확인했다.
 
-지정 commit `6d878d93329c136157fbaaed61c4f950dddaea10`에서 frozen working DB와 고정 설정으로
-정확히 1회 실행했다. 과거 기준과 event/settings 및 모든 경제적 결과가 동일했고 77,558건 처리,
-final cash `997960.500`, position/open order/reject 0을 확인했다. `performance_accounting`은
-`flat_complete`, fill 2, realized/total `-4079/2`, equity `1995921/2`, reconciliation 모두 true다.
-**`005930 selected-v2 actual accounting regression: PASS`**.
-근거 anchor는 result run `ed5e78db61da4646ad186ac943c1c5f4`, reproducibility key
-`677bac5071d2ce07468ad909e6d6760764bf1f9a6e454ba30bc12f65a471780a`, valuation time
-`10877071329700`이다. 당시 전체 경로·mark provenance 문맥은 직전 master `6fa2ccdcbf0ea2431b81c52d3ed6fb0deec39fac`의 HANDOFF 원문에 남아 있다.
-이는 bounded execution/accounting 확인일 뿐 수익성·NXT venue·whole raw·live 적격성 승격이 아니다.
+cell admission은 eligible 1,286, no opportunity 1,938, insufficient depth 399,
+quality disqualified 12, not assessed 7이다. event gate는 PASS 2,175,048 / FAIL 719,298 /
+UNKNOWN 388,406(66.2568%), cell-equal 평균 19.0947%다. clock-time pass ratio는 14.8308%,
+cell-equal 평균 14.5045%다. 005930의 77,558 events와 PASS 67,217 / UNKNOWN 160 / FAIL 0은
+MWFD-01과 일치한다. 단일 pass는 6,135.999824초, tracemalloc peak 37,601,388 bytes,
+materialization output 약 1.5865 GB였다.
 
-## Independent actual input candidate 01 — PASS_NO_TRADE
+artifact는
+`C:\Projects\TotalStock\_data\mwfd_02\20260925T220712+0900-shared-market`에 create-only로 둔다.
+사람용 결론은 `report-ko.md`, 기계 집계는 `summary.json`/`market_inventory.json`, 다음 표본은
+`probe_admission.json`에 있다. 최종 Fast/causal/depth/parity/documentation 81개와 실제 cache 전체 roundtrip이
+통과했다. push/PR/merge/Actions, 663 sweep, tuning, production exact 대량 실행, OCX/login,
+2026-09-18 holdout 신규 탐색은 하지 않았다.
 
-사전등록한 두 번째 날짜 actual fixture를 Windows 네이티브 환경에서 완료했다.
+### 검증
 
-고정 scope:
-- source date/session: `2026-09-18 / 21f8c124e64e421893275ccdc83818ad`
-- bounded cutoff: `10:00:00 KST exclusive`
-- selected instrument: `005930=unknown`
-- policy: `unknown_direction_recent_window_quarantine_v0`
-- smoke settings: quantity 1 / cash 1,000,000 / fee 0.001 per-side / buy·sell·cancel latency 각 1초 / max quote age 2초 / cooldown 10초 / fixed exit
-- execution revision: `8e969ceafe3d296c834e9b365757bf616266a1e4`
+- Fast/PIT/cache/feature/sweep/exact bridge/end-to-end와 기존 production 관련 회귀: 173 passed.
+- documentation 링크·필수 연결·HANDOFF 크기 계약: 27 passed.
+- 새 모듈·세 benchmark CLI compileall: PASS.
+- `git diff --check`: PASS.
+- 실제 #268 9/21, #268 9/18, fast top-10 saved exact parity: 모두 PASS.
 
-Windows source protection과 frozen snapshot acquisition 1회, strict 10:00 prefix 구조 검증,
-selected-v2 overlay가 모두 PASS했다. 원본 identity·size·mtime은 전후 불변이며 source/working SHA가
-일치했다. `005930=unknown` 입력 30,800건 중 clean 30,799, unknown-direction quarantine 1쌍,
-zero-quote/disqualifying 0이었다. 실제 replay는 정확히 1회 `completed_no_fills`로 끝나
-signals/intents/fills/rejects/transitions 0, cash 1,000,000, position/open order 0을 기록했다.
-`performance_accounting`은 `flat_complete`, 모든 PnL 0, reconciliation 모두 true다.
-근거 anchor는 snapshot run `c43a255f907245eaa2f02124fadd6a0c`, source/working SHA-256
-`86e81bca2071545ff130d1e515ea6c0ae4bbf47169e256cefa8502a6e352cf29`, event SHA
-`ac1657b41dbaa7f1adde7f900b3c9ac9a78764f8041f7426b9ff08f43520537a`다.
+합성 회귀는 future leakage, rolling/timestamp/session 경계, no signal, single round trip,
+stop/trailing exit, spread·OBI·buy-ratio·volume·breakout reject, stale quote, no fill,
+parameter dedup, deterministic tie, top-N 호출과 mismatch 보존을 포함한다.
 
-**최종 판정: `Independent actual input candidate 01: PASS_NO_TRADE`.**
+## 유지하는 운영 상태와 차단 조건
 
-별개 날짜에서 전체 경로가 다시 성립했지만 체결·PnL 사례는 추가되지 않았다.
-성과·robustness·performance-research·NXT venue·whole raw·live 적격성은 미승격이다.
-과거 cutoff/종목을 바꾸지 않으며 candidate 02는 새 적격 source/session 전까지 자동 선택하지 않는다.
+수집기/native 트랙은 2026-09-28 실제 시장 세션 전까지 코드 freeze다. 실제 수집 판단 전에는
+COLLECTION_RUNBOOK의 collection-decision/live-boundary와 최신 master, process/window/lease,
+저장공간, fresh execution approval을 다시 확인한다. 자동 kill/restart/relogin, lock 삭제,
+추가 OCX 로그인, FID hot-path 실험, raw/operations_state 접근을 Fast Backtest 권한으로 실행하지 않는다.
 
-## Exploratory profitability track — 2026-09-21 전용 in-sample 개발
-
-사용자 목표에 따라 별도 **탐색용 트랙**을 연다.
-목표는 현재 사용 가능한 bounded actual 입력 하나에서라도 비용·지연을 포함해
-`performance_accounting.total_pnl > 0`인 전략 파라미터 조합을 찾는 것이다.
-
-개발 입력은 오직 기존 검증이 끝난
-`2026-09-21 / 10:00 KST exclusive / 005930=unknown / selected-v2`
-fixture로 고정한다. 이 날짜는 이제 **in-sample development set**으로 취급한다.
-2026-09-18 candidate 01과 이후 새 실제 날짜는 이 탐색에 사용하지 않는다.
-
-고정할 실행 가정:
-- quantity 1
-- initial cash 1,000,000
-- fee 0.001 per-side
-- buy/sell/cancel latency 각 1초
-- max quote age 2초
-- unknown-direction policy `unknown_direction_recent_window_quarantine_v0`
-- cutoff 10:00 KST exclusive
-- source/session/instrument 변경 없음
-
-탐색 가능한 것은 NXT breakout의 **entry/exit 파라미터**다.
-cutoff·날짜·종목·비용·지연·direction policy를 수익을 만들기 위해 바꾸지 않는다.
-
-1차 성공 기준은:
-- run status가 정상 완료
-- `performance_accounting.status=flat_complete`
-- fill_count >= 2
-- `total_pnl > 0`
-- cash/position/accounting reconciliation 모두 true
-
-이 성공은 **in-sample profitable candidate 발견**만 뜻한다.
-수익성·robustness·out-of-sample 성과·실전 적격성 주장이 아니다.
-탐색한 모든 조합과 결과를 보존하고, 성공 조합만 숨겨서 보고하지 않는다.
-후속 검증은 탐색에 사용하지 않은 새 날짜에서 별도로 한다.
-
-## Exploratory profitability search 01 — PROFITABLE_FOUND / candidate #268 동결
-
-2026-09-21 development set에서 총 693회 탐색을 완료했다.
-Stage A 243회는 positive 0, Stage B 450회에서 성공 조건을 모두 만족한 positive 80개를 찾았다.
-고유 parameter set은 663개다. selected-v2 입력 77,558건은 한 번만 재검증·materialize했고
-event SHA는 `a6fbcce85c321da1ee07f898f525537e8beb2361cc5769d08174935531741e48`다.
-
-**Primary candidate #268**을 후속 검증 대상으로 동결한다.
-
-고정 entry:
-- `spread_max_pct=0.0025`
-- `buy_ratio_min=0.55`
-- `obi_min_ratio=1.0`
-- `min_vol_15t=10`
-- `recent_ticks=15`
-- `breakout_window_sec=30`
-- `session_start_sec=32400`
-
-고정 exit:
-- rule `tick_trail`
-- `trail_ticks=5`
-- `stop_loss_pct=-0.0025`
-
-나머지 overheat/macro 설정은 해당 revision 기본값을 유지한다.
-실행 가정은 quantity 1 / cash 1,000,000 / fee 0.001 per-side /
-buy·sell·cancel latency 각 1초 / max quote age 2초 / cooldown 10초 /
-unknown-direction quarantine policy 유지다.
-
-9/21 in-sample 결과:
-- signals 2 / round trip 1 / fills 2
-- buy 264,000 → sell 269,000
-- total fees 533
-- `total_pnl=+4467`
-- final cash `1,004,467`
-- reconciliation 모두 true
-- baseline `-2039.5` 대비 `+6506.5`
-
-최초 positive #257은 fixed TP 0.012 / SL -0.005, total PnL +929였지만
-holdout primary는 탐색 종료 후 최고 PnL로 선택된 **#268 하나만** 사용한다.
-
-이 결과는 **2026-09-21 in-sample profitable candidate**일 뿐이다.
-693회 탐색 후 선택된 값이므로 과최적화 가능성이 높고, 수익성·robustness·실전 적격성을 뜻하지 않는다.
-
-### Holdout 01 사전등록 — 2026-09-18 / candidate #268
-
-2026-09-18 fixture는 profitability search에 사용하지 않았으므로 첫 holdout으로 사용한다.
-결과를 보기 전에 다음을 고정한다.
-
-- snapshot run `c43a255f907245eaa2f02124fadd6a0c`
-- 10:00 KST exclusive
-- `005930=unknown`
-- selected-v2 quarantine policy
-- selected strategy events 30,800
-- execution revision **`6fa2ccdcbf0ea2431b81c52d3ed6fb0deec39fac`**
-- candidate는 위 #268 exact params
-- 비용·지연·cash·quantity·cooldown은 9/21 탐색과 동일
-
-기존 9/18 snapshot/strict/selected evidence는 재생성하지 않는다.
-source/selected report identity를 먼저 재확인한 뒤 **actual replay를 정확히 1회** 실행한다.
-#268이 no-trade/손실이더라도 parameter를 바꾸거나 #257/다른 positive 후보를 같은 holdout에 이어서 시험하지 않는다.
-
-holdout 판정:
-- `HOLDOUT_POSITIVE`: flat_complete, fill>=2, total_pnl>0, reconciliation 모두 true
-- `HOLDOUT_NO_TRADE`: 정상 완료하지만 fill=0
-- `HOLDOUT_NONPOSITIVE`: 거래는 있으나 total_pnl<=0
-- `HOLDOUT_FAILED`: 입력/provenance/replay/accounting 계약 실패
-
-어느 결과도 한 날짜만으로 robustness를 확정하지 않는다.
-후속 새 날짜 검증 전 #268을 다시 튜닝하지 않는다.
-
-## 유지하는 차단 조건
-
-2026-09-21 원본은 약 50.6 GB이며 당시 보고된 0-byte WAL + 32 KiB SHM residue를 보존한다.
-whole-file stream integrity·전체 품질·FIRST_RESEARCH_CANDIDATE는 미완료다.
-원본/sidecar 처리와 qualification은 대상 identity·외부 reader/writer·namespace 격리·장외 시각·
-collector 부재·free space·I/O/time 예산·실패 보존 설계와 별도 승인이 필요하다.
-writable in-place cleanup, unsigned 방향 임의 보정, 유리한 종목/시간 사후 선택을 하지 않는다.
-
+두 핵심 snapshot `24f657…`, `c43a255…`와 profitability artifact는 KEEP_CORE다.
+삭제·이동하지 않는다. 2026-09-21 selected-v2는 bounded strategy-research input일 뿐
+strict prefix/whole stream/performance-research/NXT venue/live 적격성은 미승격이다.
 `venue=unknown`을 NXT 인증으로 바꾸지 않는다.
-Paper/Mock/Live 주문 어댑터와 live trading approval은 별도 미완료다.
-closed != data quality pass; sample clean != whole-file clean; stream integrity != research eligibility;
-qualification != strategy validation; backtest != live trading approval.
 
-## 개발/검증 원칙
+Candidate #268은 2026-09-21 in-sample에서 +4,467, 2026-09-18 holdout에서 no-trade다.
+두 날짜만으로 수익성·robustness·실전 적격성을 확정하지 않는다. 9/18 결과를 보고 parameter를
+변경하거나 같은 holdout에서 다른 후보를 시험하지 않는다.
 
-GitHub Actions는 작은 PR/커밋마다 자동 실행하지 않는다.
-일반 CI는 주간 정기 실행과 필요 시 수동 실행이며, focused/local 합성 검증과 실제 데이터·OCX 검증을 구분한다.
-통과 건수에 deselected/skipped나 중복 focused test를 더하지 않는다.
-운영 raw/dump/operations_state/`.venv32`/Daily_baseline/old_data/사용자 변경을 보존한다.
-live 중에는 master 병합 보류 규칙을 유지한다.
+### MWFD-03 45-cell runtime probe
 
-현재 상세 체크와 historical candidate 근거는 [BACKTEST_TODO](BACKTEST_TODO.md),
-코드 연결·진입점 차이는 [PIPELINE_MAP](docs/PIPELINE_MAP.md),
-이 압축 전의 상세 수치·파일 경로·PR별 기록은
-[2026-09-25 보존본](docs/archive/HANDOFF_20260925_PRE_COMPACT.md)에서 찾는다.
+전용 worktree `C:\Projects\TotalStock\worktrees\mwfd-03-runtime-probe`, branch
+`feat/mwfd-03-runtime-probe-20260926`에서 구현했다. 실행 코드 revision은 `220ddca`다.
+MWFD-02 `probe_admission.json`의 high/medium/low 각 15셀과 663 후보를 변경 없이 사용했다.
+50.6 GB raw는 8,414,461건 접두를 한 번만 순회해 179,123건 이벤트 캐시를 만들었고, 이후 실행은
+공유 depth cache와 이 이벤트 캐시만 사용했다.
+
+45셀·29,835 candidate-cell이 중복 없이 완료됐다. coldish 파이프라인 416.402초, 원천 캐시
+322.792초, warm smoke 27.661초, peak working set 323,891,200 bytes다. gate는 PASS 33,516 /
+FAIL 18,809 / UNKNOWN 6,084이며 MWFD-02 inventory와 일치한다. 45 checkpoint resume은 전부 skip,
+결과 파일 무재작성, digest 불변으로 PASS했다.
+
+1,286셀 단일 워커 추정은 15,522.747초(범위 11,833.331–22,400.368초), output 약 7.57 GB다.
+최종 판정은 `FULL_RUN_ADMITTED_WITH_CONDITIONS`: 동일 frozen identity, 단일 워커, create-only checkpoint,
+free-disk preflight, screening-only를 유지한다. 병렬 실행은 I/O·메모리 경합 probe 전에는 권장하지 않는다.
+artifact는 `C:\Projects\TotalStock\_data\mwfd_03\20260926T004154+0900-45-cell-runtime-probe`에 있다.
+
+### MWFD-04 1,286-cell full run
+
+전용 worktree `C:\Projects\TotalStock\worktrees\mwfd-04-full-run`, branch `feat/mwfd-04-full-run-20260926`.
+실행 코드 revision은 `6436255`이며, `7246308`은 provenance 밖 파일 2개(finalize, 호스트 한도 예외 드라이버)만
+추가했다. 1,286셀·852,618 candidate-cell이 완료됐고 모든 checkpoint의 code_revision은 `6436255` 하나다.
+셀 1–441(252 제외)은 Cowork Linux VM, 442–1286과 셀 252 retry는 로컬 Windows에서 실행했다.
+runtime은 호스트별로 해석한다. 호스트가 섞인 합계 20,686초는 MWFD-03 추정 범위 안이다.
+
+finalize 6단계, crosscheck(MWFD-03 45/45, 비분할 3/3), resumecheck, 직접 완료 검증 21/21이 PASS다.
+gate는 PASS 2,174,745 / FAIL 464,037 / UNKNOWN 177,682이며 MWFD-02 inventory와 일치한다. 미해결 failure는 0건이다.
+셀 252 failure 기록은 `failures_resolved/`에 보존했다. 예외 드라이버가 관여한 셀 279·252는 finalize crosscheck
+범위 밖이다. 일반 `CellRunner` 경로로 따로 재계산해 digest가 일치했다(279 8/8, 252 독립 3/3·retry 5/5).
+셀 252의 Linux 드라이버 중간 산출물은 남아 있지 않아 직접 비교하지 못했고, 최종 결과에는 쓰이지 않았다.
+
+`run_manifest.json`의 `candidate_family.source_path`는 Linux VM 경로로 남아 있다. Windows 재개는 manifest·코드
+수정 없이 임시 junction `C:\sessions\rcw-01fdfe2equdn5tenjzpcmaww\mnt\TotalStock` → `C:\Projects\TotalStock`으로
+우회했고, 완료 후 제거했다. 이 run root를 다시 실행하려면 같은 junction이 필요하다.
+보고서: `C:\Projects\TotalStock\_data\mwfd_04\MWFD-04_final_report_20260926.md`,
+검증 증거: 같은 폴더의 `verification\`. 사용자 진행 지시에 따라 이 인계에 반영했다(2026-09-26).
+
+## 다음 권장 작업
+
+MWFD-04 산출물(`factor_dataset_manifest.json`)을 입력으로 하는 MWFD-05는 별도 승인 후 진행한다.
+push·PR·merge와 `win_to_local`의 Linux 경로 처리 수정 여부는 컨트롤타워가 판단한다.
+threshold·후보 조정, production exact 대량 실행, holdout 재탐색은 여전히 허용 범위 밖이다.
+
+상세 실행 계약·benchmark·재현 명령은 [Fast Backtest v1](docs/FAST_BACKTEST_V1.md),
+현재 체크 항목은 [BACKTEST_TODO](BACKTEST_TODO.md), 코드 연결은
+[PIPELINE_MAP](docs/PIPELINE_MAP.md#fast-backtest-v1)에 둔다. 이전 운영/PR별 장문 기록은
+[2026-09-25 보존본](docs/archive/HANDOFF_20260925_PRE_COMPACT.md)을 필요할 때만 읽는다.

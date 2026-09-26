@@ -1,5 +1,7 @@
 # 첫 실데이터 시험 백테스트 체크리스트
 
+현재 파일 위치는 [canonical workspace](README.md#canonical-workspace)를 따른다. 과거 결과 경로는 당시 provenance로 보존한다.
+
 기준일: 2026-09-21. 목표는 **검증 가능한 실제 입력 하나로 원본 틱 → 신호 → 주문 → 체결 → 결과를 대조**하는 것이다.
 전략 수익성 입증과 실거래 운영 승인은 별도다. 원본 틱 재생이 주 경로이며 LOB/초봉 변환은 선행 조건이 아니다.
 
@@ -322,6 +324,22 @@ Primary candidate #268:
 - HOLDOUT_FAILED: 입력/replay/accounting 계약 실패
 
 holdout 결과를 본 뒤 #268을 다시 튜닝하지 않는다. 이후 새 날짜 검증과 분리한다.
+
+### Fast Backtest v1
+
+- [x] production exact engine을 변경하지 않는 screening-only package 추가
+- [x] `causal_preopen` 기본 / explicit `posthoc_same_day`와 non-causal 표시
+- [x] historical metadata adapter와 market/price/trading-value/total-market-cap cheap filter
+- [x] float-market-cap filter 요청 시 silent fallback 없이 explicit reject
+- [x] content-addressed verified event cache와 causal feature cache
+- [x] parameter canonicalization/dedup, deterministic ranking, top-N exact bridge
+- [x] mismatch를 `FAST_EXACT_MISMATCH`로 보존
+- [x] synthetic causality/rolling/rejection/parity/top-N 회귀
+- [ ] 여러 종목 × 여러 날짜 development panel 평가 — 이번 작업 범위 밖
+- [ ] `TODO-FLOAT-001`: 전종목 Kiwoom opt10001 daily free-float history pipeline
+
+현재 historical size filter basis는 `total_market_cap_proxy`다. 전체 시가총액을 유통시총이라고 부르지 않는다.
+상세 계약과 재현 명령은 [Fast Backtest v1](docs/FAST_BACKTEST_V1.md)을 따른다.
 
 ## 5. 첫 시험 이후 — 전략 평가
 

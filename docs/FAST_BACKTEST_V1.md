@@ -1,0 +1,289 @@
+# Fast Backtest v1
+
+Fast Backtest v1은 production exact backtest를 대체하지 않는 **research screening pipeline**이다.
+historical cheap universe와 검증된 normalized tick 입력을 한 번 고정한 뒤 causal feature를 한 번 계산하고,
+중복을 제거한 parameter candidate를 가볍게 순위화한다. 최종 판단은 상위 N개를 기존 production exact
+engine으로 다시 실행한 결과가 담당한다.
+
+```text
+historical EOD metadata
+  → cheap universe cut
+  → verified OrderedTick cache
+  → causal feature cache
+  → deduplicated fast sweep (screening_only)
+  → deterministic top-N
+  → production exact replay
+  → parity/accounting 확인
+```
+
+## 역할과 안전 경계
+
+- fast 결과는 항상 `screening_only=true`다.
+- production exact의 fill·accounting·reconciliation 의미를 복제하거나 바꾸지 않는다.
+- fast 결과와 exact 결과가 다르면 `FAST_EXACT_MISMATCH`를 보존한다. exact 값으로 fast 값을 덮지 않는다.
+- collector, OCX, 로그인, 구독, raw writer, telemetry, native/FID 진단 경로를 수정하거나 호출하지 않는다.
+- v1 runner는 한 run에 한 거래일·한 종목을 받는다. 여러 종목×여러 날짜 panel은 다음 단계다.
+- 입력 적격성은 caller provenance에서 상속한다. cache 생성이 whole-stream 또는 performance-research 적격성을 만들지 않는다.
+
+## Historical universe와 PIT 계약
+
+기본 `universe_mode`는 `causal_preopen`이다. 거래일 D에는 다음 조건을 모두 만족하는 실제 metadata
+snapshot 중 가장 최근 날짜를 쓴다.
+
+- `as_of_date < D`: D 당일 EOD와 미래 observation은 제외한다.
+- 모든 row의 `validation_status`가 명시적 allowlist(`READY`, `VALID`)에 든다.
+- 모든 row에 timezone-aware `available_at`이 있고 `available_at <= universe_decision_cutoff`이다.
+
+`NOT_READY`, 누락되거나 timezone-naive인 `available_at`, cutoff 이후 availability는 fail-closed한다.
+`captured_at`은 파일을 취득한 시각을 보존하는 provenance일 뿐 semantic availability를 대신하지 않는다.
+최신 과거 observation이 준비되지 않았더라도 더 이전의 유효 snapshot은 사용할 수 있다. 달력상 전날을
+임의 생성하지 않으며, 미래 파일을 입력에 추가해도 이미 고정된 과거 cutoff 선택은 변하지 않는다.
+
+`posthoc_same_day`는 `posthoc_same_day_opt_in=true`일 때만 허용하며 결과에
+`non_causal=true`, `screening_only=true`를 기록한다. 장 시작 전에 선택 가능했던 universe로 해석하지 않는다.
+
+지원하는 cheap filter는 시장, 종가, 거래대금, 전체 시가총액이다. threshold를 지정하지 않으면 no-op다.
+
+**현재 historical backtest의 size filter는 전체 시가총액이다. 유통시총 데이터로 가장하지 않는다.**
+
+manifest의 `size_filter_basis`는 `total_market_cap_proxy`, 원시 값은 `market_cap_krw`다.
+`min_float_market_cap` 또는 `max_float_market_cap`이 요청됐는데 historical float field가 없으면
+명시적으로 실패한다. 전체 시가총액으로 조용히 대체하지 않는다.
+
+## TODO-FLOAT-001
+
+**전종목 Kiwoom opt10001 daily free-float history pipeline**은 별도 후속이다. 이번 v1에는 구현하지 않았다.
+
+필요 범위:
+
+- 매 거래일 전 종목 유통비율·유통주식수·전체 시가총액 수집
+- source/provider, `captured_at`, raw observation 보존
+- retry, rate limit, completeness check, 누락 종목 탐지
+- 날짜별 immutable history, 자동 실행, 실패 알림·운영 상태
+- `float_market_cap` 파생
+
+**향후 Kiwoom opt10001 daily free-float history가 충분히 쌓이면 동일 기간에서
+total-market-cap filter와 float-market-cap filter를 비교한다.** 현재 값을 과거 날짜로 backfill하거나
+legacy `float=60`을 사용하지 않는다.
+
+## Plan contract
+
+`fast_backtest_plan_v1`은 다음을 고정한다.
+
+- trade dates, instruments, universe source/mode
+- historical metadata source, timezone-aware universe decision cutoff와 cheap filter spec
+- tick input provenance, cutoff
+- account assumptions
+- candidate source와 canonical parameter identities
+- deterministic top-N ranking
+- output directory, seed, code revision
+
+계획 digest는 정렬된 canonical JSON의 SHA-256이다. candidate file을 읽은 뒤 deduplicated identity 집합이
+plan과 다르면 실행하지 않는다.
+
+## Cache identity
+
+### Input cache
+
+`fast_backtest_input_cache_v1` identity:
+
+- source dataset identity
+- trade date, instrument, exclusive cutoff, policy
+- source, session_id
+- event count, canonical event SHA-256
+
+payload는 `events.jsonl`, 계약은 `manifest.json`으로 create-only content-addressed directory에 둔다.
+읽을 때 event count/digest와 receive order를 다시 검증한다.
+
+### Feature cache
+
+`fast_backtest_feature_cache_v1`은 input event digest와 다음 window family를 고정한다.
+
+- `recent_ticks`
+- `breakout_window_seconds`
+- `session_start_seconds`
+- `max_quote_age_ns`
+
+각 row는 현재 또는 이전 이벤트만 사용한다. prior breakout high는 현재 trade를 넣기 전에 계산하고,
+recent volume/buy ratio는 현재 trade까지 포함한다. exact second window boundary는 포함한다.
+unknown direction이 recent window에 남아 있으면 buy ratio는 unavailable이며 신규 진입을 막는다.
+
+### Execution-depth companion cache
+
+`fast_backtest_execution_depth_v1`은 기존 OrderedTick input cache에 `raw_fields` 전체를 복제하지 않는다.
+동결된 bounded prefix를 한 번 receive-order scan하면서 quote row에 대해서만 다음 최소 정보를 보존한다.
+
+- source/session, seq, received_ns, code, venue
+- source FID 41..50 ask price, 51..60 bid price, 61..70 ask size, 71..80 bid size
+- ask/bid 10단계 vector와 `sum(price_i * size_i)` notional
+- ask/bid/top-of-book의 COMPLETE/PARTIAL/INVALID 상태와 reason
+
+깊은 가격을 best price나 tick size로 추정하지 않고 missing·0·invalid level을 보간하지 않는다.
+invalid 새 quote도 이전 정상 quote로 바꾸지 않는다. cache identity에는 schema, source prefix digest,
+source file identity, cutoff와 관련 코드 provenance를 넣고 create-only로 게시한다. reader는 identity/count와
+선택적으로 전체 logical payload digest를 검증하며 source digest가 다르면 fail-closed한다. 원시 10단계
+vector를 보존하므로 spread, concentration, slope 같은 연속 파생값은 threshold 조정 없이 후속 계산할 수 있다.
+
+## Fast sweep와 exact bridge
+
+숫자 표현을 canonicalize한 parameter identity로 같은 candidate를 한 번만 계산하고 source alias를 보존한다.
+순위는 `net_pnl` 내림차순, canonical identity 오름차순이다. open position candidate는 v1 ranking에서 뒤로 둔다.
+
+fast simulator는 single-instrument, long-only, top-of-book screening model이다. quote freshness, displayed
+liquidity refresh, latency, fee, stop loss, fixed/tick/step trail을 반영하지만 production authoritative 결과가 아니다.
+상위 N개는 기존 `run_nxt_portfolio` 또는 selected-v2 public runner가 다시 실행한다.
+
+비교 항목:
+
+- entry/exit decision point
+- fill 수, round trip 수
+- net PnL
+- deterministic candidate ordering
+
+합성 회귀는 no signal, single buy/sell, stop loss, trailing exit, spread/OBI/buy-ratio/volume/breakout
+rejection, session boundary, stale quote, no fill, tie를 포함한다.
+
+## 실행
+
+현재 checkout은 `C:\Projects\TotalStock\worktrees\fast-backtest-v1`이다.
+[경로 계약](../README.md#canonical-workspace)을 따르며 cache/output은
+`C:\Projects\TotalStock\_data\fast_backtest` 아래 새 run 디렉터리를 지정한다.
+현재 KRX CSV는 `C:\Projects\TotalStock\_data\krx_pit_probe\20260925T173445+0900-01\normalized\20260918.csv`다.
+과거 plan/result의 경로와 digest는 수정하지 않는다. 아래 명령은 예시이며 자동 실행하지 않는다.
+
+
+일반 normalized 입력:
+
+```powershell
+C:\Projects\TotalStock\Stock\.venv\Scripts\python.exe scripts\run_fast_backtest.py `
+  --plan C:\path\plan.json `
+  --metadata-csv C:\path\historical-metadata.csv `
+  --events-jsonl C:\path\verified-ordered-ticks.jsonl `
+  --candidates C:\path\candidates.json
+```
+
+고정 #268 selected-v2 reference benchmark:
+
+```powershell
+C:\Projects\TotalStock\Stock\.venv\Scripts\python.exe scripts\benchmark_fast_backtest_reference.py `
+  --raw C:\path\frozen-working.db `
+  --selected-report C:\path\selected-prefix-result.json `
+  --output-root C:\Projects\TotalStock\_data\fast_backtest\<run-id>
+```
+
+보존된 materialized input/exact 결과와 전체 고유 후보 benchmark:
+
+```powershell
+C:\Projects\TotalStock\Stock\.venv\Scripts\python.exe scripts\benchmark_fast_backtest_saved_reference.py `
+  --events-jsonl C:\path\materialized_events.jsonl `
+  --exact-result C:\path\production-result.json `
+  --trade-date 2026-09-21 `
+  --candidate-id 268 `
+  --output-root C:\Projects\TotalStock\_data\fast_backtest\<run-id>
+
+C:\Projects\TotalStock\Stock\.venv\Scripts\python.exe scripts\benchmark_fast_backtest_full_sweep.py `
+  --events-jsonl C:\path\materialized_events.jsonl `
+  --summary-jsonl C:\path\summary.jsonl `
+  --strict-report C:\path\strict-result.json `
+  --exact-top-n 10 `
+  --output-root C:\Projects\TotalStock\_data\fast_backtest\<run-id>
+```
+
+두 명령 모두 output directory를 새로 만들며 덮어쓰지 않는다. 대용량 cache/result는 Git에 넣지 않는다.
+
+## Benchmark 해석
+
+실제 benchmark 입력은 `2026-09-21 / 005930 / 10:00 KST exclusive / selected-v2` 77,558건과
+기존 탐색의 693 records/663 unique parameter다. materialized event 원본 SHA-256은
+`a6fbcce85c321da1ee07f898f525537e8beb2361cc5769d08174935531741e48`다.
+
+- #268: verified input cache 2.143초, feature build 11.768초, fast 평가 0.093초, 총 16.154초.
+  production exact와 의사결정 시점·2 fills·1 trade·fee 533·net PnL `+4467`이 모두 같아 parity `PASS`다.
+- frozen raw에서 selected-v2를 다시 보호 검증한 별도 #268 측정은 event materialization 1,651.357초,
+  cache 7.026초, feature 44.831초, fast 0.401초, production exact 1,593.937초,
+  총 3,316.661초, peak traced memory 213,372,197 bytes였고 parity `PASS`다.
+  이 실행은 `tracemalloc`을 켠 50.6 GB raw 보호 스캔 2회를
+  포함하므로 아래 materialized-input sweep과 같은 성능 구간으로 비교하지 않는다.
+- 전체 663 unique: cache 2.167초, feature build 45.689초, sweep 62.924초,
+  cache 포함 총 113.236초. sweep 평균은 후보당 약 0.095초다.
+- 전체 benchmark peak working set은 266,194,944 bytes, output/cache 합계는 77,299,018 bytes다.
+- fast 상위 10개는 보존된 production exact 결과와 모두 parity `PASS`였다. 해당 exact run elapsed 합은
+  188.820초이며 이번 benchmark는 이를 새로 실행하지 않고 저장 결과를 대조했다.
+- `2026-09-18` 고정 holdout 30,800건도 #268 fast/exact가 signal/fill/trade 0, PnL 0으로 parity `PASS`다.
+
+과거 production exact baseline은 693회(고유 parameter 663개), 개별 run elapsed 합계 11,918.286초다.
+fast sweep 구간만 비교하면 약 189배, cache·feature까지 포함하면 약 105배 규모의 차이다. 다만 과거 값은
+개별 exact elapsed의 합이고 새 값은 한 프로세스 wall-clock이므로 동일 정의의 공식 speedup으로 해석하지 않는다.
+fast의 순위와 PnL은 계속 screening-only이며 최종 top-N은 production exact가 판정한다.
+
+근거 artifact:
+
+- `C:\Projects\_data\Stock\fast_backtest\20260925T190000+0900-reference-268-saved\benchmark.json`
+- `C:\Projects\_data\Stock\fast_backtest\20260925T183131+0900-reference-268\benchmark.json`
+- `C:\Projects\_data\Stock\fast_backtest\20260925T190100+0900-full-663-top10\benchmark.json`
+- `C:\Projects\_data\Stock\fast_backtest\20260925T185500+0900-holdout-268\benchmark.json`
+
+## MWFD-03 45-cell runtime probe
+
+MWFD-02의 `probe_admission.json`이 고정한 45개 셀(high/medium/low 각 15개)과 기존 693행에서
+deduplicate한 663개 후보를 사용한다. 셀은 PnL이 아니라 event-count tercile과
+`SHA256(session_id|cell_id)` 순서로 선정한다. 표본·후보 identity가 바뀌면 Phase 0에서 중단한다.
+
+실행 순서는 다음과 같다.
+
+1. frozen raw의 bounded prefix를 receive order로 한 번만 읽어 45셀 이벤트 cache를 create-only로 만든다.
+2. 각 계층 첫 셀 3개를 실행해 구조·유한값·후보 수를 검증한다.
+3. 나머지 42개를 셀별 atomic checkpoint로 실행한다.
+4. 대표 3셀은 저장된 gate/feature cache를 읽어 결과 digest를 다시 확인한다.
+5. resume check는 45 checkpoint를 건너뛰고 결합 결과 파일이 바뀌지 않았음을 확인한다.
+
+execution feasibility는 각 trade receipt 시점에서 이미 수신된 최신 depth만 exact join한다. 새 invalid/partial
+quote가 오면 이전 정상 quote를 대신 쓰지 않으며 미래 quote로 backfill하지 않는다. PASS/FAIL/UNKNOWN은
+서로 구분한다. 게이트는 **신규 진입 평가만** 막고 history·기존 position·exit 처리는 제거하지 않는다.
+
+실제 run `20260926T004154+0900-45-cell-runtime-probe` 결과:
+
+- 45셀, 663후보, 29,835 candidate-cell, 실패·중복 0
+- source event cache: 8,414,461건 1회 scan → 179,123건, 322.792초
+- coldish 45셀 pipeline: 416.402초; warm 3셀: 27.661초
+- peak working set 323,891,200 bytes; run artifact 261,103,126 bytes
+- gate PASS 33,516 / FAIL 18,809 / UNKNOWN 6,084, reconciliation PASS
+- 1,286셀 단일 워커: 15,522.747초(11,833.331–22,400.368초), 약 7.57 GB 추정
+- warm identity와 checkpoint resume PASS
+- 최종 `FULL_RUN_ADMITTED_WITH_CONDITIONS`
+
+조건부 허용은 동일 frozen source/sample/candidate/cache identity, 단일 워커, create-only checkpoint,
+free-disk preflight, screening-only에 한한다. 병렬 워커는 SQLite I/O와 워커별 feature/result memory 경합을
+측정하지 않았으므로 별도 contention probe 전에는 권장하지 않는다. 추정은 실제 전체 실행 시간이 아니다.
+
+재현 진입점:
+
+```powershell
+C:\Projects\TotalStock\Stock\.venv\Scripts\python.exe -m scripts.materialize_mwfd_03_probe_events `
+  --raw C:\path\frozen-working.db `
+  --snapshot-result C:\path\snapshot-result.json `
+  --prefix-report C:\path\prefix-result.json `
+  --mwfd02-root C:\path\mwfd-02-run `
+  --candidate-summary C:\path\summary.jsonl `
+  --output-dir C:\Projects\TotalStock\_data\mwfd_03\<new-run-id> `
+  --code-revision <git-sha>
+
+C:\Projects\TotalStock\Stock\.venv\Scripts\python.exe -m scripts.run_mwfd_03_probe `
+  --run-root C:\Projects\TotalStock\_data\mwfd_03\<new-run-id> `
+  --mwfd02-root C:\path\mwfd-02-run `
+  --candidate-summary C:\path\summary.jsonl `
+  --code-revision <git-sha>
+```
+
+사람용 결론은 run root의 `report-ko.md`, 기계 판정은 `runtime_summary.json`, `gate_summary.json`,
+`runtime_projection.json`, `full_run_admission.json`, `resume_validation.json`에 있다. 이 실행에서
+production exact 대량 실행, 후보/threshold 튜닝, OCX/login/live, 2026-09-18 holdout 신규 탐색은 하지 않았다.
+
+## 알려진 한계
+
+- historical free-float ratio/shares/market cap 미지원
+- total market cap은 float market cap이 아님
+- 한 run 한 종목·한 날짜
+- fast는 screening-only이며 exact accounting을 대신하지 않음
+- selected-v2 adapter의 input eligibility와 whole-stream 차단 조건을 승격하지 않음
+- #268 evidence는 2026-09-21 development input과 고정 2026-09-18 holdout 범위에 한정됨
