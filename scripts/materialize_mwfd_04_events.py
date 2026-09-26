@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 try:
     import resource
 except ImportError:  # Windows
@@ -83,19 +84,43 @@ def peak_rss_bytes() -> int | None:
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
 
 
-def win_to_local(path: str, total_stock_root: Path) -> Path:
-    """manifest의 Windows 경로(C:\\Projects\\TotalStock\\...)를 현재 호스트 경로로 해석한다."""
-    prefix = "C:\\Projects\\TotalStock\\"
-    if os.name == "nt" or not path.startswith(prefix):
-        return Path(path)
-    return total_stock_root / path[len(prefix):].replace("\\", "/")
+WINDOWS_TOTAL_STOCK_ROOT = "C:\\Projects\\TotalStock\\"
+# Cowork Linux VM은 C:\Projects\TotalStock을 /sessions/<session-id>/mnt/TotalStock에 mount한다.
+# session-id는 세션마다 바뀌므로 경로 해석에 쓰지 않는다.
+LINUX_VM_MOUNT = re.compile(r"^/sessions/[^/]+/mnt/TotalStock/(?P<rel>.+)$")
 
 
-def local_to_win(path: Path, total_stock_root: Path) -> str:
-    if os.name == "nt":
+def _under_root(total_stock_root: Path, parts: list[str]) -> Path:
+    if not parts or any(part in ("", ".", "..") for part in parts):
+        raise ValueError(f"unsafe TotalStock-relative path: {'/'.join(parts)!r}")
+    return total_stock_root.joinpath(*parts)
+
+
+def win_to_local(path: str, total_stock_root: Path, *, host_os: str | None = None) -> Path:
+    """manifest 경로를 현재 호스트 경로로 해석한다.
+
+    Windows 경로(C:\\Projects\\TotalStock\\...)는 Windows에서는 그대로, 다른 호스트에서는
+    total_stock_root 기준으로 바꾼다. 이전 run이 기록한 Linux VM mount 경로
+    (/sessions/<id>/mnt/TotalStock/...)는 어느 호스트에서든 total_stock_root 기준으로 바꾼다.
+    """
+    host_os = os.name if host_os is None else host_os
+    if path.startswith(WINDOWS_TOTAL_STOCK_ROOT):
+        if host_os == "nt":
+            return Path(path)
+        return _under_root(total_stock_root, path[len(WINDOWS_TOTAL_STOCK_ROOT):].split("\\"))
+    mounted = LINUX_VM_MOUNT.match(path)
+    if mounted:
+        return _under_root(total_stock_root, mounted["rel"].split("/"))
+    return Path(path)
+
+
+def local_to_win(path: Path, total_stock_root: Path, *, host_os: str | None = None) -> str:
+    """현재 호스트 경로를 manifest용 Windows 경로로 기록한다(호스트와 무관한 표기)."""
+    host_os = os.name if host_os is None else host_os
+    if host_os == "nt":
         return str(path)
     rel = Path(path).resolve().relative_to(total_stock_root.resolve())
-    return "C:\\Projects\\TotalStock\\" + str(rel).replace("/", "\\")
+    return WINDOWS_TOTAL_STOCK_ROOT + "\\".join(rel.parts)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -241,7 +266,8 @@ def phase0(args, run_root: Path, root: Path) -> int:
         "evaluator": "Fast screening/research evaluator; production exact remains authoritative",
         "source": source | {"snapshot_result": local_to_win(snapshot_path, root)},
         "population": population.manifest(),
-        "candidate_family": family.manifest(),
+        # family.source_path는 호스트에서 resolve한 경로이므로 다른 경로 필드처럼 Windows 표기로 기록한다.
+        "candidate_family": family.manifest() | {"source_path": local_to_win(family_source, root)},
         "shared_cache": probe_manifest["shared_cache"] | {"execution_depth_file_sha256": depth_file_sha},
         "mwfd02_root": local_to_win(mwfd02, root),
         "mwfd03_probe_root": local_to_win(probe_root, root),
