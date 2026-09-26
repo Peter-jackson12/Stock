@@ -107,7 +107,7 @@ parameter dedup, deterministic tie, top-N 호출과 mismatch 보존을 포함한
 
 ## 유지하는 운영 상태와 차단 조건
 
-수집기/native 트랙은 2026-09-28 실제 시장 세션 전까지 코드 freeze다. 실제 수집 판단 전에는
+수집기/native 트랙은 2026-09-28 실제 시장 세션 전까지 코드 freeze다. 침묵·큐 적체 P2 수정 PR([기록](docs/PIPELINE_AUDIT_REMEDIATION_20260926.md#collector-p2))도 그 뒤 병합한다. 실제 수집 판단 전에는
 COLLECTION_RUNBOOK의 collection-decision/live-boundary와 최신 master, process/window/lease,
 저장공간, fresh execution approval을 다시 확인한다. 자동 kill/restart/relogin, lock 삭제,
 추가 OCX 로그인, FID hot-path 실험, raw/operations_state 접근을 Fast Backtest 권한으로 실행하지 않는다.

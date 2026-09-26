@@ -47,7 +47,6 @@ LOG_DIR = PROJECT_ROOT / "logs"
 
 from collector.kiwoom.session_monitor import (                         # noqa: E402
     DEFAULT_GAP_THRESHOLD_SEC,
-    DEFAULT_QUEUE_BACKLOG_FLOOR,
     DEFAULT_QUEUE_STUCK_WINDOW_SEC,
     SessionLog,
     SessionMonitor,
@@ -59,7 +58,8 @@ from collector.kiwoom.resource_log import ResourceHistory  # noqa: E402
 from collector.kiwoom.session_transition import SessionTransition, write_transition_record, KST  # noqa: E402
 from collector.kiwoom.subscription_plan import MODE_NXT, build_plan  # noqa: E402
 from collector.kiwoom.tick_writer import TickWriter  # noqa: E402
-from collector.kiwoom.live_capture import LiveRawCapture, TRADE_FIDS, QUOTE_FIDS  # noqa: E402
+from collector.kiwoom.live_capture import (  # noqa: E402
+    LiveRawCapture, QUEUE_BATCH_SIZE, QUEUE_CAPACITY, TRADE_FIDS, QUOTE_FIDS)
 from collector.kiwoom.ocx_teardown import OcxTeardown, record_phase  # noqa: E402
 from collector.kiwoom.capture_telemetry import CaptureTelemetry, observe  # noqa: E402
 from collector.kiwoom.fid_read_ab_diagnostic import (  # noqa: E402
@@ -78,7 +78,7 @@ class KiwoomUniverseLogger:
         self,
         *,
         gap_threshold_sec: float = DEFAULT_GAP_THRESHOLD_SEC,
-        queue_backlog_floor: int = DEFAULT_QUEUE_BACKLOG_FLOOR,
+        queue_backlog_floor: int | None = None,
         queue_stuck_window_sec: float = DEFAULT_QUEUE_STUCK_WINDOW_SEC,
         storage="raw-v2",
         code_revision=None,
@@ -229,6 +229,10 @@ class KiwoomUniverseLogger:
         self._gap_threshold_sec = gap_threshold_sec
         self._queue_backlog_floor = queue_backlog_floor
         self._queue_stuck_window_sec = queue_stuck_window_sec
+        # raw-v2 는 bounded 큐라 적체 바닥을 실제 capacity 에서 정한다. raw-v1 은 무한
+        # queue.Queue 라 capacity 가 없고 기존 바닥을 쓴다(SessionMonitor 기본값).
+        self._queue_limits = (dict(queue_capacity=QUEUE_CAPACITY, queue_batch_size=QUEUE_BATCH_SIZE)
+                              if storage == "raw-v2" else {})
 
         # 수신 침묵 감시기 + 대기큐 적체 감시기(발견 #13). 판정은 _stats_worker 의
         # 기존 1초 루프에서만 돈다.
@@ -237,6 +241,7 @@ class KiwoomUniverseLogger:
             gap_threshold_sec=gap_threshold_sec,
             queue_backlog_floor=queue_backlog_floor,
             queue_stuck_window_sec=queue_stuck_window_sec,
+            **self._queue_limits,
         )
         # 메모리 추이 기록. 상태 파일은 덮어쓰이므로 별도 이력을 남긴다.
         # raw v2 세션 폴더가 로그인 뒤에야 정해지므로 여기서는 자리만 잡는다.
@@ -676,6 +681,7 @@ class KiwoomUniverseLogger:
                 gap_threshold_sec=self._gap_threshold_sec,
                 queue_backlog_floor=self._queue_backlog_floor,
                 queue_stuck_window_sec=self._queue_stuck_window_sec,
+                **self._queue_limits,
             )
             self.monitor.start()
             self.resources = ResourceHistory(
