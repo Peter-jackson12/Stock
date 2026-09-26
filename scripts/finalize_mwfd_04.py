@@ -41,6 +41,118 @@ from scripts.materialize_mwfd_04_events import win_to_local
 KST = timezone(timedelta(hours=9))
 OUTPUTS = ("candidate_cell_results.jsonl", "cell_results.jsonl", "cell_factors.jsonl", "trades.jsonl")
 FORBIDDEN_DAILY_KEYS = ("market_cap", "trading_value", "listed_shares", "marcap")
+SUMMARY_OUTPUTS = (
+    "candidate_summary.jsonl",
+    "full_run_summary.json",
+    "gate_summary.json",
+    "runtime_summary.json",
+    "factor_dataset_manifest.json",
+)
+
+
+def _crosscheck_passes(result: dict) -> bool:
+    return (
+        result.get("mwfd03_45_cell_economic_digest", {}).get("status") == "PASS"
+        and result.get("unchunked_recompute", {}).get("status") == "PASS"
+    )
+
+
+def _resumecheck_passes(result: dict) -> bool:
+    return result.get("status") == "PASS"
+
+
+def _file_stats(path: Path) -> dict:
+    digest = hashlib.sha256()
+    rows = 0
+    size = 0
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(block)
+            size += len(block)
+            rows += block.count(b"\n")
+    return {"path": path.name, "rows": rows, "bytes": size, "sha256": digest.hexdigest()}
+
+
+def _write_jsonl_atomic(path: Path, rows) -> None:
+    temp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    with temp.open("w", encoding="utf-8", newline="\n") as stream:
+        for row in rows:
+            stream.write(canonical_json(row) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temp, path)
+
+
+def _summary_marker_valid(run_root: Path, marker: dict) -> bool:
+    if marker.get("schema") != "mwfd_04_summarize_completion_v1" or marker.get("status") != "COMPLETED":
+        return False
+    outputs = marker.get("outputs")
+    if not isinstance(outputs, dict) or set(outputs) != set(SUMMARY_OUTPUTS):
+        return False
+    for name in SUMMARY_OUTPUTS:
+        path = run_root / name
+        expected = outputs.get(name)
+        if not path.is_file() or not isinstance(expected, dict):
+            return False
+        if path.stat().st_size != expected.get("bytes") or sha256_file(path) != expected.get("sha256"):
+            return False
+    return True
+
+
+def _completion_gate_errors(run_root: Path, entries_by_name: dict[str, dict]) -> list[str]:
+    errors: list[str] = []
+    required = ("combine.json", "crosscheck.json", "resume_validation.json", "summarize.json")
+    for name in required:
+        if name not in entries_by_name:
+            errors.append(f"missing:{name}")
+    if errors:
+        return errors
+
+    combine = read_json(run_root / "combine.json")
+    if combine.get("status") != "COMPLETED":
+        errors.append("combine:not_completed")
+    for name in OUTPUTS:
+        expected = combine.get("outputs", {}).get(name)
+        actual = entries_by_name.get(name)
+        if not isinstance(expected, dict) or actual is None:
+            errors.append(f"combine_output_missing:{name}")
+            continue
+        if expected.get("sha256") != actual.get("sha256") or expected.get("bytes") != actual.get("bytes"):
+            errors.append(f"combine_output_mismatch:{name}")
+
+    crosscheck = read_json(run_root / "crosscheck.json")
+    if not _crosscheck_passes(crosscheck):
+        errors.append("crosscheck:FAIL")
+    resume = read_json(run_root / "resume_validation.json")
+    if not _resumecheck_passes(resume):
+        errors.append("resumecheck:FAIL")
+    summarize = read_json(run_root / "summarize.json")
+    if not _summary_marker_valid(run_root, summarize):
+        errors.append("summarize:INVALID")
+
+    summary = read_json(run_root / "full_run_summary.json")
+    coverage = summary.get("coverage", {})
+    if coverage.get("cells_completed") != EXPECTED_CELLS:
+        errors.append("coverage:cells")
+    if coverage.get("candidates") != EXPECTED_CANDIDATES:
+        errors.append("coverage:candidates")
+    if coverage.get("candidate_cell_evaluations") != EXPECTED_CELLS * EXPECTED_CANDIDATES:
+        errors.append("coverage:candidate_cells")
+    if coverage.get("duplicate_count") != 0:
+        errors.append("coverage:duplicates")
+    if coverage.get("failure_count") != 0:
+        errors.append("coverage:failures")
+
+    gate = read_json(run_root / "gate_summary.json")
+    if gate.get("reconciled") is not True:
+        errors.append("gate:not_reconciled")
+    if gate.get("mwfd02_inventory_match") is not True:
+        errors.append("gate:inventory_mismatch")
+
+    unresolved = list((run_root / "failures").glob("*.json")) if (run_root / "failures").exists() else []
+    if unresolved:
+        errors.append(f"unresolved_failures:{len(unresolved)}")
+    return errors
 
 
 def now() -> str:
@@ -142,10 +254,63 @@ def command_combine(args, env: Env) -> int:
         print(json.dumps({"status": "NOT_ALL_CELLS_COMPLETE", "missing": len(missing),
                           "first_missing": missing[0].cell_id}))
         return 2
-    writers = {name: ResumableConcatWriter(env.run_root / name) for name in OUTPUTS}
-    if all((env.run_root / name).exists() for name in OUTPUTS):
-        print(json.dumps({"status": "ALREADY_COMBINED"}))
+    combine_path = env.run_root / "combine.json"
+    if combine_path.exists():
+        record = read_json(combine_path)
+        if record.get("status") != "COMPLETED":
+            raise ValueError("combine completion marker is not COMPLETED")
+        missing_outputs = [name for name in OUTPUTS if not (env.run_root / name).is_file()]
+        if missing_outputs:
+            raise ValueError(f"combine marker exists but outputs are missing: {missing_outputs}")
+        print(json.dumps({"status": "ALREADY_COMBINED", "validation": "PASS"}))
         return 0
+
+    writers = {name: ResumableConcatWriter(env.run_root / name) for name in OUTPUTS}
+    published = {name: writer.final.exists() for name, writer in writers.items()}
+    final_ledger = env.run_root / "combine_ledger.jsonl"
+    temp_ledger = env.run_root / ".combine_ledger.jsonl"
+    if any(published.values()) or final_ledger.exists():
+        ledger_source = final_ledger if final_ledger.exists() else temp_ledger
+        if not ledger_source.exists():
+            raise ValueError("published combine output exists without ledger")
+        ledger_rows = [json.loads(line) for line in ledger_source.read_text().splitlines()]
+        if [row["cell_id"] for row in ledger_rows] != [cell.cell_id for cell in env.population.cells]:
+            raise ValueError("combine recovery ledger is incomplete or out of order")
+        for row, cell in zip(ledger_rows, env.population.cells):
+            completion = read_json(env.checkpoints / checkpoint_name(cell) / "completion.json")
+            if row.get("candidate_results_digest") != completion.get("candidate_results_digest"):
+                raise ValueError(f"combine recovery economic digest mismatch: {cell.cell_id}")
+            if row.get("file_digest") != completion.get("candidate_results_file_digest"):
+                raise ValueError(f"combine recovery serialization digest mismatch: {cell.cell_id}")
+        results = {}
+        for name, writer in writers.items():
+            if writer.final.exists():
+                results[name] = _file_stats(writer.final)
+            else:
+                state = writer.open()
+                if state["next_cell"] != EXPECTED_CELLS:
+                    writer.close()
+                    raise ValueError(f"combine recovery output {name} is not fully committed")
+                results[name] = writer.finalize()
+        if results["candidate_cell_results.jsonl"]["rows"] != EXPECTED_CELLS * EXPECTED_CANDIDATES:
+            raise ValueError("candidate-cell expected count reconciliation failed")
+        if results["cell_results.jsonl"]["rows"] != EXPECTED_CELLS:
+            raise ValueError("cell count reconciliation failed")
+        if not final_ledger.exists():
+            os.replace(temp_ledger, final_ledger)
+        record = {
+            "schema": "mwfd_04_combine_v1", "status": "COMPLETED", "completed_at": now(),
+            "outputs": results, "cells": len(ledger_rows),
+            "candidate_cell_rows": results["candidate_cell_results.jsonl"]["rows"],
+            "per_cell_economic_digest_list_digest": json_digest([row["candidate_results_digest"] for row in ledger_rows]),
+            "checks": {"all_checkpoints_verified": True, "candidate_order_frozen": True, "no_duplicate_pairs": True,
+                       "finite_values": True, "daily_metadata_absent": True, "gate_reconciled_per_cell": True,
+                       "publication_recovered": True},
+        }
+        write_json_create(combine_path, record)
+        print(json.dumps({"status": "COMBINED_RECOVERED", "rows": record["candidate_cell_rows"]}))
+        return 0
+
     states = {name: writer.open() for name, writer in writers.items()}
     positions = {state["next_cell"] for state in states.values()}
     if len(positions) != 1:
@@ -212,8 +377,8 @@ def command_combine(args, env: Env) -> int:
         "checks": {"all_checkpoints_verified": True, "candidate_order_frozen": True, "no_duplicate_pairs": True,
                    "finite_values": True, "daily_metadata_absent": True, "gate_reconciled_per_cell": True},
     }
-    write_json_create(env.run_root / "combine.json", record)
     os.replace(ledger_path, env.run_root / "combine_ledger.jsonl")
+    write_json_create(env.run_root / "combine.json", record)
     print(json.dumps({"status": "COMBINED", "rows": record["candidate_cell_rows"],
                       "wall_seconds": time.perf_counter() - started}))
     return 0
@@ -225,8 +390,10 @@ def command_crosscheck(args, env: Env) -> int:
     target = env.run_root / "crosscheck.json"
     state_path = env.run_root / ".crosscheck_state.json"
     if target.exists():
-        print(json.dumps({"status": "ALREADY_DONE"}))
-        return 0
+        result = read_json(target)
+        passed = _crosscheck_passes(result)
+        print(json.dumps({"status": "ALREADY_DONE", "validation": "PASS" if passed else "FAIL"}))
+        return 0 if passed else 3
     state = read_json(state_path) if state_path.exists() else {"mwfd03": None, "rechunk": {}}
     probe_root = win_to_local(env.manifest["mwfd03_probe_root"], env.root)
     if state["mwfd03"] is None:
@@ -288,17 +455,20 @@ def command_crosscheck(args, env: Env) -> int:
     }
     write_json_create(target, result)
     state_path.unlink()
+    passed = _crosscheck_passes(result)
     print(json.dumps({"status": "DONE", "mwfd03": result["mwfd03_45_cell_economic_digest"]["status"],
                       "unchunked": result["unchunked_recompute"]["status"]}))
-    return 0
+    return 0 if passed else 3
 
 
 def command_resumecheck(args, env: Env) -> int:
     from scripts.run_mwfd_04_full import CellRunner, Context
     target = env.run_root / "resume_validation.json"
     if target.exists():
-        print(json.dumps({"status": "ALREADY_DONE"}))
-        return 0
+        result = read_json(target)
+        passed = _resumecheck_passes(result)
+        print(json.dumps({"status": "ALREADY_DONE", "validation": "PASS" if passed else "FAIL"}))
+        return 0 if passed else 3
     combined = env.run_root / "candidate_cell_results.jsonl"
     before = sha256_file(combined)
     completions_before = json_digest([read_json(env.checkpoints / checkpoint_name(c) / "completion.json")
@@ -339,8 +509,12 @@ def command_resumecheck(args, env: Env) -> int:
 def command_summarize(args, env: Env) -> int:
     started = time.perf_counter()
     run_root = env.run_root
-    if (run_root / "full_run_summary.json").exists():
-        print(json.dumps({"status": "ALREADY_DONE"}))
+    marker_path = run_root / "summarize.json"
+    if marker_path.exists():
+        marker = read_json(marker_path)
+        if not _summary_marker_valid(run_root, marker):
+            raise ValueError("summarize completion marker does not match derived outputs")
+        print(json.dumps({"status": "ALREADY_DONE", "validation": "PASS"}))
         return 0
     combine = read_json(run_root / "combine.json")
     # ---- candidate-cell pass ----
@@ -409,11 +583,7 @@ def command_summarize(args, env: Env) -> int:
             "screening_only": True,
         })
     cand_path = run_root / "candidate_summary.jsonl"
-    if cand_path.exists():
-        cand_path.unlink()
-    with cand_path.open("x", encoding="utf-8", newline="\n") as stream:
-        for row in candidate_rows:
-            stream.write(canonical_json(row) + "\n")
+    _write_jsonl_atomic(cand_path, candidate_rows)
     tier_cells = defaultdict(list)
     for cell_id, value in per_cell.items():
         tier_cells[tiers[cell_id]].append(value)
@@ -470,7 +640,7 @@ def command_summarize(args, env: Env) -> int:
         },
     }
     assert_finite(summary)
-    write_json_create(run_root / "full_run_summary.json", summary)
+    write_json_atomic(run_root / "full_run_summary.json", summary)
     # ---- gate ----
     counts, reasons = Counter(), Counter()
     for row in cell_rows:
@@ -495,7 +665,7 @@ def command_summarize(args, env: Env) -> int:
         "event_masking": False,
         "contract": "gate applies only to new entry evaluation; history/position/exit rows are preserved",
     }
-    write_json_create(run_root / "gate_summary.json", gate_summary)
+    write_json_atomic(run_root / "gate_summary.json", gate_summary)
     # ---- runtime ----
     logs = [json.loads(line) for line in (run_root / "run_log.jsonl").read_text().splitlines()]
     steps = [step for log in logs for step in log["steps"]]
@@ -519,6 +689,20 @@ def command_summarize(args, env: Env) -> int:
     source_pass = materialization["timing"]["source_pass_wall_seconds"]
     projection = env.manifest["projection_reference"]
     pipeline_active = active + source_pass
+    exception_records = []
+    exception_dir = run_root / "host_limit_exceptions"
+    if exception_dir.exists():
+        for path in sorted(exception_dir.glob("*.json")):
+            record = read_json(path)
+            exception_records.append({
+                "path": path.name,
+                "cell_id": record.get("cell", {}).get("cell_id"),
+                "stages": [step.get("stage") for step in record.get("steps", [])],
+                "step_wall_seconds": sum(float(step.get("wall_seconds", 0)) for step in record.get("steps", [])),
+                "driver_sha256": record.get("driver_sha256"),
+                "process_peak_rss_bytes": record.get("process_peak_rss_bytes"),
+                "at": record.get("at"),
+            })
     runtime = {
         "schema": "mwfd_04_runtime_summary_v1",
         "host": env.manifest["host"],
@@ -556,6 +740,13 @@ def command_summarize(args, env: Env) -> int:
             "peak_tracemalloc_bytes": max(log["tracemalloc_peak_bytes"] for log in logs),
             "projected_peak_tracemalloc_bytes": projection["projected_peak_tracemalloc_bytes"],
         },
+        "host_limit_exceptions": {
+            "count": len(exception_records),
+            "step_wall_seconds": sum(item["step_wall_seconds"] for item in exception_records),
+            "peak_process_rss_bytes": max((item["process_peak_rss_bytes"] or 0 for item in exception_records), default=0),
+            "included_in_run_log_totals": False,
+            "records": exception_records,
+        },
         "tiers": {
             tier: {"cells": len(values), "events": sum(e for e, _ in values),
                    "runtime_seconds_total": sum(r for _, r in values),
@@ -571,7 +762,7 @@ def command_summarize(args, env: Env) -> int:
                         "gate_feature": "built once per cell (MISS_BUILT), persisted in checkpoints"},
     }
     assert_finite(runtime)
-    write_json_create(run_root / "runtime_summary.json", runtime)
+    write_json_atomic(run_root / "runtime_summary.json", runtime)
     # ---- factor dataset manifest ----
     first_row = json.loads((run_root / "candidate_cell_results.jsonl").open("rb").readline())
     first_trade_line = (run_root / "trades.jsonl").open("rb").readline()
@@ -622,7 +813,17 @@ def command_summarize(args, env: Env) -> int:
         "statistical_caveats": ["single trade date 2026-09-21 bounded prefix", "discovery dataset; not validation",
                                 "2026-09-18 holdout untouched", "Fast screening; production exact is authoritative"],
     }
-    write_json_create(run_root / "factor_dataset_manifest.json", factor_manifest)
+    write_json_atomic(run_root / "factor_dataset_manifest.json", factor_manifest)
+    marker = {
+        "schema": "mwfd_04_summarize_completion_v1",
+        "status": "COMPLETED",
+        "completed_at": now(),
+        "outputs": {
+            name: {"bytes": (run_root / name).stat().st_size, "sha256": sha256_file(run_root / name)}
+            for name in SUMMARY_OUTPUTS
+        },
+    }
+    write_json_create(marker_path, marker)
     print(json.dumps({"status": "SUMMARIZED", "wall_seconds": time.perf_counter() - started}))
     return 0
 
@@ -677,11 +878,32 @@ def command_manifest(args, env: Env) -> int:
     run_root = env.run_root
     target = run_root / "artifact_manifest.json"
     if target.exists():
-        print(json.dumps({"status": "ALREADY_DONE"}))
+        existing = read_json(target)
+        if existing.get("status") != "COMPLETE":
+            raise ValueError("existing artifact manifest is not COMPLETE")
+        current_entries = []
+        for path in sorted(p for p in run_root.iterdir()
+                           if p.is_file() and not p.name.startswith(".") and p.name != target.name):
+            current_entries.append({"path": path.name, "bytes": path.stat().st_size, "sha256": sha256_file(path)})
+        current_by_name = {entry["path"]: entry for entry in current_entries}
+        recorded_by_name = {entry["path"]: entry for entry in existing.get("entries", [])}
+        if recorded_by_name != current_by_name:
+            print(json.dumps({"status": "FINALIZATION_BLOCKED", "errors": ["artifact_manifest:entries_drift"]}))
+            return 3
+        gate_errors = _completion_gate_errors(run_root, current_by_name)
+        if gate_errors:
+            print(json.dumps({"status": "FINALIZATION_BLOCKED", "errors": gate_errors}))
+            return 3
+        print(json.dumps({"status": "ALREADY_DONE", "validation": "PASS"}))
         return 0
     entries = []
     for path in sorted(p for p in run_root.iterdir() if p.is_file() and not p.name.startswith(".")):
         entries.append({"path": path.name, "bytes": path.stat().st_size, "sha256": sha256_file(path)})
+    entries_by_name = {entry["path"]: entry for entry in entries}
+    gate_errors = _completion_gate_errors(run_root, entries_by_name)
+    if gate_errors:
+        print(json.dumps({"status": "FINALIZATION_BLOCKED", "errors": gate_errors}))
+        return 3
     checkpoint_bytes = sum(p.stat().st_size for p in env.checkpoints.rglob("*") if p.is_file())
     checkpoint_files = sum(1 for p in env.checkpoints.rglob("*") if p.is_file())
     event_bytes = sum(p.stat().st_size for p in (run_root / "event_cache").iterdir())
@@ -699,6 +921,13 @@ def command_manifest(args, env: Env) -> int:
             "per_cell_economic_digest_list": read_json(run_root / "combine.json")["per_cell_economic_digest_list_digest"],
         },
         "total_bytes": sum(e["bytes"] for e in entries) + checkpoint_bytes + event_bytes,
+        "finalization_provenance": {
+            "finalizer_sha256": sha256_file(Path(__file__)),
+            "calculation_code_revision": env.manifest["code_revision"],
+            "calculation_code_provenance": env.manifest["code_provenance"],
+            "host_limit_exceptions": read_json(run_root / "runtime_summary.json").get("host_limit_exceptions", {}),
+        },
+        "completion_gate": {"status": "PASS", "errors": []},
         "status": "COMPLETE",
     }
     write_json_create(target, manifest)

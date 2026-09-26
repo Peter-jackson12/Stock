@@ -67,8 +67,8 @@ def test_completion_missing_evidence_is_invalid(tmp_path, field):
 
 
 @pytest.mark.parametrize("status,counts", [
-    ("completed_empty_input", dict(event_count=0, open_quantity=0, fills=[])),
-    ("completed_no_selected_events", dict(event_count=0, open_quantity=0, fills=[])),
+    ("completed_empty_input", dict(event_count=0, open_quantity=0, orders=[], fills=[], signals=[])),
+    ("completed_no_selected_events", dict(event_count=0, open_quantity=0, orders=[], fills=[], signals=[])),
     ("completed_no_fills", dict(open_quantity=0, fills=[])),
     ("completed_with_open_position", {}),
     ("completed_flat", dict(open_quantity=0)),
@@ -76,3 +76,14 @@ def test_completion_missing_evidence_is_invalid(tmp_path, field):
 def test_all_completion_outcomes_require_success_evidence(tmp_path, status, counts):
     assert reader.main([str(save(tmp_path, status=status, **counts))]) == 0
     assert reader.main([str(save(tmp_path, status=status, input_complete=False, **counts))]) == 3
+
+
+@pytest.mark.parametrize("status,changes", [
+    ("completed_no_fills", dict(open_quantity=1, fills=[])),
+    ("completed_empty_input", dict(event_count=0, open_quantity=0, orders=[], fills=[{}], signals=[])),
+    ("completed_empty_input", dict(event_count=0, open_quantity=0, orders=[{}], fills=[], signals=[])),
+    ("completed_no_selected_events", dict(event_count=0, open_quantity=0, orders=[], fills=[], signals=[{}])),
+    ("completed_with_open_position", dict(open_quantity=1, fills=[])),
+])
+def test_cross_field_completion_contradictions_are_rejected(tmp_path, status, changes):
+    assert reader.main([str(save(tmp_path, status=status, **changes))]) == 3

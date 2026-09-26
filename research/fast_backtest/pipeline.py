@@ -199,6 +199,16 @@ def run_fast_backtest_pipeline(
         else "PASS" if all(record.parity_status == "PASS" for record in exact_records)
         else "MISMATCH"
     )
+    accounting_acceptance = (
+        "NOT_RUN" if not exact_records
+        else "PASS" if all(record.accounting_status == "PASS" for record in exact_records)
+        else "REJECTED"
+    )
+    exact_acceptance = (
+        "NOT_RUN" if not exact_records
+        else "PASS" if all(record.exact_acceptance_status == "PASS" for record in exact_records)
+        else "REJECTED"
+    )
     manifest = {
         "schema": SCHEMA,
         "engine": "fast_backtest_v1",
@@ -221,6 +231,8 @@ def run_fast_backtest_pipeline(
         "deduplicated_count": len(candidates),
         "exact_replay_candidate_ids": [record.candidate_id for record in exact_records],
         "parity_status": parity,
+        "accounting_acceptance_status": accounting_acceptance,
+        "exact_acceptance_status": exact_acceptance,
         "elapsed_seconds": {
             "input_materialization": input_seconds,
             "feature_build": feature_seconds,
@@ -230,6 +242,7 @@ def run_fast_backtest_pipeline(
         },
         "limitations": [
             "fast results are screening_only and are not production-authoritative",
+            "fast/exact parity and exact accounting acceptance are separate requirements",
             "historical float-market-cap unavailable; total market cap is the size-filter proxy",
             "one trade date and instrument per v1 run",
             "input eligibility is inherited from caller provenance and is not upgraded by this pipeline",

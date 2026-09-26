@@ -102,6 +102,8 @@ def test_first_usable_pipeline_writes_create_only_manifest_and_exact_parity(tmp_
     assert manifest["candidate_count"] == 1
     assert manifest["deduplicated_count"] == 1
     assert manifest["parity_status"] == "PASS"
+    assert manifest["accounting_acceptance_status"] == "PASS"
+    assert manifest["exact_acceptance_status"] == "PASS"
     assert manifest["exact_replay_candidate_ids"] == ["reference"]
     assert (output / "input_cache").is_dir()
     assert (output / "feature_cache" / "manifest.json").is_file()

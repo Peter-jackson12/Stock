@@ -25,6 +25,9 @@ class ExactBridgeRecord:
     exact_result: Mapping[str, Any] | None
     parity_status: str
     mismatches: tuple[str, ...]
+    accounting_status: str
+    accounting_issues: tuple[str, ...]
+    exact_acceptance_status: str
     exact_error: str | None
 
 
@@ -32,6 +35,36 @@ def _fraction(value: Mapping[str, Any] | None) -> float | None:
     if value is None:
         return None
     return float(Fraction(int(value["numerator"]), int(value["denominator"])))
+
+
+def validate_exact_accounting(exact: Mapping[str, Any]) -> tuple[str, tuple[str, ...]]:
+    """Fail closed on exact results whose accounting cannot support authoritative acceptance."""
+    issues: list[str] = []
+    if exact.get("status") is None or not str(exact.get("status")).startswith("completed_"):
+        issues.append("result_status")
+    if exact.get("input_complete") is not True:
+        issues.append("input_complete")
+    if exact.get("diagnostics_only") is not False:
+        issues.append("diagnostics_only")
+    if "error" not in exact or exact.get("error") is not None:
+        issues.append("error")
+
+    accounting = exact.get("performance_accounting")
+    if not isinstance(accounting, Mapping):
+        issues.append("performance_accounting")
+        return ("ACCOUNTING_REJECTED", tuple(issues))
+
+    if accounting.get("schema") != "portfolio_performance_accounting_v1":
+        issues.append("accounting_schema")
+    if accounting.get("status") not in {"flat_complete", "open_marked"}:
+        issues.append("accounting_status")
+    for name in ("cash_reconciled", "position_reconciled", "accounting_identity_reconciled"):
+        if accounting.get(name) is not True:
+            issues.append(name)
+    if accounting.get("total_pnl") is None:
+        issues.append("total_pnl")
+
+    return ("PASS" if not issues else "ACCOUNTING_REJECTED", tuple(issues))
 
 
 def compare_fast_exact(fast: FastSweepResult, exact: Mapping[str, Any]) -> tuple[str, tuple[str, ...]]:
@@ -75,11 +108,16 @@ def run_exact_bridge(
         try:
             exact = exact_runner(candidate)
             status, mismatches = compare_fast_exact(fast, exact)
+            accounting_status, accounting_issues = validate_exact_accounting(exact)
+            acceptance = "PASS" if status == "PASS" and accounting_status == "PASS" else "REJECTED"
             error = None
         except Exception as exc:
             exact = None
             status = "EXACT_REPLAY_FAILED"
             mismatches = ()
+            accounting_status = "NOT_EVALUATED"
+            accounting_issues = ()
+            acceptance = "NOT_EVALUATED"
             error = f"{type(exc).__name__}: {exc}"
         records.append(ExactBridgeRecord(
             candidate_id=fast.candidate_id,
@@ -89,6 +127,9 @@ def run_exact_bridge(
             exact_result=exact,
             parity_status=status,
             mismatches=mismatches,
+            accounting_status=accounting_status,
+            accounting_issues=accounting_issues,
+            exact_acceptance_status=acceptance,
             exact_error=error,
         ))
     return tuple(records)
