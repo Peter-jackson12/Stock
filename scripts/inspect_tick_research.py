@@ -52,12 +52,23 @@ def inspect(path):
         summary["final_cash"] = str(cash)
         if status == "completed_flat" and summary["open_quantity"] != 0:
             raise ValueError("flat status conflicts with open quantity")
-        if status == "completed_with_open_position" and summary["open_quantity"] <= 0:
-            raise ValueError("open-position status conflicts with quantity")
-        if status in ("completed_empty_input", "completed_no_selected_events") and summary["event_count"] != 0:
-            raise ValueError("empty-selection status conflicts with event count")
-        if status == "completed_no_fills" and summary["fills_count"] != 0:
-            raise ValueError("no-fills status conflicts with fills")
+        if status == "completed_with_open_position":
+            if summary["open_quantity"] <= 0:
+                raise ValueError("open-position status conflicts with quantity")
+            if summary["fills_count"] == 0:
+                raise ValueError("open-position status requires at least one fill")
+        if status in ("completed_empty_input", "completed_no_selected_events"):
+            if summary["event_count"] != 0:
+                raise ValueError("empty-selection status conflicts with event count")
+            if summary["open_quantity"] != 0:
+                raise ValueError("empty-selection status conflicts with open quantity")
+            if summary["orders_count"] or summary["fills_count"] or summary["signals_count"]:
+                raise ValueError("empty-selection status conflicts with orders/fills/signals")
+        if status == "completed_no_fills":
+            if summary["fills_count"] != 0:
+                raise ValueError("no-fills status conflicts with fills")
+            if summary["open_quantity"] != 0:
+                raise ValueError("no-fills status conflicts with open quantity")
         summary["quote_checks"] = result.get("quote_checks", {})
         summary["error"] = result.get("error")
     summary["note"] = "Cash excludes open holdings; no profit or round-trip trade count inferred."
