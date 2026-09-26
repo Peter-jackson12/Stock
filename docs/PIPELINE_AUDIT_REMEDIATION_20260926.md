@@ -52,8 +52,8 @@ Fast sweep가 직접 참조하는 `engine/nxt_tick_engine.py`를 MWFD code-prove
 
 다음 감사 항목은 MWFD-05 입력의 완결성과 직접 연결되지 않으므로 이번 PR에서 수정하지 않는다.
 
-- collector trade/quote silence recovery 및 session 종료 경계
-- queue backlog 기본 임계치/시간 창
+- collector trade/quote silence recovery 및 session 종료 경계 → 아래 [collector P2 후속](#collector-p2)
+- queue backlog 기본 임계치/시간 창 → 아래 [collector P2 후속](#collector-p2)
 - 오래된 활성 job의 운영 화면 접근성
 - managed capture 초기화 실패 전달
 - legacy feature coverage manifest 누적/strict publish 순서
@@ -67,3 +67,20 @@ Fast sweep가 직접 참조하는 `engine/nxt_tick_engine.py`를 MWFD code-prove
 - 기존 MWFD-04 run은 이미 고정된 revision/provenance와 직접 완료 검증 결과를 따른다.
 - 이번 변경은 **향후 run과 MWFD-05 이후 exact validation 경계**를 강화한다.
 - focused tests와 Git-only 전체 회귀가 통과하기 전에는 master 병합 완료로 간주하지 않는다.
+
+<a id="collector-p2"></a>
+## collector P2 후속 — session silence / queue backlog
+
+MWFD-05와 별개 트랙이다. 실제 로그인·수집·raw 접근 없이 합성 회귀
+`tests/test_session_monitor_p2_contract.py`로 고정했다. 현행 계약 원문은
+[COLLECTION_RUNBOOK](COLLECTION_RUNBOOK.md#collection-silence-profile)에 둔다.
+
+| 감사 발견 | 조치 |
+|---|---|
+| 프로필 경로의 체결 침묵이 공통 `last_event_ts`(호가 포함)로 회복됐다 | 종류별 시계로만 회복한다. 종료 권고도 체결 수신으로만 풀린다. |
+| 명시적 프로필을 써도 종료 판정이 09:00~15:30 고정 창이었다 | 종료 보고가 경고와 같은 구간/임계/시계로 판정한다. |
+| 기본 적체 바닥 20,000이 raw-v2 capacity 8,192보다 커서 도달 불가였다 | capacity 절반으로 도출하고 도달 불가 바닥은 거부한다. raw-v1 무한 큐는 기존값 유지. |
+| 창 이전 표본을 모두 버려 불규칙 간격에서 경보가 빠졌다 | `above_floor_since`와 경계 직전 기준점으로 판정한다. |
+
+변경하지 않은 것: legacy `sessions=None`의 any-event 감시, 핫패스(`on_trade`/`on_quote`),
+큐 넘침 fail-closed, 수집·저장 차단 여부. 임계값은 결과를 보고 조정하지 않았다.

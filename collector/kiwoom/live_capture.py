@@ -23,6 +23,11 @@ from control_tower.storage_guard import require_disk_space
 TRADE_FIDS = (20, 10, 15, 14, 27, 28)
 QUOTE_FIDS = (21, *range(41, 81))
 
+#: 운영 raw-v2 콜백 큐의 수용량과 writer batch. 넘침은 fail-closed 중단이다.
+#: 적체 경보 바닥은 이 값에서 정한다(session_monitor.queue_backlog_floor_for_capacity).
+QUEUE_CAPACITY = 8192
+QUEUE_BATCH_SIZE = 512
+
 
 def _diagnostic_clock(probe):
     """선택된 표본의 시계 실패를 FID/큐 실패로 바꾸지 않는다."""
@@ -37,7 +42,7 @@ class LiveRawCapture:
     # Class default so __new__-only test doubles keep diagnostic OFF / full FID path.
     fid_read_ab = None
 
-    def __init__(self, root, *, server, code_revision, facts=None, capacity=8192,
+    def __init__(self, root, *, server, code_revision, facts=None, capacity=QUEUE_CAPACITY,
                  feed_scope=None, fid_read_ab=None):
         if server not in ("mock", "live"):
             raise ValueError("observed mock/live server required")
@@ -77,7 +82,7 @@ class LiveRawCapture:
         self._error = None
         self._last_status = 0
         self._finished = False
-        self.queue = QueuedCapture(self.path, capacity=capacity, batch_size=512,
+        self.queue = QueuedCapture(self.path, capacity=capacity, batch_size=QUEUE_BATCH_SIZE,
             source="kiwoom", session_id=session_id, market_date=now.strftime("%Y-%m-%d"),
             feed_scope=self.identity.feed_scope, price_policy="signed_magnitude", direction_policy="signed_volume",
             started_ns=time.perf_counter_ns(), started_at_utc=datetime.now(timezone.utc).isoformat()).start()
