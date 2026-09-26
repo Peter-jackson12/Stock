@@ -23,6 +23,11 @@ from control_tower.storage_guard import require_disk_space
 
 TOKEN_ENV = "STOCK_CAPTURE_LAUNCH_TOKEN"
 ACTIVE = ("launching", "running", "stopping", "unknown")
+#: 초기화 실패 원인으로 보존하는 launch 로그 끝부분 크기.
+STARTUP_LOG_TAIL_BYTES = 768
+MAX_ERROR_CHARS = 1024
+# OpenProcess 의 "존재하지 않는 PID" 결과. 접근 거부 등 다른 오류는 종료 근거가 아니다.
+_ERROR_INVALID_PARAMETER = 87
 
 
 def utc():
@@ -61,6 +66,10 @@ class ManagedCaptures:
                 final_report TEXT, error TEXT, created TEXT NOT NULL, updated TEXT NOT NULL)""")
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_capture ON launches((1)) WHERE state IN ('launching','running','stopping','unknown')")
             conn.execute("CREATE TABLE IF NOT EXISTS audit (seq INTEGER PRIMARY KEY, launch_id TEXT NOT NULL, kind TEXT NOT NULL, recorded TEXT NOT NULL)")
+            # 부모가 Popen 직후 고정한 자식 identity. 별도 테이블이라 user_version 을 올리지
+            # 않는다 — 이전 revision 으로 되돌려도 이 DB를 계속 열 수 있다.
+            conn.execute("""CREATE TABLE IF NOT EXISTS spawns (
+                launch_id TEXT PRIMARY KEY, facts TEXT NOT NULL, recorded TEXT NOT NULL)""")
             if version < 2:
                 conn.execute("BEGIN IMMEDIATE")
                 # Re-read under the migration lock for concurrent UI/peer open.
@@ -110,6 +119,11 @@ class ManagedCaptures:
             result.pop("allowed_executables")
             for key in ("plan", "owner", "identity"):
                 result[key] = json.loads(result[key]) if result[key] else None
+            result["spawn"] = None
+            # 이전 revision 이 만든 DB에는 spawns 가 아직 없을 수 있다(읽기 전용이라 만들지 않는다).
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='spawns'").fetchone():
+                spawn = conn.execute("SELECT facts FROM spawns WHERE launch_id=?", (result["id"],)).fetchone()
+                result["spawn"] = json.loads(spawn[0]) if spawn else None
             return result
         finally:
             conn.close()
@@ -215,10 +229,88 @@ class ManagedCaptures:
                          (str(error)[:1024], utc(), launch_id))
             self._event(conn, launch_id, "spawn_outcome_unknown")
 
+    def record_spawn(self, launch_id, facts):
+        """Pin the spawned child's OS identity (pid + creation time + image), once.
+
+        Recorded while the parent still holds the Popen handle, so the PID cannot
+        have been reused yet. This identity is never used as claim ownership.
+        """
+        with self._write() as conn:
+            conn.execute("INSERT OR IGNORE INTO spawns(launch_id,facts,recorded) VALUES (?,?,?)",
+                         (launch_id, json.dumps(asdict(facts), sort_keys=True), utc()))
+            self._event(conn, launch_id, "child_spawned")
+
+    def _log_tail(self, launch_id):
+        path = self.path.parent / f"capture_launch_{launch_id}.log"
+        try:
+            with path.open("rb") as log:
+                log.seek(0, os.SEEK_END)
+                log.seek(max(0, log.tell() - STARTUP_LOG_TAIL_BYTES))
+                tail = log.read(STARTUP_LOG_TAIL_BYTES)
+        except OSError:
+            return None
+        text = tail.decode("utf-8", errors="replace").strip()
+        return text or None
+
+    def startup_failed(self, launch_id, reason):
+        """An unclaimed child exited: revoke the capability and record a terminal failure.
+
+        Only a still-unclaimed `launching` row changes. A child that claimed in the
+        meantime keeps the normal owned flow. Returns True when the row changed.
+        """
+        tail = self._log_tail(launch_id)
+        message = f"capture child exited before claiming launch: {reason}"
+        if tail:
+            message += f" | launch log tail: {tail}"
+        with self._write() as conn:
+            changed = conn.execute(
+                "UPDATE launches SET state='failed',error=?,updated=? WHERE id=? AND owner IS NULL AND state='launching'",
+                (message[:MAX_ERROR_CHARS], utc(), launch_id)).rowcount == 1
+            if changed:
+                self._event(conn, launch_id, "startup_failed_before_claim")
+            return changed
+
+    def reconcile_unclaimed(self, launch_id, *, process_factory=WindowsProcess):
+        """Resolve a spawned-but-unclaimed launch from the pinned spawn identity.
+
+        Returns "failed" when the spawned process is proven gone, or None while it
+        is still the same live process (it may still claim). The PID alone is never
+        trusted: a live process with a different creation time/image is PID reuse,
+        which also proves the original child exited. Inspection errors other than
+        a nonexistent PID are not death evidence and propagate.
+        """
+        from control_tower.windows_process import ProcessFacts
+        current = self.get(launch_id)
+        if current is None or current["state"] != "launching" or current["owner"] is not None:
+            raise ValueError("unclaimed launching request required")
+        if current["spawn"] is None:
+            raise ValueError("spawned child identity was not recorded; cancel the request instead")
+        spawned = ProcessFacts(**current["spawn"])
+        try:
+            with process_factory(spawned.pid) as process:
+                if process.facts == spawned:
+                    return None
+            reason = "spawned PID now belongs to a different process"
+        except ProcessLookupError:
+            reason = "spawned process exited"
+        except OSError as exc:
+            if getattr(exc, "winerror", None) != _ERROR_INVALID_PARAMETER:
+                raise
+            reason = "spawned process no longer exists"
+        if self.startup_failed(launch_id, reason):
+            return "failed"
+        raise ValueError("launch was claimed or changed during reconciliation")
+
     def reconcile(self, launch_id, *, process_factory=WindowsProcess):
         """Resolve a dead owned child from bounded history; never repeat its stop."""
         from collector.kiwoom.collector_lease import CollectorLease
         from control_tower.windows_process import ProcessFacts
+        current = self.get(launch_id)
+        if current is not None and current["state"] == "launching" and current["owner"] is None:
+            state = self.reconcile_unclaimed(launch_id, process_factory=process_factory)
+            if state is None:
+                raise ValueError("spawned child still alive and unclaimed; do not reconcile as failed")
+            return state
         # A new compliant collector cannot start during reconciliation.
         with CollectorLease(self.root), self._write() as conn:
             row = conn.execute("SELECT * FROM launches WHERE id=?", (launch_id,)).fetchone()
@@ -265,8 +357,14 @@ class ManagedCaptures:
             return state
 
 
-def start_managed_capture(root, codes, duration, server, *, popen=subprocess.Popen):
-    """Only the fixed collector script; no user-supplied executable or shell."""
+def start_managed_capture(root, codes, duration, server, *, popen=subprocess.Popen,
+                          process_factory=WindowsProcess):
+    """Only the fixed collector script; no user-supplied executable or shell.
+
+    A successful Popen is not a successful launch. The child's OS identity is
+    pinned while the Popen handle still prevents PID reuse, so a child that
+    exits before claiming can later be resolved to `failed` (reconcile).
+    """
     root = Path(root).resolve()
     validate_plan(codes, duration, server)
     require_disk_space(root)
@@ -285,13 +383,45 @@ def start_managed_capture(root, codes, duration, server, *, popen=subprocess.Pop
     environment[TOKEN_ENV] = token
     try:
         with (store.path.parent / f"capture_launch_{launch_id}.log").open("ab") as log:
-            popen([str(python), str(script), "--managed-launch", launch_id], cwd=root, env=environment,
-                  stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            child = popen([str(python), str(script), "--managed-launch", launch_id], cwd=root, env=environment,
+                          stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except BaseException as exc:
         store.spawn_uncertain(launch_id, exc)
         raise
+    _observe_spawned_child(store, launch_id, child, process_factory)
     return launch_id
+
+
+def _observe_spawned_child(store, launch_id, child, process_factory):
+    """Record the spawned identity, or an already-exited child as a startup failure.
+
+    Best effort: failing to inspect leaves the request `launching` exactly as
+    before (cancel remains available); it never kills or restarts anything.
+    """
+    pid = getattr(child, "pid", None)
+    if type(pid) is not int:
+        return
+    try:
+        code = child.poll()
+        if code is not None:
+            store.startup_failed(launch_id, f"exit code {code}")
+            return
+        try:
+            with process_factory(pid) as process:
+                facts = process.facts
+        except ProcessLookupError:
+            code = child.poll()
+            store.startup_failed(launch_id, "exited during spawn inspection"
+                                 + ("" if code is None else f" (exit code {code})"))
+            return
+        except (OSError, ValueError):
+            return
+        store.record_spawn(launch_id, facts)
+    except sqlite3.Error:
+        # The mailbox may be briefly locked by the child's own claim. The spawn
+        # succeeded; report it as such and leave resolution to reconcile/cancel.
+        return
 
 
 class ManagedCapturePeer:

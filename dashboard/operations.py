@@ -26,6 +26,10 @@ from control_tower.replay_schedule import schedule_replay, schedules, expire_mis
 ROOT = Path(__file__).resolve().parents[1]
 JOB_STATUS = {"planned": "장외 계획", "queued": "실행 대기", "running": "실행 중 · 상태 확인 필요 시 이력 보존",
               "succeeded": "작업 완료", "failed": "작업 실패", "cancelled": "취소됨"}
+#: 미완료 작업 목록의 상한. 전체 DB를 화면에 쏟지 않되 최근 이력 30개 창과는 분리한다.
+ACTIVE_JOB_LIMIT = 100
+DEDUP_NOTE = ("같은 요청이 이미 미완료 상태면 기존 작업 ID를 돌려줍니다. "
+              "'작업 이력 › 진행 중·대기 작업'에서 확인하세요.")
 
 
 def render_control_tower(root=None):
@@ -94,6 +98,7 @@ def render_control_tower(root=None):
                 st.error(f"조회 요청을 저장하지 못했습니다: {exc}")
             else:
                 st.success(f"조회 요청 저장: {job_id}")
+                st.caption(DEDUP_NOTE)
                 try:
                     start_inspection_worker()
                 except OSError as exc:
@@ -131,14 +136,19 @@ def render_control_tower(root=None):
                 st.error(f"계획을 저장하지 못했습니다: {exc}")
             else:
                 st.success(f"장외 계획 저장: {job_id}")
+                st.caption(DEDUP_NOTE)
         st.caption("계획 저장은 헤더만 확인합니다. 별도 실행 시 전체 무결성을 검사하며, 화면 실행은 32 MiB·10만 raw 이내로 제한합니다.")
 
     with history_tab:
         try:
-            jobs = store.recent()
+            # 미완료 작업은 최근 이력 창과 무관하게 따로 읽는다 — 중복 요청이 돌려준 오래된
+            # 작업 ID도 여기서 찾을 수 있어야 한다. 종료 이력은 기존처럼 최근 30개로 제한한다.
+            active_jobs = store.active(ACTIVE_JOB_LIMIT)
+            jobs = store.finished()
             reservations = {r["job_id"]: r for r in schedules(root)}
-        except sqlite3.Error as exc:
+        except (sqlite3.Error, ValueError) as exc:
             st.error(f"작업 이력 조회 실패: {exc}")
+            active_jobs = []
             jobs = []
             reservations = {}
         if reservations and st.button("지난 예약 대조 · 재실행 안 함", key="schedule_reconcile"):
@@ -146,10 +156,20 @@ def render_control_tower(root=None):
                 st.info(f"기한이 지난 미실행 예약 {expire_missed(root)}건을 만료 처리했습니다.")
             except sqlite3.Error as exc:
                 st.error(f"예약 대조 실패: {exc}")
-        if not jobs:
+        if not active_jobs and not jobs:
             st.info("저장된 작업이 없습니다. 결과 조회나 장외 계획을 등록하면 여기에 표시됩니다.")
-        else:
-            for job in jobs:
+        groups = (
+            ("진행 중·대기 작업", active_jobs, "완료되지 않은 작업 전체를 오래된 순으로 표시합니다. 최근 이력 개수 제한과 무관합니다."),
+            ("최근 종료 이력", jobs, "성공·실패·취소된 작업 중 최근 30개만 표시합니다."),
+        )
+        for title, group, note in groups:
+            if not group:
+                continue
+            st.markdown(f"**{title}** · {len(group)}건")
+            st.caption(note)
+            if group is active_jobs and len(active_jobs) >= ACTIVE_JOB_LIMIT:
+                st.warning(f"미완료 작업이 {ACTIVE_JOB_LIMIT}건 이상입니다. 오래된 {ACTIVE_JOB_LIMIT}건만 표시합니다.")
+            for job in group:
                 with st.expander(f"{JOB_STATUS.get(job['status'], job['status'])} · {job['kind']} · {job['id'][:8]}"):
                     st.caption(f"생성 {job['created_at']} · 갱신 {job['updated_at']} · worker {job['owner'] or '미배정'}")
                     if job["status"] == "running":
@@ -470,6 +490,19 @@ def render_capture_controls(root):
         except (OSError, ValueError, sqlite3.Error) as exc:
             st.error(f"수집 제어 기록 확인 실패: {exc}")
             return
+        if current is not None and current["state"] == "launching" and current["owner"] is None:
+            # Popen 성공은 launch 성공이 아니다. 고정한 자식 identity 가 사라졌으면(초기화 전
+            # 종료) 요청을 failed 로 수렴시킨다. 살아 있으면 기다린다. kill/재시작은 하지 않는다.
+            if current["spawn"] is None:
+                st.caption("자식 프로세스 identity가 기록되지 않았습니다. 초기화 실패가 의심되면 종료 요청으로 취소하세요.")
+            else:
+                try:
+                    if store.reconcile_unclaimed(current["id"]) is None:
+                        st.caption("수집기 초기화 대기 중 · 아직 소유권 확인(claim) 전입니다.")
+                    else:
+                        current = store.get(current["id"])
+                except (OSError, ValueError, sqlite3.Error) as exc:
+                    st.caption(f"초기화 상태 확인 보류: {exc}")
         active = current is not None and current["state"] in ACTIVE
         if current:
             st.write(f"관리 요청 {current['id']} · 기록 상태 {current['state']}")

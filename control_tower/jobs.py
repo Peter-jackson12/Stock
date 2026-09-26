@@ -13,6 +13,8 @@ from uuid import uuid4
 
 MAX_JSON_BYTES = 32 * 1024
 MAX_ERROR_CHARS = 2048
+#: Unfinished statuses. Same set as the active_request dedup index below.
+ACTIVE_STATUSES = ("planned", "queued", "running")
 
 
 def bounded_json(value):
@@ -66,18 +68,47 @@ class JobStore:
         record["result"] = json.loads(record["result"]) if record["result"] else None
         return record
 
-    def recent(self, limit=30):
-        if type(limit) is not int or not 1 <= limit <= 100:
-            raise ValueError("bounded job listing required")
+    def _read(self, sql, parameters):
+        """Read-only bounded query. A missing DB is an empty listing, not a new file."""
         if not self.path.exists():
             return []
         conn = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.5)
         conn.row_factory = sqlite3.Row
         try:
-            rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
-            return [self._record(row) for row in rows]
+            return [self._record(row) for row in conn.execute(sql, parameters).fetchall()]
         finally:
             conn.close()
+
+    @staticmethod
+    def _bounded(limit):
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("bounded job listing required")
+
+    def recent(self, limit=30):
+        self._bounded(limit)
+        return self._read("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,))
+
+    def active(self, limit=100):
+        """Unfinished jobs, oldest first, independent of the recent-history window.
+
+        Dedup returns an existing unfinished job ID however old it is, so the UI
+        must reach every such job without listing the whole history.
+        """
+        self._bounded(limit)
+        return self._read(f"SELECT * FROM jobs WHERE status IN {ACTIVE_STATUSES!r} "
+                          "ORDER BY created_at, id LIMIT ?", (limit,))
+
+    def finished(self, limit=30):
+        """Most recent terminal jobs (succeeded/failed/cancelled and any non-active status)."""
+        self._bounded(limit)
+        return self._read(f"SELECT * FROM jobs WHERE status NOT IN {ACTIVE_STATUSES!r} "
+                          "ORDER BY created_at DESC, id DESC LIMIT ?", (limit,))
+
+    def get(self, job_id):
+        if not isinstance(job_id, str) or not job_id:
+            raise ValueError("job id required")
+        rows = self._read("SELECT * FROM jobs WHERE id=?", (job_id,))
+        return rows[0] if rows else None
 
     def submit(self, kind, payload):
         if kind not in ("inspect_result", "replay_raw_v2") or not isinstance(payload, dict):
