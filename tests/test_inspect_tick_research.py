@@ -67,8 +67,8 @@ def test_completion_missing_evidence_is_invalid(tmp_path, field):
 
 
 @pytest.mark.parametrize("status,counts", [
-    ("completed_empty_input", dict(event_count=0, open_quantity=0, fills=[])),
-    ("completed_no_selected_events", dict(event_count=0, open_quantity=0, fills=[])),
+    ("completed_empty_input", dict(event_count=0, open_quantity=0, orders=[], fills=[], signals=[])),
+    ("completed_no_selected_events", dict(event_count=0, open_quantity=0, orders=[], fills=[], signals=[])),
     ("completed_no_fills", dict(open_quantity=0, fills=[])),
     ("completed_with_open_position", {}),
     ("completed_flat", dict(open_quantity=0)),
