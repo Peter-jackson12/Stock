@@ -114,3 +114,50 @@ def test_summary_marker_detects_partial_or_changed_output(tmp_path):
     assert finalizer._summary_marker_valid(tmp_path, marker)
     (tmp_path / "runtime_summary.json").write_text('{"changed": true}', encoding="utf-8")
     assert not finalizer._summary_marker_valid(tmp_path, marker)
+
+
+def test_combine_recovers_after_partial_final_publication(tmp_path, monkeypatch):
+    monkeypatch.setattr(finalizer, "EXPECTED_CELLS", 1)
+    monkeypatch.setattr(finalizer, "EXPECTED_CANDIDATES", 1)
+
+    cell = SimpleNamespace(index=1, code="A", venue="unknown", cell_id="A=unknown")
+    checkpoint = tmp_path / "checkpoints" / "0001-A-unknown"
+    checkpoint.mkdir(parents=True)
+    write_json(checkpoint / "completion.json", {"status": "COMPLETED"})
+
+    # One output was already renamed to its final name before the process died.
+    (tmp_path / finalizer.OUTPUTS[0]).write_text("{}\n", encoding="utf-8")
+
+    # The other writers reached the common committed cell boundary but were not renamed yet.
+    for name in finalizer.OUTPUTS[1:]:
+        writer = finalizer.ResumableConcatWriter(tmp_path / name)
+        writer.open()
+        writer.write_lines([b"{}\n"])
+        writer.commit_cell(1)
+        writer.close()
+
+    (tmp_path / ".combine_ledger.jsonl").write_text(
+        json.dumps({
+            "cell_index": 1,
+            "cell_id": "A=unknown",
+            "candidate_results_digest": "economic",
+            "file_digest": "serialized",
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    env = SimpleNamespace(
+        run_root=tmp_path,
+        population=SimpleNamespace(cells=(cell,)),
+        checkpoints=tmp_path / "checkpoints",
+    )
+    result = finalizer.command_combine(SimpleNamespace(budget_seconds=1), env)
+
+    assert result == 0
+    assert (tmp_path / "combine.json").is_file()
+    assert (tmp_path / "combine_ledger.jsonl").is_file()
+    assert not (tmp_path / ".combine_ledger.jsonl").exists()
+    assert all((tmp_path / name).is_file() for name in finalizer.OUTPUTS)
+    combined = json.loads((tmp_path / "combine.json").read_text(encoding="utf-8"))
+    assert combined["status"] == "COMPLETED"
+    assert combined["checks"]["publication_recovered"] is True
