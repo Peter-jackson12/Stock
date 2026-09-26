@@ -36,6 +36,7 @@ LOB/초봉 변환과 기존 런 비교는 유지하는 레거시 경로이며 �
 | 알고 싶은 것 | 담당 문서 |
 |---|---|
 | 현재 결정·차단 조건·바로 다음 행동 | [HANDOFF](HANDOFF.md) |
+| 2026-09-26 전반 설계 검수·MWFD 종료 후 조치 순서 | [점검 기록](docs/PIPELINE_AUDIT_20260926.md) |
 | 첫 실제 시험의 남은 체크 항목 | [BACKTEST_TODO](BACKTEST_TODO.md) |
 | 어떤 코드가 무엇을 실행하는지·경로 간 차이·단순화 후속 항목 | [파이프라인 지도](docs/PIPELINE_MAP.md) |
 | 수집 시각 결정 전 필수 사실·장전/정규장/NXT 구분 | [수집 의사결정 계약](docs/COLLECTION_RUNBOOK.md#collection-decision) · [구간별 coverage 표](docs/COLLECTION_RUNBOOK.md#collection-coverage) |

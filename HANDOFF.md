@@ -1,5 +1,7 @@
 # 현재 인계 — 2026-09-25 / selected-v2 actual accounting regression
 
+[9/26 설계 점검·조치 보류](docs/PIPELINE_AUDIT_20260926.md)
+
 [문서 인덱스](README.md) · [첫 실데이터 체크](BACKTEST_TODO.md) ·
 [파이프라인 지도](docs/PIPELINE_MAP.md#portfolio-research) ·
 [수집 의사결정 계약](docs/COLLECTION_RUNBOOK.md#collection-decision) ·
