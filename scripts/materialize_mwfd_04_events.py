@@ -60,6 +60,7 @@ CODE_FILES = (
     "research/fast_backtest/input_cache.py",
     "research/fast_backtest/plan.py",
     "engine/tick_ordering.py",
+    "engine/nxt_tick_engine.py",
     "execution/quote_validation.py",
     "collector/raw_v2.py",
     "collector/raw_v2_prefix_qualification.py",
