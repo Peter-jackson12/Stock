@@ -2,8 +2,9 @@
 
 ## GitHub에서 재현하는 범위
 
-`.github/workflows/ci.yml`은 master push와 모든 PR마다 Windows, 64비트 Python 3.14,
-uv 0.12.5와 기존 `uv.lock`으로 실행한다. `uv sync --locked --group dev`가
+``.github/workflows/ci.yml`은 **매주 일요일 09:00 KST 정기 실행과 수동 `workflow_dispatch`**에서
+Windows, 64비트 Python 3.14, uv 0.12.5와 기존 `uv.lock`으로 실행한다. 작은 push/PR마다 자동 실행하지
+않는다. `uv sync --locked --group dev`가
 잠금 불일치를 실패로 처리한다. Actions 자체도 커밋으로 고정하고 읽기 권한만 부여한다.
 시장 DB·운영 원본·사용자 32비트 환경을 다운로드하거나 업로드하지 않는다.
 
