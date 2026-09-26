@@ -171,3 +171,16 @@ def test_combine_recovers_after_partial_final_publication(tmp_path, monkeypatch)
 
 def test_mwfd_code_provenance_covers_tick_engine_dependency():
     assert "engine/nxt_tick_engine.py" in materialize.CODE_FILES
+
+
+def test_existing_complete_manifest_rejects_entry_drift(tmp_path):
+    entries = build_complete_gate_fixture(tmp_path)
+    write_json(tmp_path / "artifact_manifest.json", {
+        "status": "COMPLETE",
+        "entries": list(entries.values()),
+    })
+    env = DummyEnv(tmp_path)
+    assert finalizer.command_manifest(SimpleNamespace(), env) == 0
+
+    (tmp_path / "runtime_summary.json").write_text('{"changed": true}', encoding="utf-8")
+    assert finalizer.command_manifest(SimpleNamespace(), env) == 3
