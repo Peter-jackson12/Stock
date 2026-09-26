@@ -56,8 +56,8 @@ Fast sweep가 직접 참조하는 `engine/nxt_tick_engine.py`를 MWFD code-prove
 - queue backlog 기본 임계치/시간 창
 - 오래된 활성 job의 운영 화면 접근성 → 아래 [Operator P2 후속](#operator-p2)
 - managed capture 초기화 실패 전달 → 아래 [Operator P2 후속](#operator-p2)
-- legacy feature coverage manifest 누적/strict publish 순서
-- legacy KIS daemon의 후처리 완료 판정
+- legacy feature coverage manifest 누적/strict publish 순서 → 아래 [legacy P2 후속](#legacy-p2)
+- legacy KIS daemon의 후처리 완료 판정 → 아래 [legacy P2 후속](#legacy-p2)
 
 이들은 별도 운영/legacy hardening 작업으로 다룬다.
 
@@ -83,3 +83,21 @@ collector/native hot path 와 별개인 control-plane 변경이다. 현행 계�
 
 `recent()`, 취소/claim/complete, 소유 프로세스 reconcile, Popen 예외의 `unknown`,
 단일 활성 launch 제약, DB user_version 은 바꾸지 않았다. collector 코드는 수정하지 않았다.
+
+<a id="legacy-p2"></a>
+## legacy feature 저장 / KIS daily daemon P2 후속
+
+legacy 경로만 다룬다. MWFD/Fast Backtest, Kiwoom 운영 수집기, raw-v2 경로는 바꾸지 않았고
+이 변경이 그 경로를 검증하지도 않는다. 합성 회귀는 `tests/test_legacy_feature_kis_p2_contract.py`이며
+실제 KIS API·websocket·LOB/raw DB·Daily CSV 운영 검증이 아니다.
+
+| 감사 발견 | 조치 |
+|---|---|
+| `FeatureStore.write()`가 매니페스트를 통째로 다시 써 다른 날짜 coverage가 사라졌다 | 기존 매니페스트에 병합한다. 다른 날짜 coverage와 기존 피처 선언은 보존하고, 같은 날짜 재기록은 그 날짜 coverage만 교체한다(coverage 없이 재기록하면 낡은 값을 지운다). 매니페스트는 임시 파일 + fsync + `os.replace`로 바꾼다. |
+| `--strict` 커버리지 실패 전에 parquet/매니페스트가 이미 게시됐다 | `build_day`가 커버리지를 게시 **전에** 재고 strict 실패면 아무것도 쓰지 않고 멈춘다. parquet도 임시 파일(`.<date>.<id>.tmp`, `*.parquet` glob 밖)에 쓴 뒤 교체한다. non-strict 저커버리지는 기존처럼 경고 후 게시하며 그 coverage를 함께 기록한다. |
+| KIS 데몬이 LOB·일봉 결과를 보지 않고 무조건 "완벽히 끝났다"고 출력했다 | `collector/daily_daemon_result.py`가 raw 수집·LOB 변환·일봉 갱신을 각 함수의 기존 반환 계약으로 판정한다. 셋 모두 성공일 때만 완료 문구와 종료값 0을 낸다. 일부 성공/무데이터/실패/결과 미확인은 1이고, 예외는 요약을 남긴 뒤 전파한다. |
+
+단계 판정 근거: `resample_raw_to_lob`의 `None`(원본 없음)과 `failures`는 실패, 변환 0종목/0행은 무데이터다.
+`FastDailyCollector.collect()`는 이제 journal 종료 이벤트(`no_data`/`completed`)와 같은 사실을 반환한다.
+`completed`여도 가격을 받은 종목이 요청 종목보다 적으면 일부 성공이다. raw 적재 0건은 무데이터다.
+저장 데이터 삭제·rollback·재시도·자동 복구는 추가하지 않았다. 기존 단계 순서(예외 시 뒤 단계 미실행)는 유지했다.

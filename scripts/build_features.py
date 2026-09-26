@@ -22,7 +22,6 @@ scripts/build_features.py — 배치 피처 빌더 (Phase B)
 from __future__ import annotations
 
 import argparse
-import json
 import sqlite3
 import sys
 import time
@@ -228,8 +227,19 @@ def build_day(
         return None
 
     day = pd.concat(frames, ignore_index=True)
+
+    # validate before publish: 커버리지를 게시 전에 재고, --strict 실패면 canonical
+    # parquet/매니페스트/coverage 를 하나도 건드리지 않고 멈춘다. 기존 날짜 산출물은 그대로다.
+    # non-strict 는 기존처럼 경고만 하고 게시하며, 그 coverage 를 함께 기록한다.
+    coverage = measure_coverage(day, ordered)
+    if not report_coverage(date, coverage, coverage_threshold, strict) and strict:
+        raise SystemExit(
+            f"{date}: 거시 피처 커버리지가 임계치({coverage_threshold:.0f}%) 미만입니다 "
+            "(--strict, 게시하지 않음 — 기존 산출물 유지)"
+        )
+
     store = FeatureStore(version=version, root=feature_root)
-    out_path = store.write(date, day, feature_set)
+    out_path = store.write(date, day, feature_set, coverage=coverage)
 
     stats = store.file_stats(date)
     elapsed = time.perf_counter() - started
@@ -239,13 +249,6 @@ def build_day(
         f"{stats['file_bytes'] / 1024 / 1024:.2f}MB · row group {stats['row_groups']}개"
     )
     print(f"   ➔ {out_path}")
-
-    coverage = measure_coverage(day, ordered)
-    store.record_coverage(date, coverage)
-    if not report_coverage(date, coverage, coverage_threshold, strict) and strict:
-        raise SystemExit(
-            f"{date}: 거시 피처 커버리지가 임계치({coverage_threshold:.0f}%) 미만입니다 (--strict)"
-        )
     return out_path
 
 
@@ -282,9 +285,7 @@ def refresh_declarations(store: FeatureStore, features: Sequence) -> int:
             changed += 1
 
     if changed:
-        store.manifest_path.write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        store.replace_manifest(manifest)
     return changed
 
 
