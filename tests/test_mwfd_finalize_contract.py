@@ -3,6 +3,7 @@ import json
 from types import SimpleNamespace
 
 from scripts import finalize_mwfd_04 as finalizer
+from scripts import materialize_mwfd_04_events as materialize
 
 
 class DummyEnv:
@@ -161,3 +162,7 @@ def test_combine_recovers_after_partial_final_publication(tmp_path, monkeypatch)
     combined = json.loads((tmp_path / "combine.json").read_text(encoding="utf-8"))
     assert combined["status"] == "COMPLETED"
     assert combined["checks"]["publication_recovered"] is True
+
+
+def test_mwfd_code_provenance_covers_tick_engine_dependency():
+    assert "engine/nxt_tick_engine.py" in materialize.CODE_FILES
